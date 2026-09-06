@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.pagination import PageNumberPagination
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 from .models import UserRewardProfile, RewardPointTransaction
 from .serializers import RewardPointTransactionSerializer
@@ -24,6 +25,14 @@ class StandardRewardsPagination(PageNumberPagination):
         })
 
 
+@extend_schema(
+    tags=["Rewards & Gamification"],
+    summary="Rewards Summary & Tier Progress",
+    description="Retrieve available points balance, lifetime points, current tier (Bronze-Diamond), progress to next tier, and 60-day validity details.",
+    responses={
+        200: OpenApiResponse(description="Rewards balance and tier details retrieved"),
+    }
+)
 class RewardPointsSummaryView(APIView):
     """
     API endpoint to retrieve current user's available points, lifetime points,
@@ -76,6 +85,14 @@ class RewardPointsSummaryView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=["Rewards & Gamification"],
+    summary="Points Transaction History",
+    description="Paginated history of all points earned (e.g. sharing looks, scanning clothes, purchases) and expired.",
+    responses={
+        200: RewardPointTransactionSerializer(many=True),
+    }
+)
 class RewardPointsHistoryView(generics.ListAPIView):
     """
     API endpoint to list points earning, expiring, and redemption history.
@@ -106,6 +123,15 @@ class RewardPointsHistoryView(generics.ListAPIView):
         return response
 
 
+@extend_schema(
+    tags=["Rewards & Gamification"],
+    summary="Claim Affiliate Purchase Reward Points",
+    description="Claim 200 reward points for a verified affiliate store purchase with order_id, store name, and amount.",
+    responses={
+        200: OpenApiResponse(description="200 reward points awarded successfully"),
+        400: OpenApiResponse(description="Missing order_id or points already claimed"),
+    }
+)
 class ClaimPurchaseRewardView(APIView):
     """
     API endpoint to claim 200 points for an affiliate purchase.
