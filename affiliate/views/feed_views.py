@@ -3,85 +3,16 @@ import random
 import operator
 from functools import reduce
 from rest_framework import generics, status
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
-from rest_framework.views import APIView
 from django.db.models import Q, Count, Case, When, Value, IntegerField
-from django.conf import settings
-from urllib.parse import quote
-from .models import AffiliateProduct, ProductClick, ProductFavorite
-from .serializers import AffiliateProductListSerializer, AffiliateProductDetailSerializer
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
 
+from affiliate.models import AffiliateProduct, ProductFavorite
+from affiliate.serializers import AffiliateProductListSerializer
 
-
-# Domains that are mobile app deep links / app-store redirects — not real web pages.
-# These cannot be used as a `ued=` destination in Awin's cread.php.
-_APP_LINK_DOMAINS = (
-    'onelink.me',       # AppsFlyer OneLink
-    'app.link',         # Branch.io
-    'go.onelink.me',
-    'bnc.lt',           # Branch short links
-    'adj.st',           # Adjust
-    'smart.link',       # Smartly / Kochava
-    'play.google.com',  # Google Play store
-    'apps.apple.com',   # Apple App Store
-    'itunes.apple.com',
-)
-
-
-def _is_usable_web_url(url: str) -> bool:
-    """
-    Return True if `url` is a regular web URL that can be loaded in a browser.
-    Returns False for mobile app deep links, app-store URLs, or empty strings.
-    """
-    if not url:
-        return False
-    url_lower = url.lower()
-    # Must start with http(s)
-    if not url_lower.startswith(('http://', 'https://')):
-        return False
-    # Reject known app-link domains
-    for domain in _APP_LINK_DOMAINS:
-        if domain in url_lower:
-            return False
-    return True
-
-
-def build_affiliate_url(product):
-    """
-    Build the correct affiliate tracking URL for a product.
-
-    Both Awin and Rakuten networks provide pre-generated, fully tracked deep links
-    in `aw_deep_link` (e.g. Awin's `pclick.php?p=...&a=...&m=...` and Rakuten's
-    `click.linksynergy.com/link?...`).
-    Using this official tracking link directly guarantees instantaneous redirection
-    to the brand's exact product page without blank/white pages, while reliably
-    recording publisher attribution and conversions.
-    """
-    raw_link = (product.aw_deep_link or '').strip()
-    if raw_link.startswith(('http://', 'https://')):
-        return raw_link
-
-    merchant_link = (product.merchant_deep_link or '').strip()
-    if _is_usable_web_url(merchant_link):
-        if product.source == AffiliateProduct.SOURCE_AWIN:
-            publisher_id = getattr(settings, 'AWIN_PUBLISHER_ID', '2612792')
-            encoded_url = quote(merchant_link, safe='')
-            return f'https://www.awin1.com/cread.php?awinaffid={publisher_id}&ued={encoded_url}'
-        elif product.source == AffiliateProduct.SOURCE_RAKUTEN:
-            rakuten_id = '7OwTtzNBeMo'
-            encoded_url = quote(merchant_link, safe='')
-            return f'https://click.linksynergy.com/link?id={rakuten_id}&type=15&murl={encoded_url}'
-        return merchant_link
-
-    return raw_link
-
-
-# ------------------------------------------------------------------ #
-# Pagination
-# ------------------------------------------------------------------ #
 
 class NewsfeedPagination(PageNumberPagination):
     page_size = 20
@@ -133,26 +64,27 @@ class ForYouPagination(NewsfeedPagination):
         return link
 
 
-# ------------------------------------------------------------------ #
-# Newsfeed — main product list
-# ------------------------------------------------------------------ #
-
+@extend_schema(
+    tags=["Affiliate Products & Scraping"],
+    summary="Affiliate Products Feed",
+    description="Returns paginated affiliate products for the newsfeed with search, brand, category, colour, price, and network filters.",
+    parameters=[
+        OpenApiParameter('search', str, description="Search across product name, brand, description"),
+        OpenApiParameter('brand', str, description="Filter by brand (exact match)"),
+        OpenApiParameter('category', str, description="Filter by product category"),
+        OpenApiParameter('colour', str, description="Filter by colour keyword"),
+        OpenApiParameter('min_price', float, description="Minimum price filter"),
+        OpenApiParameter('max_price', float, description="Maximum price filter"),
+        OpenApiParameter('ordering', str, description="Sort order: 'price_asc', 'price_desc', 'newest', 'discount'"),
+        OpenApiParameter('source', str, description="Filter by network: 'awin' or 'rakuten'"),
+    ],
+    responses={
+        200: AffiliateProductListSerializer(many=True),
+    }
+)
 class AffiliateProductNewsfeedView(generics.ListAPIView):
     """
     GET /api/affiliate/products/
-
-    Returns paginated affiliate products for the home newsfeed.
-
-    Query params:
-        search      — full-text search across name, brand, description
-        brand       — exact brand filter (case-insensitive)
-        category    — partial category match
-        colour      — colour filter
-        min_price   — minimum price
-        max_price   — maximum price
-        ordering    — price_asc | price_desc | newest | discount
-        page        — page number
-        page_size   — results per page (default 20, max 100)
     """
     permission_classes = [AllowAny]
     authentication_classes = [JWTAuthentication]
@@ -173,7 +105,7 @@ class AffiliateProductNewsfeedView(generics.ListAPIView):
         min_price = self.request.query_params.get('min_price')
         max_price = self.request.query_params.get('max_price')
         ordering  = self.request.query_params.get('ordering')
-        source    = self.request.query_params.get('source')  # 'awin' | 'rakuten'
+        source    = self.request.query_params.get('source')
 
         if search:
             qs = qs.filter(
@@ -212,7 +144,7 @@ class AffiliateProductNewsfeedView(generics.ListAPIView):
             'price_asc':  'price',
             'price_desc': '-price',
             'newest':     '-created_at',
-            'discount':   'price',   # cheapest first as proxy for best deal
+            'discount':   'price',
         }
         qs = qs.order_by(order_map.get(ordering, '-created_at'))
 
@@ -252,186 +184,24 @@ class AffiliateProductNewsfeedView(generics.ListAPIView):
         return Response(serializer.data)
 
 
-# ------------------------------------------------------------------ #
-# Product detail
-# ------------------------------------------------------------------ #
-
-class AffiliateProductDetailView(generics.RetrieveAPIView):
-    """
-    GET /api/affiliate/products/<id>/
-
-    Returns full product details including the affiliate tracking link.
-    The mobile app should open aw_deep_link in an in-app browser when
-    the user taps 'Buy'.
-    """
-    permission_classes = [AllowAny]
-    authentication_classes = [JWTAuthentication]
-    serializer_class = AffiliateProductDetailSerializer
-    queryset = AffiliateProduct.objects.filter(is_active=True).annotate(
-        _favorites_count=Count('favorites', distinct=True),
-        _clicks_count=Count('clicks', distinct=True),
-    )
-
-    def retrieve(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance)
-        return Response({
-            'success': True,
-            'message': 'Product retrieved successfully',
-            'data': serializer.data,
-        }, status=status.HTTP_200_OK)
-
-
-# ------------------------------------------------------------------ #
-# Click tracking  (called before opening the affiliate link)
-# ------------------------------------------------------------------ #
-
-class ProductClickView(APIView):
-    """
-    POST /api/affiliate/products/<id>/click/
-
-    Records a click for internal analytics, then returns the Awin
-    affiliate tracking URL for the mobile app to open.
-
-    The app flow is:
-        1. User taps 'Buy'
-        2. App calls POST /api/affiliate/products/<id>/click/
-        3. Backend records the click and returns { affiliate_url }
-        4. App opens affiliate_url in WebView / system browser
-        5. User completes purchase on brand website
-        6. Awin records conversion → MyClosly earns commission
-
-    Authentication is optional — works for both logged-in and guest users.
-    """
-    permission_classes = [AllowAny]
-    authentication_classes = [JWTAuthentication]
-
-    def post(self, request, pk):
-        try:
-            product = AffiliateProduct.objects.get(pk=pk, is_active=True)
-        except AffiliateProduct.DoesNotExist:
-            return Response(
-                {'success': False, 'message': 'Product not found'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
-
-        # Record click — user may or may not be authenticated
-        user = request.user if request.user.is_authenticated else None
-        ProductClick.objects.create(product=product, user=user)
-
-        return Response({
-            'success': True,
-            'message': 'Click recorded. Redirect user to affiliate_url.',
-            'data': {
-                'affiliate_url': build_affiliate_url(product),
-                'product_name':  product.name,
-                'brand':         product.brand,
-            }
-        }, status=status.HTTP_200_OK)
-
-
-# ------------------------------------------------------------------ #
-# Brands list
-# ------------------------------------------------------------------ #
-
-class AffiliateBrandsListView(APIView):
-    """
-    GET /api/affiliate/brands/
-
-    Returns all unique brands with product counts.
-    Use this to populate the brand filter on the app.
-
-    Query params:
-        source — 'awin' | 'rakuten' | omit for both networks combined
-    """
-    permission_classes = [AllowAny]
-    authentication_classes = []
-
-    def get(self, request):
-        qs = AffiliateProduct.objects.filter(is_active=True)
-
-        source = request.query_params.get('source')
-        if source in ('awin', 'rakuten'):
-            qs = qs.filter(source=source)
-
-        brands_raw = (
-            qs
-            .values('brand', 'source')
-            .annotate(product_count=Count('id'))
-            .order_by('brand')
-        )
-
-        # Merge brands that differ only in capitalisation
-        # e.g. "Needs No Label" and "Needs no label" → "Needs No Label"
-        merged = {}
-        for row in brands_raw:
-            key = (row['brand'].strip().lower(), row['source'])
-            if key in merged:
-                merged[key]['product_count'] += row['product_count']
-            else:
-                # Use title-cased version as the canonical name
-                merged[key] = {
-                    'brand':         row['brand'].strip().title(),
-                    'source':        row['source'],
-                    'product_count': row['product_count'],
-                }
-
-        brands = sorted(merged.values(), key=lambda x: x['brand'].lower())
-
-        return Response({
-            'success': True,
-            'message': 'Brands retrieved successfully',
-            'data': {
-                'brands': brands
-            }
-        }, status=status.HTTP_200_OK)
-
-
-# ------------------------------------------------------------------ #
-# Categories list
-# ------------------------------------------------------------------ #
-
-class AffiliateCategoriesListView(APIView):
-    """
-    GET /api/affiliate/categories/
-
-    Returns all unique categories with product counts.
-    """
-    permission_classes = [AllowAny]
-    authentication_classes = []
-
-    def get(self, request):
-        categories = (
-            AffiliateProduct.objects
-            .filter(is_active=True)
-            .exclude(category='')
-            .values('category')
-            .annotate(product_count=Count('id'))
-            .order_by('category')
-        )
-        return Response({
-            'success': True,
-            'message': 'Categories retrieved successfully',
-            'data': {
-                'categories': list(categories)
-            }
-        }, status=status.HTTP_200_OK)
-
-
+@extend_schema(
+    tags=["Affiliate Products & Scraping"],
+    summary="Personalized 'For You' Products Feed",
+    description=(
+        "Curated affiliate discovery feed customized by user Style DNA, preferred brands, "
+        "color palette, and gender balancing (65% primary gender / 35% secondary gender)."
+    ),
+    parameters=[
+        OpenApiParameter('seed', int, description="Discovery seed for pagination continuity"),
+        OpenApiParameter('refresh', bool, description="Set to true to generate a freshly randomized curation seed"),
+    ],
+    responses={
+        200: AffiliateProductListSerializer(many=True),
+    }
+)
 class AffiliateProductForYouView(generics.ListAPIView):
     """
     GET /api/affiliate/products/for-you/
-
-    Returns personalized, diverse affiliate products recommended specifically for the current user:
-    1. Variant De-duplication: Drops consecutive identical product models and repeated image variants
-       (e.g. Uniqlo Puffer in Olive, Navy, Black are collapsed to the best-matching single variant).
-    2. Additive Multi-Signal Taste Scoring: Combines user preferences (preferred brands, color palette,
-       clothing categories, style match) and engagement affinity (loved/favorited brands and closet items).
-    3. Brand & Category Diversity Reranking: Prevents feed fatigue by interleaving different brands and categories.
-    4. Gender Ratio Balancing:
-       - Male users: 65% Male/Unisex products, 35% Female products.
-       - Female users: 65% Female products, 35% Male/Unisex products.
-       - Other / Unauthenticated: Balanced diverse feed.
     """
     permission_classes = [AllowAny]
     authentication_classes = [JWTAuthentication]
@@ -440,20 +210,11 @@ class AffiliateProductForYouView(generics.ListAPIView):
 
     @staticmethod
     def _base_model_name(name: str) -> str:
-        """
-        Extract the canonical base model name by stripping color/size variants.
-        e.g. 'Uniqlo Ultra Light Down Seamless Puffer (Olive)' -> 'uniqlo ultra light down seamless puffer'
-             'Puma Suede Classic - Black' -> 'puma suede classic'
-        """
         s = re.sub(r'\s*\([^)]*\)\s*$', '', name).strip()
         s = re.sub(r'\s*-\s*(?:black|white|grey|gray|navy|olive|blue|red|green|brown|beige|tan|pink|orange|khaki|cream|burgundy|yellow)\b.*$', '', s, flags=re.IGNORECASE).strip()
         return s.lower()
 
     def _get_clean_base_queryset(self):
-        """
-        Returns only genuine, high-quality, verified affiliate products.
-        Excludes legacy non-routable mock products and invalid prices.
-        """
         return AffiliateProduct.objects.filter(
             is_active=True,
             price__gt=0
@@ -480,7 +241,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
         for fw in female_words:
             female_word_q |= Q(name__icontains=fw)
 
-        # Unisex accessory keywords allow unisex items from fashion houses to belong to the male/unisex pool
         unisex_words = [
             'watch', 'cap', 'sunglasses', 'card case', 'cardholder', 'wallet', 'porte-cartes',
             'sneaker', 'trainer', 'basket', 'scarf', 'écharpe', 'foulard', 'belt', 'ceinture',
@@ -491,7 +251,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
         for uw in unisex_words:
             unisex_q |= Q(name__icontains=uw)
 
-        # Needs No Label is strictly female fashion; Twinset & Tory Burch items are female unless pure unisex accessories
         female_brand_q = (
             Q(brand__iexact='Needs No Label') |
             (Q(brand__in=['Twinset', 'Tory Burch Eu', 'Needs no label']) & ~unisex_q)
@@ -528,7 +287,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
 
         score_parts = []
 
-        # 1. User engagement affinity (favorited brands, closet items) — cached per request to prevent duplicate queries
         affinity_brands = self._get_user_affinity_brands(user)
         if affinity_brands:
             aff_q = Q()
@@ -536,7 +294,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
                 aff_q |= Q(brand__iexact=ab)
             score_parts.append(Case(When(aff_q, then=Value(25)), default=Value(0), output_field=IntegerField()))
 
-        # 2. User onboarding preferences
         if hasattr(user, 'preferences'):
             prefs = user.preferences
             preferred_brands = prefs.preferred_brands or []
@@ -544,7 +301,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
             styles = prefs.style_match or []
             clothing_cats = prefs.clothing_categories or {}
 
-            # Preferred Brands (+40)
             if preferred_brands:
                 brand_q = Q()
                 for b in preferred_brands:
@@ -552,7 +308,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
                         brand_q |= Q(brand__icontains=b.strip())
                 score_parts.append(Case(When(brand_q, then=Value(40)), default=Value(0), output_field=IntegerField()))
 
-            # Color Palette (+25)
             palette_color_map = {
                 'neutral_minimalist': ['black', 'white', 'grey', 'gray', 'beige', 'navy', 'cream', 'charcoal', 'off-white'],
                 'bold_rich': ['red', 'blue', 'green', 'yellow', 'purple', 'burgundy', 'orange', 'emerald', 'crimson'],
@@ -566,7 +321,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
                     color_q |= Q(colour__icontains=c) | Q(name__icontains=c)
                 score_parts.append(Case(When(color_q, then=Value(25)), default=Value(0), output_field=IntegerField()))
 
-            # Clothing Categories (+20)
             category_keywords = []
             if isinstance(clothing_cats, dict):
                 for cat_list in clothing_cats.values():
@@ -578,7 +332,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
                     cat_q |= Q(category__icontains=ck) | Q(name__icontains=ck)
                 score_parts.append(Case(When(cat_q, then=Value(20)), default=Value(0), output_field=IntegerField()))
 
-            # Style Match (+15)
             if styles:
                 style_q = Q()
                 for s in styles:
@@ -593,18 +346,9 @@ class AffiliateProductForYouView(generics.ListAPIView):
 
     @classmethod
     def _extract_unique_diverse_pool(cls, qs, target_count, skip_count=0, seed=None, max_watches=None):
-        """
-        Extracts `target_count` unique, non-repetitive products after skipping `skip_count`.
-        1. Fairly samples candidates across all active brands in `qs` to avoid ID-based single-brand clustering.
-        2. Deduplicates multiple color/size variants of the exact same product model and identical images.
-        3. Applies seeded shuffling within relevance tiers so pull-to-refresh / new sessions
-           generate fresh discoveries, while pagination (page=2, 3...) remains deterministic and non-repeating.
-        4. When max_watches is specified, throttles watches per page to prevent watch flooding.
-        """
         needed_total = skip_count + target_count
         candidate_limit = max(needed_total * 4, 180)
 
-        # Multi-brand candidate sampling across brands in qs
         brands_in_qs = list(qs.order_by().values_list('brand', flat=True).distinct()[:8])
         if len(brands_in_qs) > 1:
             per_brand_limit = max(candidate_limit // len(brands_in_qs), 35)
@@ -614,7 +358,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
         else:
             candidates = list(qs[:candidate_limit])
 
-        # Step 1: Variant de-duplication
         seen_models = set()
         seen_images = set()
         deduped = []
@@ -635,7 +378,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
 
             deduped.append(p)
 
-        # Step 2: Seeded tiered shuffling if seed is provided
         if seed is not None and deduped:
             tiers = {}
             for p in deduped:
@@ -651,7 +393,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
                 shuffled.extend(tier_items)
             deduped = shuffled
 
-        # Step 3: Page slice with optional watch capping
         def is_watch_item(p):
             b = (p.brand or '').lower()
             n = (p.name or '').lower()
@@ -690,12 +431,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
 
     @classmethod
     def _interleave_diverse(cls, primary_batch, secondary_batch):
-        """
-        Interleaves primary and secondary items with:
-        1. Strict watch spacing (no consecutive watches, separated by at least 2 non-watches).
-        2. Brand diversity (no consecutive identical brands when alternatives exist).
-        3. Smooth distribution across the page.
-        """
         combined = []
         p_list = list(primary_batch)
         s_list = list(secondary_batch)
@@ -716,7 +451,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
             chosen_idx = 0
             found = False
 
-            # Try to pick candidate with different brand and no consecutive watches
             for src, _ in sources:
                 if not src:
                     continue
@@ -801,7 +535,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
         except (ValueError, TypeError):
             page_number = 1
 
-        # Determine discovery seed for dynamic refresh
         seed_param = self.request.query_params.get('seed')
         refresh_param = self.request.query_params.get('refresh', '').lower() in ('true', '1', 'yes')
 
@@ -860,7 +593,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
             secondary_qs, secondary_target, s_skip, seed=seed
         )
 
-        # Backfill if one pool is exhausted near catalog boundary or capped by watch throttle
         if len(primary_batch) < primary_target:
             needed = primary_target - len(primary_batch)
             extra_sec = self._extract_unique_diverse_pool(
@@ -874,7 +606,6 @@ class AffiliateProductForYouView(generics.ListAPIView):
             )
             primary_batch.extend(extra_prim)
 
-        # Interleave primary and secondary with watch throttling and brand diversity
         interleaved = self._interleave_diverse(primary_batch, secondary_batch)
 
         total_count = primary_qs.count() + secondary_qs.count()
@@ -943,104 +674,3 @@ class AffiliateProductForYouView(generics.ListAPIView):
             response.data['seed'] = self.paginator.seed
         response.data['message'] = "Personalized 'For You' products curated based on your Style DNA and balanced preferences."
         return response
-
-
-# ------------------------------------------------------------------ #
-# Product Love / Save / Wishlist System
-# ------------------------------------------------------------------ #
-
-class ProductFavoriteToggleView(APIView):
-    """
-    POST /api/affiliate/products/<id>/love/
-    POST /api/affiliate/products/<id>/favorite/
-    POST /api/affiliate/products/<id>/save/
-
-    Toggles favorite / love status on a product for the authenticated user.
-    """
-    permission_classes = [IsAuthenticated]
-    authentication_classes = [JWTAuthentication]
-
-    def post(self, request, pk):
-        try:
-            product = AffiliateProduct.objects.only('id').get(pk=pk, is_active=True)
-        except AffiliateProduct.DoesNotExist:
-            return Response({
-                'success': False,
-                'message': 'Product not found or inactive',
-                'data': None
-            }, status=status.HTTP_404_NOT_FOUND)
-
-        deleted_count, _ = ProductFavorite.objects.filter(product_id=pk, user=request.user).delete()
-        if deleted_count > 0:
-            is_loved = False
-            status_str = 'unloved'
-            message = 'Product removed from your saved wishlist'
-        else:
-            ProductFavorite.objects.create(product_id=pk, user=request.user)
-            is_loved = True
-            status_str = 'loved'
-            message = 'Product saved to your wishlist!'
-
-        favorites_count = ProductFavorite.objects.filter(product_id=pk).count()
-
-        return Response({
-            'success': True,
-            'message': message,
-            'data': {
-                'status': status_str,
-                'is_loved': is_loved,
-                'favorites_count': favorites_count,
-                'product_id': pk,
-            }
-        }, status=status.HTTP_200_OK)
-
-
-class SavedProductsListView(generics.ListAPIView):
-    """
-    GET /api/affiliate/products/saved/
-    GET /api/affiliate/products/favorites/
-
-    Returns all products loved / saved by the authenticated user with O(1) query complexity.
-    """
-    permission_classes = [IsAuthenticated]
-    authentication_classes = [JWTAuthentication]
-    serializer_class = AffiliateProductListSerializer
-    pagination_class = NewsfeedPagination
-
-    def get_queryset(self):
-        return (
-            AffiliateProduct.objects.filter(
-                favorites__user=self.request.user,
-                is_active=True
-            )
-            .order_by('-favorites__created_at')
-        )
-
-    def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        page = self.paginate_queryset(queryset)
-        if page is not None:
-            page_ids = [p.id for p in page]
-            fav_counts = dict(
-                ProductFavorite.objects.filter(product_id__in=page_ids)
-                .values('product_id')
-                .annotate(c=Count('id'))
-                .values_list('product_id', 'c')
-            )
-            for p in page:
-                p._favorites_count = fav_counts.get(p.id, 0)
-
-            # In this view, all items on the page are favorited by request.user
-            user_fav_ids = set(page_ids)
-
-            serializer = self.get_serializer(
-                page,
-                many=True,
-                context={'request': request, 'favorite_product_ids': user_fav_ids}
-            )
-            return self.get_paginated_response(serializer.data)
-
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
-
-
