@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delete Your Profile Data</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 600px; margin: auto; }
+        h1 { color: #2C3E50; }
+        p { margin-bottom: 10px; }
+        label { display: block; margin-top: 10px; }
+        input, button { width: 100%; padding: 10px; margin-top: 5px; }
+        button { background-color: #2C3E50; color: white; border: none; cursor: pointer; }
+        button:hover { background-color: #34495E; }
+    </style>
+</head>
+<body>
+    <h1>Delete Your Profile Data</h1>
+    <p>You can request permanent deletion of your profile data by completing the form below. This will not delete your account, but will remove your personal information.</p>
+    <form action="/api/users/delete-profile-data-request/" method="POST">
+        <label for="email">Email Address:</label>
+        <input type="email" id="email" name="email" placeholder="Your account email" required>
+        <button type="submit">Request Profile Data Deletion</button>
+    </form>
+</body>
+</html>

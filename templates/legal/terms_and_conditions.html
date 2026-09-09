@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terms and Conditions - VoiceMind</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #f5f7fa 0%, #e8f4f8 100%);
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(28, 163, 236, 0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1ca3ec 0%, #0d8bd9 100%);
+            color: white;
+            padding: 60px 40px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            font-weight: 700;
+            margin-bottom: 10px;
+            letter-spacing: -0.5px;
+        }
+
+        .header .effective-date {
+            font-size: 0.95em;
+            opacity: 0.95;
+            font-weight: 400;
+        }
+
+        .content {
+            padding: 50px 40px;
+        }
+
+        .intro {
+            font-size: 1.05em;
+            color: #555;
+            margin-bottom: 40px;
+            line-height: 1.8;
+            padding: 25px;
+            background: #f8fcff;
+            border-left: 4px solid #1ca3ec;
+            border-radius: 8px;
+        }
+
+        .section {
+            margin-bottom: 40px;
+            animation: fadeIn 0.6s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .section-title {
+            font-size: 1.4em;
+            font-weight: 600;
+            color: #1ca3ec;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-number {
+            background: #1ca3ec;
+            color: white;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85em;
+            font-weight: 700;
+        }
+
+        .section-content {
+            color: #555;
+            line-height: 1.8;
+        }
+
+        .section-content p {
+            margin-bottom: 15px;
+        }
+
+        ul {
+            list-style: none;
+            margin: 15px 0;
+        }
+
+        ul li {
+            padding: 8px 0 8px 30px;
+            position: relative;
+            color: #555;
+        }
+
+        ul li:before {
+            content: "•";
+            color: #1ca3ec;
+            font-weight: bold;
+            font-size: 1.4em;
+            position: absolute;
+            left: 10px;
+            top: 2px;
+        }
+
+        .highlight-box {
+            background: linear-gradient(135deg, #e8f7fd 0%, #f0f9ff 100%);
+            border: 2px solid #1ca3ec;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .warning-box {
+            background: linear-gradient(135deg, #fff5e6 0%, #fff9f0 100%);
+            border: 2px solid #ff9800;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        .warning-box strong {
+            color: #ff6f00;
+        }
+
+        .contact-box {
+            background: #f8fcff;
+            border-radius: 12px;
+            padding: 25px;
+            margin-top: 20px;
+            border: 1px solid #d4eef9;
+        }
+
+        .contact-box strong {
+            color: #1ca3ec;
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        .contact-box a {
+            color: #1ca3ec;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .contact-box a:hover {
+            text-decoration: underline;
+        }
+
+        .footer {
+            background: #f8f9fa;
+            padding: 30px 40px;
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+            border-top: 1px solid #e0e0e0;
+        }
+
+        .footer-logo {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: #1ca3ec;
+            margin-bottom: 10px;
+        }
+
+        @media (max-width: 768px) {
+            .header {
+                padding: 40px 25px;
+            }
+
+            .header h1 {
+                font-size: 2em;
+            }
+
+            .content {
+                padding: 30px 25px;
+            }
+
+            .section-title {
+                font-size: 1.2em;
+            }
+
+            .footer {
+                padding: 25px 20px;
+            }
+        }
+
+        strong {
+            color: #222;
+            font-weight: 600;
+        }
+
+        .emphasis {
+            color: #1ca3ec;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Terms and Conditions</h1>
+            <div class="effective-date">Effective Date: [Insert Date]</div>
+        </div>
+
+        <div class="content">
+            <div class="intro">
+                Welcome to VoiceMind, operated by VoiceMind PTY Ltd ("VoiceMind," "we," "us," or "our"). By downloading, accessing, or using the VoiceMind mobile application ("the App"), you agree to these Terms and Conditions. Please read them carefully.
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">1</span>
+                    Company Information
+                </h2>
+                <div class="section-content">
+                    <div class="contact-box">
+                        <strong>VoiceMind PTY Ltd</strong>
+                        <p>Registered in South Africa<br>
+                        Address: [Insert Province/State], South Africa</p>
+                        <strong>Email:</strong> <a href="mailto:info@voicemind.co.za">info@voicemind.co.za</a><br>
+                        <strong>Website:</strong> <a href="https://voicemind.co.za" target="_blank">https://voicemind.co.za</a>
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">2</span>
+                    Acceptance of Terms
+                </h2>
+                <div class="section-content">
+                    <p>By using the App, you confirm that you are at least 18 years old or have obtained parental or guardian consent if aged between 12 and 17. If you do not agree with these Terms, do not use the App.</p>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">3</span>
+                    App Overview
+                </h2>
+                <div class="section-content">
+                    <p>VoiceMind provides AI-powered mental wellness support, including chatbot interactions, voice features, and mental exercise tools.</p>
+                    <div class="warning-box">
+                        <strong>Important Notice:</strong> VoiceMind is designed for educational and supportive purposes only and does not replace professional medical advice or therapy.
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">4</span>
+                    User Accounts
+                </h2>
+                <div class="section-content">
+                    <p>Users may sign up using email/password, Google, or Apple login. You are responsible for maintaining the confidentiality of your account and password. You agree to provide accurate and complete information.</p>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">5</span>
+                    Subscriptions and Payments
+                </h2>
+                <div class="section-content">
+                    <p>VoiceMind offers subscription-based access to certain features. Payments are securely processed via Stripe. Subscription terms, renewal options, and cancellation policies are presented at the time of purchase.</p>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">6</span>
+                    User Content
+                </h2>
+                <div class="section-content">
+                    <p>You may upload or create content such as journal entries or voice recordings. You retain ownership of your content but grant VoiceMind a limited license to store, process, and display it for app functionality. You are solely responsible for your content.</p>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">7</span>
+                    Community Code of Conduct
+                </h2>
+                <div class="section-content">
+                    <p>By using VoiceMind, you agree not to:</p>
+                    <ul>
+                        <li>Use the App for any unlawful or harmful purpose</li>
+                        <li>Harass, abuse, or intimidate other users</li>
+                        <li>Post or share offensive, discriminatory, or explicit content</li>
+                        <li>Misuse the AI or attempt to manipulate responses in harmful ways</li>
+                    </ul>
+                    <div class="highlight-box">
+                        <strong>Enforcement:</strong> VoiceMind reserves the right to suspend or terminate accounts violating these terms.
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">8</span>
+                    Intellectual Property
+                </h2>
+                <div class="section-content">
+                    <p>All intellectual property related to VoiceMind, including trademarks, software, design, and content (excluding user-generated content), remains the property of VoiceMind PTY Ltd.</p>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">9</span>
+                    Disclaimers
+                </h2>
+                <div class="section-content">
+                    <div class="warning-box">
+                        <strong>Medical Disclaimer:</strong> VoiceMind is not a medical or therapeutic service. The information and interactions provided are for general educational and emotional support purposes only and do not constitute medical advice. Always seek professional guidance for mental health concerns.
+                    </div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">10</span>
+                    Limitation of Liability
+                </h2>
+                <div class="section-content">
+                    <p>To the fullest extent permitted by South African law, VoiceMind PTY Ltd shall not be liable for any indirect, incidental, or consequential damages arising from the use of the App.</p>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">11</span>
+                    Termination
+                </h2>
+                <div class="section-content">
+                    <p>Users may delete their account at any time through the App. VoiceMind reserves the right to suspend or terminate access if a user violates these Terms or misuses the App.</p>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">12</span>
+                    Governing Law
+                </h2>
+                <div class="section-content">
+                    <p>These Terms are governed by and construed in accordance with the laws of South Africa. Any disputes shall be subject to the exclusive jurisdiction of South African courts.</p>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2 class="section-title">
+                    <span class="section-number">13</span>
+                    Contact Information
+                </h2>
+                <div class="section-content">
+                    <p>For any inquiries or legal matters, contact:</p>
+                    <div class="contact-box">
+                        <strong>Email:</strong> <a href="mailto:info@voicemind.co.za">info@voicemind.co.za</a><br>
+                        <strong>Website:</strong> <a href="https://voicemind.co.za" target="_blank">https://voicemind.co.za</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <div class="footer-logo">VoiceMind</div>
+            <p>© 2025 VoiceMind PTY Ltd. All rights reserved.</p>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,76 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# Django
+db.sqlite3
+db.sqlite3-journal
+*.log
+local_settings.py
+db.sqlite3
+/static/
+/staticfiles/
+/media/
+/profile_pictures/
+/today_outfits/
+/closet_items/
+
+# Secrets and Credentials
+.env
+.env.*
+*.json
+!firebase_service_account.json.example
+!MyClosly_API_Postman_Collection.json
+MyClosly_API_Postman_Collection.json
+
+# Firebase Service Account (real key file)
+my-closly-firebase-adminsdk-*.json
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Large Project Documents / PDFs
+*.pdf
+My Closly New.pdf
+
+# Data Feeds
+*.csv
+*.csv.gz

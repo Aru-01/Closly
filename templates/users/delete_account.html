@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Delete Your VoiceMind Account</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 600px; margin: auto; }
+    h1 { color: #2C3E50; }
+    p { margin-bottom: 10px; }
+    label { display: block; margin-top: 10px; }
+    input, textarea, button { width: 100%; padding: 10px; margin-top: 5px; }
+    button { background-color: #2C3E50; color: white; border: none; cursor: pointer; }
+    button:hover { background-color: #34495E; }
+  </style>
+</head>
+<body>
+  <h1>Delete Your VoiceMind Account</h1>
+  
+  <p>We’re sorry to see you go. You can request permanent deletion of your VoiceMind account and all associated data by completing the form below.</p>
+  
+  <form action="/api/users/delete-account-request/" method="POST">
+    <label for="name">Full Name:</label>
+    <input type="text" id="name" name="name" placeholder="Your full name" required>
+    
+    <label for="email">Email Address:</label>
+    <input type="email" id="email" name="email" placeholder="Your account email" required>
+    
+    <label for="confirmation">
+      <input type="checkbox" id="confirmation" name="confirmation" required>
+      I confirm that I want to permanently delete my VoiceMind account and all associated data.
+    </label>
+    
+    <button type="submit">Request Account Deletion</button>
+  </form>
+
+  <p>After submitting this form, our team will verify your account and process your deletion request. You will receive a confirmation email once your data has been permanently deleted.</p>
+
+  <p>If you have any questions, please contact us at <a href="mailto:info@voicemind.co.za">info@voicemind.co.za</a>.</p>
+</body>
+</html>
