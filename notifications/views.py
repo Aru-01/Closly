@@ -1,3 +1,5 @@
+from datetime import timedelta
+from django.utils import timezone
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -28,7 +30,7 @@ class StandardNotificationPagination(PageNumberPagination):
 @extend_schema(
     tags=["User Notifications"],
     summary="List User Notifications",
-    description="Retrieve paginated in-app notifications for authenticated user, with unread count and unread_only filter.",
+    description="Retrieve paginated in-app notifications for authenticated user, with unread count and unread_only filter. Only notifications within the last 60 days are retained.",
     parameters=[
         OpenApiParameter('unread_only', bool, description="Filter only unread notifications if true"),
     ],
@@ -48,7 +50,8 @@ class NotificationListView(generics.ListAPIView):
     pagination_class = StandardNotificationPagination
 
     def get_queryset(self):
-        qs = Notification.objects.filter(recipient=self.request.user).select_related('sender')
+        cutoff = timezone.now() - timedelta(days=60)
+        qs = Notification.objects.filter(recipient=self.request.user, created_at__gte=cutoff).select_related('sender')
         unread_only = self.request.query_params.get('unread_only')
         if unread_only and unread_only.lower() in ['true', '1']:
             qs = qs.filter(is_read=False)
@@ -56,9 +59,43 @@ class NotificationListView(generics.ListAPIView):
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
-        unread_count = Notification.objects.filter(recipient=request.user, is_read=False).count()
+        cutoff = timezone.now() - timedelta(days=60)
+        unread_count = Notification.objects.filter(recipient=request.user, is_read=False, created_at__gte=cutoff).count()
         response.data['unread_count'] = unread_count
         return response
+
+
+@extend_schema(
+    tags=["User Notifications"],
+    summary="Delete Single Notification",
+    description="Permanently delete a specific in-app notification by ID for the authenticated user.",
+    responses={
+        200: OpenApiResponse(description="Notification deleted successfully"),
+        404: OpenApiResponse(description="Notification not found"),
+    }
+)
+class NotificationDeleteView(APIView):
+    """
+    API endpoint to delete a single notification.
+    
+    DELETE /api/notifications/<id>/
+    POST /api/notifications/<id>/delete/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def delete(self, request, pk):
+        notification = get_object_or_404(Notification, pk=pk, recipient=request.user)
+        notification_id = notification.id
+        notification.delete()
+        return Response({
+            'success': True,
+            'message': 'Notification deleted successfully.',
+            'data': {'id': notification_id}
+        }, status=status.HTTP_200_OK)
+
+    def post(self, request, pk):
+        return self.delete(request, pk)
 
 
 @extend_schema(
@@ -108,9 +145,11 @@ class NotificationMarkAllReadView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def post(self, request):
-        updated_count = Notification.objects.filter(recipient=request.user, is_read=False).update(is_read=True)
+        cutoff = timezone.now() - timedelta(days=60)
+        updated_count = Notification.objects.filter(recipient=request.user, is_read=False, created_at__gte=cutoff).update(is_read=True)
         return Response({
             'success': True,
             'message': f'Marked {updated_count} notifications as read.',
             'data': {'updated_count': updated_count}
         }, status=status.HTTP_200_OK)
+

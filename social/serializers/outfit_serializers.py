@@ -27,7 +27,7 @@ class UserSimpleSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'name', 'country', 'city', 'profile_picture', 'is_online', 'last_seen']
+        fields = ['id', 'name', 'profile_picture', 'is_online', 'last_seen']
 
     def get_profile_picture(self, obj):
         if not getattr(obj, 'is_active', True):
@@ -55,8 +55,6 @@ class UserSimpleSerializer(serializers.ModelSerializer):
         if not getattr(instance, 'is_active', True):
             ret['name'] = 'Deleted User'
             ret['profile_picture'] = None
-            ret['city'] = None
-            ret['country'] = None
             ret['is_online'] = False
             ret['last_seen'] = None
         return ret

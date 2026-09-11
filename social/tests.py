@@ -568,5 +568,41 @@ class SocialApiTests(TestCase):
         self.assertEqual(len(likers), 1)
         self.assertIn('is_online', likers[0])
         self.assertIn('last_seen', likers[0])
+        self.assertNotIn('email', likers[0])
+
+    def test_simple_user_representation_excludes_email_country_city(self):
+        dummy_image = SimpleUploadedFile("outfit.jpg", b"file_content", content_type="image/jpeg")
+        outfit = TodayOutfit.objects.create(user=self.user1, image=dummy_image, caption="Outfit test", visibility="public")
+        
+        # Test my-outfits response user payload
+        outfit_res = self.client.get('/api/social/my-outfits/')
+        self.assertEqual(outfit_res.status_code, status.HTTP_200_OK)
+        outfit_user = outfit_res.data['data']['results'][0]['user']
+        self.assertEqual(outfit_user['id'], str(self.user1.id))
+        self.assertEqual(outfit_user['name'], self.user1.name)
+        self.assertIn('is_online', outfit_user)
+        self.assertIn('last_seen', outfit_user)
+        self.assertNotIn('email', outfit_user)
+        self.assertNotIn('country', outfit_user)
+        self.assertNotIn('city', outfit_user)
+
+        # Test direct message sender & recipient payload
+        msg_res = self.client.post('/api/social/messages/', {
+            'recipient_id': str(self.user2.id),
+            'content': 'Field test'
+        })
+        self.assertEqual(msg_res.status_code, status.HTTP_201_CREATED)
+        sender_data = msg_res.data['data']['sender']
+        recipient_data = msg_res.data['data']['recipient']
+        for u_data in [sender_data, recipient_data]:
+            self.assertIn('id', u_data)
+            self.assertIn('name', u_data)
+            self.assertIn('profile_picture', u_data)
+            self.assertIn('is_online', u_data)
+            self.assertIn('last_seen', u_data)
+            self.assertNotIn('email', u_data)
+            self.assertNotIn('country', u_data)
+            self.assertNotIn('city', u_data)
+
 
 

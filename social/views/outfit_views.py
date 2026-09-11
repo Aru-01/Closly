@@ -534,7 +534,6 @@ class OutfitLikersListView(APIView):
             likers_data.append({
                 'id': str(u.id),
                 'name': u.name,
-                'email': u.email,
                 'profile_picture': pic_url,
                 'is_following': (u.id in following_user_ids),
                 'is_online': True if is_self else is_user_online(u.id),

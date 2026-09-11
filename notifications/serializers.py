@@ -13,7 +13,7 @@ class NotificationSenderSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'name', 'profile_picture', 'is_online', 'last_seen']
+        fields = ['id', 'name', 'profile_picture', 'is_online', 'last_seen']
 
     def get_profile_picture(self, obj):
         if obj.profile_picture:

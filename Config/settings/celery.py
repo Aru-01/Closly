@@ -57,4 +57,8 @@ CELERY_BEAT_SCHEDULE = {
         "task": "affiliate.tasks.sync_rakuten_feeds_task",
         "schedule": 18000.0,  # runs every 5 hours (18,000s) to keep Rakuten inventory fresh
     },
+    "cleanup-old-notifications-daily": {
+        "task": "notifications.tasks.cleanup_old_notifications_task",
+        "schedule": 86400.0,  # runs once daily (86,400s) to purge notifications older than 60 days
+    },
 }
