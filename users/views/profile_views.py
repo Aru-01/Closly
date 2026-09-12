@@ -13,11 +13,21 @@ from users.serializers import (
     UserProfileUpdateSerializer,
     LanguagePreferenceSerializer,
 )
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 from .base import standard_response
 
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
+@extend_schema(
+    tags=["User Profile & Preferences"],
+    summary="User Profile (Get / Update)",
+    description="Retrieve or update authenticated user profile details, bio, location, and avatar.",
+    responses={
+        200: UserProfileSerializer,
+        400: OpenApiResponse(description="Validation error"),
+    }
+)
 class UserProfileView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication, FirebaseAuthentication]
@@ -95,6 +105,16 @@ class UserProfileView(APIView):
 
 
 
+@extend_schema(
+    tags=["User Profile & Preferences"],
+    summary="Set Preferred Language",
+    description="Updates user interface language preference (e.g. 'en', 'fr', 'es', 'de').",
+    request=LanguagePreferenceSerializer,
+    responses={
+        200: OpenApiResponse(description="Language preference updated successfully"),
+        400: OpenApiResponse(description="Invalid language code"),
+    }
+)
 class SetLanguageView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication, FirebaseAuthentication]
@@ -120,6 +140,15 @@ from users.models import UserPreference
 from users.serializers import UserPreferenceSerializer
 
 
+@extend_schema(
+    tags=["User Profile & Preferences"],
+    summary="Fashion Styling Preferences & Onboarding",
+    description="Retrieve or update dynamic onboarding choices, body measurements, style match, color palette, and preferred brands.",
+    responses={
+        200: OpenApiResponse(description="Preferences retrieved or saved successfully"),
+        400: OpenApiResponse(description="Invalid preference data"),
+    }
+)
 class UserPreferenceView(APIView):
     """
     GET  /api/users/preferences/
@@ -189,6 +218,14 @@ class UserPreferenceView(APIView):
         return self.post(request)
 
 
+@extend_schema(
+    tags=["User Profile & Preferences"],
+    summary="Shareable Profile Link & Referral Code",
+    description="Returns user's unique profile link, referral code, pre-composed invite text, and mobile app deep-link.",
+    responses={
+        200: OpenApiResponse(description="Shareable profile details and deep-links"),
+    }
+)
 class ShareProfileAPIView(APIView):
     """
     API endpoint to retrieve user's shareable profile link, referral code, and share text.
@@ -220,6 +257,15 @@ class ShareProfileAPIView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=["User Profile & Preferences"],
+    summary="Public Web Profile Landing Page",
+    description="Renders luxury mobile-first web landing page for a shared profile with deep-link CTA into Closly app.",
+    responses={
+        200: OpenApiResponse(description="HTML profile page rendered"),
+        404: OpenApiResponse(description="User profile not found"),
+    }
+)
 class PublicProfileWebView(APIView):
     """
     Public web landing page for a shared profile.

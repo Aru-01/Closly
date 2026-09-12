@@ -14,6 +14,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from users.models import AccountDeletionRequest, ProfileDataDeletionRequest
 from users.serializers import AccountDeleteSerializer
 from users.utils import send_account_deletion_email
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 from .base import standard_response
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,14 @@ User = get_user_model()
 def delete_profile_data_request_view(request):
     return render(request, 'users/delete_profile_data_request.html')
 
+@extend_schema(
+    tags=["Account Privacy & GDPR"],
+    summary="Request Profile Data Erasure (Web Form)",
+    description="Submit a request to anonymize and clear user profile information. Sends a verification link to email.",
+    responses={
+        200: OpenApiResponse(description="Profile erasure request received"),
+    }
+)
 @method_decorator(csrf_exempt, name='dispatch')
 class ProfileDataDeletionAPIView(APIView):
     permission_classes = [AllowAny]
@@ -54,6 +63,15 @@ class ProfileDataDeletionAPIView(APIView):
                 logger.error(f"Error sending profile data deletion email to {email}: {str(e)}")
         return render(request, 'users/delete_profile_data_submitted.html')
 
+@extend_schema(
+    tags=["Account Privacy & GDPR"],
+    summary="Verify Profile Data Erasure Token",
+    description="Validates email token and scrubs profile attributes (name, bio, DOB, picture) while retaining account authentication.",
+    responses={
+        200: OpenApiResponse(description="Profile data scrubbed successfully"),
+        400: OpenApiResponse(description="Invalid or expired verification token"),
+    }
+)
 class VerifyProfileDataDeletionView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -89,6 +107,15 @@ User = get_user_model()
 @csrf_exempt
 def account_deletion_request_view(request):
     return render(request, 'users/delete_account.html')
+
+@extend_schema(
+    tags=["Account Privacy & GDPR"],
+    summary="Request Account Deletion (Web Form)",
+    description="Submit a GDPR / Google Play compliant account deletion request via web. Sends confirmation link to user's email.",
+    responses={
+        200: OpenApiResponse(description="Account deletion request received"),
+    }
+)
 @method_decorator(csrf_exempt, name='dispatch')
 class AccountDeletionAPIView(APIView):
     permission_classes = [AllowAny]
@@ -125,6 +152,15 @@ class AccountDeletionAPIView(APIView):
         return render(request, 'users/deletion_request_submitted.html')
 
 
+@extend_schema(
+    tags=["Account Privacy & GDPR"],
+    summary="Verify Account Deletion Token",
+    description="Validates email token and permanently destroys user account and associated private data.",
+    responses={
+        200: OpenApiResponse(description="Account deleted successfully"),
+        400: OpenApiResponse(description="Invalid or expired verification token"),
+    }
+)
 class VerifyAccountDeletionView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -149,6 +185,16 @@ class VerifyAccountDeletionView(APIView):
 
 
 
+@extend_schema(
+    tags=["Account Privacy & GDPR"],
+    summary="Delete Account (In-App Authenticated)",
+    description="Allows authenticated user to permanently delete their account with password confirmation directly from the mobile app.",
+    request=AccountDeleteSerializer,
+    responses={
+        200: OpenApiResponse(description="Account permanently deleted"),
+        400: OpenApiResponse(description="Incorrect password or validation error"),
+    }
+)
 class AccountDeleteView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]

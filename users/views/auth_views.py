@@ -8,6 +8,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 from users.models import UserLoginHistory
 from users.serializers import (
@@ -34,6 +35,16 @@ from .base import standard_response
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
+@extend_schema(
+    tags=["Authentication & Security"],
+    summary="User Registration / Signup",
+    description="Register a new user account with email, password, and optional referral code. Dispatches a 4-digit activation OTP to user's email.",
+    request=UserRegistrationSerializer,
+    responses={
+        201: OpenApiResponse(description="Registration successful, OTP dispatched to email"),
+        400: OpenApiResponse(description="Validation error or duplicate email"),
+    }
+)
 class UserRegistrationView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -84,6 +95,16 @@ class UserRegistrationView(APIView):
         )
 
 
+@extend_schema(
+    tags=["Authentication & Security"],
+    summary="Email & Password Login",
+    description="Authenticate with registered email and password. Returns JWT access and refresh tokens, user profile metadata, and onboarding status.",
+    request=UserLoginSerializer,
+    responses={
+        200: OpenApiResponse(description="Login successful with JWT access & refresh tokens"),
+        401: OpenApiResponse(description="Invalid credentials or inactive account"),
+    }
+)
 class UserLoginView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -164,6 +185,15 @@ class UserLoginView(APIView):
         )
 
 
+@extend_schema(
+    tags=["Authentication & Security"],
+    summary="User Logout",
+    description="Invalidates and blacklists the provided JWT refresh token to securely terminate the session.",
+    responses={
+        200: OpenApiResponse(description="Logout successful, refresh token blacklisted"),
+        400: OpenApiResponse(description="Invalid or expired token"),
+    }
+)
 class UserLogoutView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
@@ -220,6 +250,16 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+@extend_schema(
+    tags=["Authentication & Security"],
+    summary="Firebase Social Login (Google / Apple)",
+    description="Authenticate or register user using a Firebase ID token. Generates Closly JWT access and refresh tokens.",
+    request=FirebaseAuthSerializer,
+    responses={
+        200: OpenApiResponse(description="Authentication successful with JWT tokens"),
+        400: OpenApiResponse(description="Invalid Firebase token or missing email"),
+    }
+)
 class FirebaseAuthView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -367,6 +407,17 @@ API Views - Part 2: Email Verification, Password Management, Profile
 """
 
 
+@extend_schema(
+    tags=["Authentication & Security"],
+    summary="Verify Registration OTP",
+    description="Verify 4-digit OTP sent to email during registration to activate the user account.",
+    request=VerifyOTPSerializer,
+    responses={
+        200: OpenApiResponse(description="OTP verified successfully, account activated"),
+        400: OpenApiResponse(description="Invalid or expired OTP"),
+        404: OpenApiResponse(description="User not found"),
+    }
+)
 class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -404,6 +455,18 @@ class VerifyOTPView(APIView):
                 return standard_response(success=False, message="User not found.", status_code=status.HTTP_404_NOT_FOUND)
         return standard_response(success=False, message="Invalid data.", errors=serializer.errors, status_code=status.HTTP_400_BAD_REQUEST)
 
+@extend_schema(
+    tags=["Authentication & Security"],
+    summary="Resend Registration OTP",
+    description="Resends a fresh 4-digit activation OTP to the specified email address (throttled to once per 2 minutes).",
+    request=ResendOTPSerializer,
+    responses={
+        200: OpenApiResponse(description="OTP resent to email"),
+        400: OpenApiResponse(description="Account already active or invalid data"),
+        404: OpenApiResponse(description="User not found"),
+        429: OpenApiResponse(description="Rate limit exceeded, retry after cooldown"),
+    }
+)
 class ResendOTPView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -447,6 +510,15 @@ class ResendOTPView(APIView):
 
 
 
+@extend_schema(
+    tags=["Authentication & Security"],
+    summary="Refresh JWT Access Token",
+    description="Exchange a valid JWT refresh token for a new access token.",
+    responses={
+        200: OpenApiResponse(description="Token refreshed successfully"),
+        401: OpenApiResponse(description="Invalid or expired refresh token"),
+    }
+)
 class CustomTokenRefreshView(TokenRefreshView):
     """
     Custom token refresh view with standard response format
@@ -495,6 +567,15 @@ class CustomTokenRefreshView(TokenRefreshView):
             )
 
 
+@extend_schema(
+    tags=["Authentication & Security"],
+    summary="Verify JWT Token",
+    description="Verify if a given JWT access token is valid and unexpired.",
+    responses={
+        200: OpenApiResponse(description="Token is valid"),
+        401: OpenApiResponse(description="Token is invalid or expired"),
+    }
+)
 class CustomTokenVerifyView(TokenVerifyView):
     """
     Custom token verify view with standard response format

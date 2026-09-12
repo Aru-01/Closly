@@ -5,6 +5,7 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 from users.serializers import (
     PasswordResetRequestSerializer,
@@ -19,6 +20,17 @@ from .base import standard_response
 logger = logging.getLogger(__name__)
 User = get_user_model()
 
+@extend_schema(
+    tags=["Authentication & Security"],
+    summary="Request Password Reset OTP",
+    description="Sends a 4-digit password reset OTP to user's registered email address (throttled to once per 2 minutes).",
+    request=PasswordResetRequestSerializer,
+    responses={
+        200: OpenApiResponse(description="Password reset OTP dispatched to email"),
+        400: OpenApiResponse(description="Invalid email format"),
+        429: OpenApiResponse(description="Rate limit exceeded, retry after cooldown"),
+    }
+)
 class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -85,6 +97,17 @@ class PasswordResetRequestView(APIView):
         )
 
 
+@extend_schema(
+    tags=["Authentication & Security"],
+    summary="Verify Password Reset OTP",
+    description="Verifies the 4-digit password reset OTP sent to email. Sets verification flag to authorize password change.",
+    request=PasswordResetOTPVerifySerializer,
+    responses={
+        200: OpenApiResponse(description="OTP verified successfully"),
+        400: OpenApiResponse(description="Invalid or expired OTP"),
+        404: OpenApiResponse(description="User not found"),
+    }
+)
 class PasswordResetOTPVerifyView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -133,6 +156,17 @@ class PasswordResetOTPVerifyView(APIView):
         )
 
 
+@extend_schema(
+    tags=["Authentication & Security"],
+    summary="Confirm Password Reset",
+    description="Sets a new password after successful OTP verification.",
+    request=PasswordResetConfirmSerializer,
+    responses={
+        200: OpenApiResponse(description="Password reset successful"),
+        400: OpenApiResponse(description="Unverified OTP, passwords do not match, or validation failed"),
+        404: OpenApiResponse(description="User not found"),
+    }
+)
 class PasswordResetConfirmView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -198,6 +232,16 @@ class PasswordResetConfirmView(APIView):
         )
 
 
+@extend_schema(
+    tags=["Authentication & Security"],
+    summary="Change Password (Authenticated)",
+    description="Change account password for currently authenticated user by providing old and new password.",
+    request=PasswordChangeSerializer,
+    responses={
+        200: OpenApiResponse(description="Password changed successfully"),
+        400: OpenApiResponse(description="Incorrect current password or invalid new password"),
+    }
+)
 class PasswordChangeView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
