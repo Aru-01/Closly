@@ -12,10 +12,22 @@ from django.utils import timezone
 from social.models import UserFollow, TodayOutfit, OutfitLike
 from social.serializers import UserFollowSerializer, TodayOutfitSerializer
 from .outfit_views import StandardSocialPagination
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
 
 User = get_user_model()
 from social.dna import calculate_dna_match
 
+
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="Follow or Unfollow User",
+    description="Toggle following relationship for another user profile.",
+    responses={
+        200: OpenApiResponse(description="Follow status updated successfully"),
+        400: OpenApiResponse(description="Cannot follow self or invalid user ID"),
+        404: OpenApiResponse(description="User not found"),
+    }
+)
 class UserFollowToggleView(APIView):
     """
     API endpoint to follow or unfollow another user.
@@ -73,6 +85,17 @@ class UserFollowToggleView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="List User Followers",
+    description="Retrieve paginated list of users following a specified user with DNA styling match scores.",
+    parameters=[
+        OpenApiParameter('tab', str, description="Filter tab: 'all', 'dna_match', 'new_followers', 'same_location'"),
+    ],
+    responses={
+        200: UserFollowSerializer(many=True),
+    }
+)
 class UserFollowersListView(generics.ListAPIView):
     """
     API endpoint to list followers of a user.
@@ -129,6 +152,17 @@ class UserFollowersListView(generics.ListAPIView):
         return response
 
 
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="List User Following",
+    description="Retrieve paginated list of creators that a specified user is following.",
+    parameters=[
+        OpenApiParameter('tab', str, description="Filter tab: 'all', 'dna_match', 'new_followers', 'same_location'"),
+    ],
+    responses={
+        200: UserFollowSerializer(many=True),
+    }
+)
 class UserFollowingListView(generics.ListAPIView):
     """
     API endpoint to list users followed by a user.
@@ -185,6 +219,17 @@ class UserFollowingListView(generics.ListAPIView):
         return response
 
 
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="List My Following",
+    description="Retrieve creators that the authenticated user is currently following.",
+    parameters=[
+        OpenApiParameter('tab', str, description="Filter tab: 'all', 'dna_match', 'new_followers', 'same_location'"),
+    ],
+    responses={
+        200: UserFollowSerializer(many=True),
+    }
+)
 class MyFollowingListView(UserFollowingListView):
     """
     Direct endpoint for authenticated user to see who they follow (Self Profile).
@@ -196,6 +241,17 @@ class MyFollowingListView(UserFollowingListView):
         return super().get_queryset()
 
 
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="List My Followers",
+    description="Retrieve users currently following the authenticated user.",
+    parameters=[
+        OpenApiParameter('tab', str, description="Filter tab: 'all', 'dna_match', 'new_followers', 'same_location'"),
+    ],
+    responses={
+        200: UserFollowSerializer(many=True),
+    }
+)
 class MyFollowersListView(UserFollowersListView):
     """
     Direct endpoint for authenticated user to see their followers (Self Profile).
@@ -207,6 +263,15 @@ class MyFollowersListView(UserFollowersListView):
         return super().get_queryset()
 
 
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="View Other User Profile",
+    description="View another creator's profile, follow status, fashion style DNA match percentage, and stats.",
+    responses={
+        200: OpenApiResponse(description="Profile details and DNA style match score"),
+        404: OpenApiResponse(description="User not found"),
+    }
+)
 class OtherUserProfileView(APIView):
     """
     API endpoint to view another user's profile with real-time Style DNA match percentage.
@@ -269,6 +334,14 @@ class OtherUserProfileView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="List User Public Outfits",
+    description="Paginated list of public outfits published by a specific user.",
+    responses={
+        200: TodayOutfitSerializer(many=True),
+    }
+)
 class UserOutfitsListView(generics.ListAPIView):
     """
     API endpoint to view another user's public outfits grid (e.g. from their profile).

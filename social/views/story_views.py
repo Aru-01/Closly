@@ -15,6 +15,7 @@ from social.serializers import (
     StorySerializer,
     StoryViewerSerializer,
 )
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 User = get_user_model()
 from .outfit_views import StandardSocialPagination
@@ -106,6 +107,15 @@ def get_active_stories_for_user(request_user, request=None):
 User = get_user_model()
 
 
+@extend_schema(
+    tags=["Stories & Ephemeral Moments"],
+    summary="Create 24h Ephemeral Story",
+    description="Upload and publish a 24-hour fashion story with photo and caption.",
+    responses={
+        201: StorySerializer,
+        400: OpenApiResponse(description="Validation error or missing image"),
+    }
+)
 class StoryCreateView(APIView):
     """
     API endpoint to upload/post a new story (24-hour expiration).
@@ -152,6 +162,14 @@ class StoryCreateView(APIView):
         }, status=status.HTTP_400_BAD_REQUEST)
 
 
+@extend_schema(
+    tags=["Stories & Ephemeral Moments"],
+    summary="Active Stories Tray (Feed)",
+    description="Retrieve active 24-hour stories grouped by followed creators and current user.",
+    responses={
+        200: OpenApiResponse(description="Active stories grouped by author"),
+    }
+)
 class StoryFeedView(APIView):
     """
     API endpoint to retrieve active stories (24 hours) grouped by user
@@ -171,6 +189,14 @@ class StoryFeedView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=["Stories & Ephemeral Moments"],
+    summary="List My Active Stories",
+    description="Retrieve authenticated user's own active stories with viewer counts.",
+    responses={
+        200: StorySerializer(many=True),
+    }
+)
 class MyStoriesListView(APIView):
     """
     API endpoint to retrieve authenticated user's own active stories with viewer counts.
@@ -196,6 +222,15 @@ class MyStoriesListView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=["Stories & Ephemeral Moments"],
+    summary="Record Story View",
+    description="Mark a 24-hour story as viewed by the authenticated user.",
+    responses={
+        200: OpenApiResponse(description="Story view recorded successfully"),
+        410: OpenApiResponse(description="Story has expired"),
+    }
+)
 class StoryViewRecordView(APIView):
     """
     API endpoint to record that the authenticated user has viewed a story.
@@ -237,6 +272,15 @@ class StoryViewRecordView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=["Stories & Ephemeral Moments"],
+    summary="Toggle Story Reaction / Love",
+    description="Love or unlove a 24-hour fashion story.",
+    responses={
+        200: OpenApiResponse(description="Reaction toggled successfully"),
+        410: OpenApiResponse(description="Story has expired"),
+    }
+)
 class StoryLikeToggleView(APIView):
     """
     API endpoint to love/heart or unlove a story.
@@ -275,6 +319,16 @@ class StoryLikeToggleView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=["Stories & Ephemeral Moments"],
+    summary="Reply to Story via Direct Message",
+    description="Send an instant direct message reply to the story author.",
+    responses={
+        201: DirectMessageSerializer,
+        400: OpenApiResponse(description="Self-reply or missing message content"),
+        410: OpenApiResponse(description="Story has expired"),
+    }
+)
 class StoryReplyView(APIView):
     """
     API endpoint to reply to a story with a message.
@@ -325,6 +379,14 @@ class StoryReplyView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(
+    tags=["Stories & Ephemeral Moments"],
+    summary="List Story Viewers & Likes",
+    description="Owner-only endpoint to view list of users who viewed or loved their story.",
+    responses={
+        200: StoryViewerSerializer(many=True),
+    }
+)
 class StoryViewersListView(generics.ListAPIView):
     """
     API endpoint for the story owner to see who viewed their story and who loved it.
@@ -354,6 +416,15 @@ class StoryViewersListView(generics.ListAPIView):
 
 
 
+@extend_schema(
+    tags=["Stories & Ephemeral Moments"],
+    summary="Delete Story",
+    description="Delete an active story before its 24h expiry.",
+    responses={
+        200: OpenApiResponse(description="Story deleted successfully"),
+        404: OpenApiResponse(description="Story not found or not owner"),
+    }
+)
 class StoryDeleteView(APIView):
     """
     API endpoint to delete authenticated user's own story.

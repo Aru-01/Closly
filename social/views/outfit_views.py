@@ -11,6 +11,7 @@ from django.utils import timezone
 
 from social.models import TodayOutfit, OutfitLike, UserFollow
 from social.serializers import TodayOutfitSerializer
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
 
 User = get_user_model()
 
@@ -101,6 +102,15 @@ def infer_weather_tag(user, caption, explicit_weather=None):
     return 'mild'
 
 
+@extend_schema(
+    tags=["Outfits & Looks"],
+    summary="Post Today's Look / Outfit",
+    description="Create and publish a daily outfit lookbook entry with multiple photos, tagged wardrobe items, and caption.",
+    responses={
+        201: TodayOutfitSerializer,
+        400: OpenApiResponse(description="Validation error"),
+    }
+)
 class TodayOutfitCreateView(generics.CreateAPIView):
     """
     API endpoint for uploading today's outfit.
@@ -153,6 +163,14 @@ class TodayOutfitCreateView(generics.CreateAPIView):
         }, status=status.HTTP_400_BAD_REQUEST)
 
 
+@extend_schema(
+    tags=["Outfits & Looks"],
+    summary="List My Created Outfits",
+    description="Retrieve paginated list of outfits created by the authenticated user (both public and private).",
+    responses={
+        200: TodayOutfitSerializer(many=True),
+    }
+)
 class MyOutfitsListView(generics.ListAPIView):
     """
     API endpoint to list user's own outfit history (both private and public).
@@ -195,6 +213,16 @@ class MyOutfitsListView(generics.ListAPIView):
 
 
 
+@extend_schema(
+    tags=["Outfits & Looks"],
+    summary="Toggle Outfit Like",
+    description="Like or unlike an outfit post.",
+    responses={
+        200: OpenApiResponse(description="Like status updated successfully"),
+        403: OpenApiResponse(description="Cannot interact with private outfit"),
+        404: OpenApiResponse(description="Outfit not found"),
+    }
+)
 class OutfitLikeToggleView(APIView):
     """
     API endpoint to like or unlike a public outfit post.
@@ -247,6 +275,14 @@ class OutfitLikeToggleView(APIView):
 
 
 
+@extend_schema(
+    tags=["Outfits & Looks"],
+    summary="List Liked Outfits",
+    description="Retrieve paginated list of outfits liked by the authenticated user (excluding self-outfits).",
+    responses={
+        200: TodayOutfitSerializer(many=True),
+    }
+)
 class LikedOutfitsListView(generics.ListAPIView):
     """
     API endpoint to list outfits liked by the authenticated user.
@@ -285,6 +321,18 @@ class LikedOutfitsListView(generics.ListAPIView):
         return Response(serializer.data)
 
 
+@extend_schema(
+    tags=["Outfits & Looks"],
+    summary="Outfit Calendar History",
+    description="Monthly calendar view of logged outfits for wardrobe rotation and style consistency tracking.",
+    parameters=[
+        OpenApiParameter('year', int, description="Calendar year (e.g. 2026)"),
+        OpenApiParameter('month', int, description="Calendar month (1 - 12)"),
+    ],
+    responses={
+        200: OpenApiResponse(description="Calendar days with logged outfit thumbnails and counts"),
+    }
+)
 class OutfitCalendarView(APIView):
     """
     API endpoint to retrieve calendar-wise outfits for a given month and year.
@@ -352,6 +400,16 @@ class OutfitCalendarView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=["Outfits & Looks"],
+    summary="Outfit Details (Get / Update / Delete)",
+    description="Retrieve full details for an outfit post, update post metadata (author only), or delete it.",
+    responses={
+        200: TodayOutfitSerializer,
+        403: OpenApiResponse(description="Permission denied"),
+        404: OpenApiResponse(description="Outfit not found"),
+    }
+)
 class OutfitDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
     API endpoint to retrieve, update (PATCH/PUT), or delete an outfit post.
@@ -439,6 +497,15 @@ class OutfitDetailView(generics.RetrieveUpdateDestroyAPIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=["Outfits & Looks"],
+    summary="List Outfit Likers",
+    description="Retrieve list of users who liked a specific outfit post, including follow status.",
+    responses={
+        200: OpenApiResponse(description="List of likers with follow state"),
+        404: OpenApiResponse(description="Outfit not found"),
+    }
+)
 class OutfitLikersListView(APIView):
     """
     API endpoint to view users who liked a specific outfit post.

@@ -9,10 +9,21 @@ from django.db.models import Q, Count
 from social.models import TodayOutfit, OutfitLike, UserFollow
 from social.serializers import TodayOutfitSerializer
 
-User = get_user_model()
 from social.your_day import get_live_weather, suggest_daily_outfit
 from .outfit_views import StandardSocialPagination
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
 
+User = get_user_model()
+
+
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="Public Outfit Newsfeed",
+    description="Discover public looks and outfits shared by the global Closly fashion community.",
+    responses={
+        200: TodayOutfitSerializer(many=True),
+    }
+)
 class PublicNewsfeedView(generics.ListAPIView):
     """
     API endpoint for the global public newsfeed of public today outfit posts.
@@ -59,6 +70,14 @@ class PublicNewsfeedView(generics.ListAPIView):
         return Response(serializer.data)
 
 
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="Following Outfit Newsfeed",
+    description="Retrieve looks and outfits shared by creators and fashion friends you follow.",
+    responses={
+        200: TodayOutfitSerializer(many=True),
+    }
+)
 class FollowingNewsfeedView(generics.ListAPIView):
     """
     API endpoint for filtering newsfeed to show ONLY outfit posts from followed users.
@@ -107,6 +126,19 @@ class FollowingNewsfeedView(generics.ListAPIView):
 
 
 
+@extend_schema(
+    tags=["Outfits & Looks"],
+    summary="Your Day Outfit & Weather Recommendation",
+    description="Get today's logged outfit look or AI styling recommendation tailored to user's real-time local weather.",
+    parameters=[
+        OpenApiParameter('lat', float, description="Latitude for local weather"),
+        OpenApiParameter('lon', float, description="Longitude for local weather"),
+        OpenApiParameter('city', str, description="City name override"),
+    ],
+    responses={
+        200: OpenApiResponse(description="Live weather widget and daily outfit suggestions"),
+    }
+)
 class YourDayOutfitView(APIView):
     """
     API endpoint for 'Your Day' screen.
@@ -159,6 +191,17 @@ class YourDayOutfitView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="Explore Grid & Trending Styles",
+    description="Curated explore grid with popular looks, trending aesthetics, and top fashion creators.",
+    parameters=[
+        OpenApiParameter('category', str, description="Explore tab category: 'trending', 'adjacent', 'minimalist', 'streetwear', 'classic', 'chic', 'casual', 'formal'"),
+    ],
+    responses={
+        200: TodayOutfitSerializer(many=True),
+    }
+)
 class ExploreNewsfeedView(generics.ListAPIView):
     """
     API endpoint for Explore Feed.

@@ -14,12 +14,23 @@ from social.serializers import (
     DirectMessageSerializer,
     ConversationSummarySerializer,
 )
+from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 User = get_user_model()
 from users.validators import validate_image_file
 from .outfit_views import StandardSocialPagination
 from .story_views import get_active_stories_for_user
 
+@extend_schema(
+    tags=["Direct Messaging & Chat"],
+    summary="Send Direct Message",
+    description="Send a 1-on-1 direct message with optional text, image attachment, shared product, shared outfit, or story reply.",
+    responses={
+        201: DirectMessageSerializer,
+        400: OpenApiResponse(description="Validation error or self-messaging"),
+        404: OpenApiResponse(description="Target recipient or shared reference not found"),
+    }
+)
 class DirectMessageSendView(APIView):
     """
     API endpoint to send a direct message to a user.
@@ -154,6 +165,14 @@ class DirectMessageSendView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(
+    tags=["Direct Messaging & Chat"],
+    summary="Get Conversation Messages",
+    description="Retrieve paginated message history between authenticated user and another user, marking incoming messages as read.",
+    responses={
+        200: DirectMessageSerializer(many=True),
+    }
+)
 class DirectMessageConversationView(generics.ListAPIView):
     """
     API endpoint to retrieve full conversation messages between current user and a target user.
@@ -181,6 +200,14 @@ class DirectMessageConversationView(generics.ListAPIView):
         )
 
 
+@extend_schema(
+    tags=["Direct Messaging & Chat"],
+    summary="List Conversations (Inbox) & Active Stories Tray",
+    description="List all active 1-on-1 conversations sorted by recency with unread counters, plus followed users' active 24h stories tray.",
+    responses={
+        200: OpenApiResponse(description="Inbox threads and active stories bar retrieved successfully"),
+    }
+)
 class ConversationListView(APIView):
     """
     API endpoint to list user's conversation threads (Inbox) + Active Stories Tray.
