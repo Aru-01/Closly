@@ -145,7 +145,7 @@ class UserPreferenceAndLoginTestCase(TestCase):
         self.assertEqual(t2.points, 50)
 
         # 3. Check summary via API
-        points_res = self.client.get(reverse('users:points-summary'))
+        points_res = self.client.get(reverse('rewards:points-summary'))
         self.assertEqual(points_res.status_code, status.HTTP_200_OK)
         data = points_res.data['data']
         self.assertEqual(data['total_points'], 170)
@@ -154,12 +154,12 @@ class UserPreferenceAndLoginTestCase(TestCase):
         self.assertEqual(data['points_to_next_tier'], 1830)
 
         # 4. Check history via API
-        history_res = self.client.get(reverse('users:points-history'))
+        history_res = self.client.get(reverse('rewards:points-history'))
         self.assertEqual(history_res.status_code, status.HTTP_200_OK)
         self.assertEqual(len(history_res.data['data']), 2)
 
         # 5. Claim purchase points (+200)
-        claim_res = self.client.post(reverse('users:claim-purchase-points'), {
+        claim_res = self.client.post(reverse('rewards:claim-purchase'), {
             'order_id': 'ORDER-99182',
             'store': 'H&M',
             'amount': '85.50'
@@ -168,7 +168,7 @@ class UserPreferenceAndLoginTestCase(TestCase):
         self.assertEqual(claim_res.data['data']['points_awarded'], 200)
 
         # Duplicate claim should be rejected
-        dup_res = self.client.post(reverse('users:claim-purchase-points'), {
+        dup_res = self.client.post(reverse('rewards:claim-purchase'), {
             'order_id': 'ORDER-99182',
             'store': 'H&M',
         }, format='json')
@@ -309,3 +309,18 @@ class UserPreferenceAndLoginTestCase(TestCase):
         self.assertIsInstance(data['following_count'], int)
         self.assertIsInstance(data['looks_count'], int)
         self.assertIsInstance(data['closet_count'], int)
+
+    def test_otp_verify_2min_rate_limiting(self):
+        from django.core.cache import cache
+        cache.clear()
+
+        url = reverse('users:verify-otp')
+        # OTP verification rate limit is 5 per 2 minutes (120s)
+        for _ in range(5):
+            res = self.client.post(url, {'email': 'throttle@example.com', 'otp': '0000'})
+            self.assertNotEqual(res.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+        # 6th attempt within the 2-minute window must return 429 Too Many Requests
+        throttled_res = self.client.post(url, {'email': 'throttle@example.com', 'otp': '0000'})
+        self.assertEqual(throttled_res.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertFalse(throttled_res.data['success'])

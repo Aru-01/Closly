@@ -24,6 +24,11 @@ from users.utils import (
     get_user_agent,
     build_absolute_media_url,
 )
+from users.throttling import (
+    LoginRateThrottle,
+    OTPVerifyRateThrottle,
+    OTPResendRateThrottle,
+)
 from .base import standard_response
 
 logger = logging.getLogger(__name__)
@@ -95,6 +100,7 @@ class UserLoginView(APIView):
     """
     
     permission_classes = [AllowAny]
+    throttle_classes = [LoginRateThrottle]
     serializer_class = UserLoginSerializer
     
     def post(self, request):
@@ -368,6 +374,7 @@ class VerifyOTPView(APIView):
     API endpoint to verify OTP for account activation
     """
     permission_classes = [AllowAny]
+    throttle_classes = [OTPVerifyRateThrottle]
     serializer_class = VerifyOTPSerializer
 
     def post(self, request):
@@ -404,6 +411,7 @@ class ResendOTPView(APIView):
     API endpoint to resend OTP with 30-second rate limiting
     """
     permission_classes = [AllowAny]
+    throttle_classes = [OTPResendRateThrottle]
     serializer_class = ResendOTPSerializer
 
     def post(self, request):
@@ -413,11 +421,11 @@ class ResendOTPView(APIView):
             try:
                 user = User.objects.get(email=email)
                 if not user.is_active:
-                    # 30-second rate limiting check
+                    # 2-minute (120-second) rate limiting check
                     if user.otp_created_at:
                         seconds_passed = (timezone.now() - user.otp_created_at).total_seconds()
-                        if seconds_passed < 30:
-                            retry_after = int(30 - seconds_passed)
+                        if seconds_passed < 120:
+                            retry_after = int(120 - seconds_passed)
                             return standard_response(
                                 success=False,
                                 message=f"Please wait {retry_after} seconds before requesting another OTP.",

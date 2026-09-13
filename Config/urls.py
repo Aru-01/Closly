@@ -3,7 +3,6 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from users.views import PublicProfileWebView
-from legal_pages import views as legal_views
 from drf_spectacular.views import (
     SpectacularAPIView,
     SpectacularSwaggerView,
@@ -47,34 +46,6 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/users/", include("users.urls")),
     path("api/legal/", include("legal_pages.urls")),
-    path(
-        "legal/",
-        include(
-            [
-                path(
-                    "privacy-policy/",
-                    legal_views.privacy_policy_view,
-                    name="privacy_policy_web",
-                ),
-                path(
-                    "terms-and-conditions/",
-                    legal_views.terms_and_conditions_view,
-                    name="terms_and_conditions_web",
-                ),
-                path("support/", legal_views.support_view, name="support_web"),
-                path(
-                    "delete-account/",
-                    legal_views.delete_account_view,
-                    name="delete_account_web",
-                ),
-                path(
-                    "delete-account/logout/",
-                    legal_views.delete_account_logout_view,
-                    name="delete_account_logout_web",
-                ),
-            ]
-        ),
-    ),
     path("api/affiliate/", include("affiliate.urls")),
     path("api/closet/", include("closet.urls")),
     path("api/social/", include("social.urls")),
@@ -82,10 +53,6 @@ urlpatterns = [
     path("api/rewards/", include("rewards.urls")),
     path(
         "u/<str:user_id>/", PublicProfileWebView.as_view(), name="public-profile-short"
-    ),
-    path("support/", legal_views.support_view, name="support-direct"),
-    path(
-        "delete-account/", legal_views.delete_account_view, name="delete-account-direct"
     ),
 ]
 

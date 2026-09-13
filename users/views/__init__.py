@@ -37,17 +37,8 @@ from .profile_views import (
     ShareProfileAPIView,
     PublicProfileWebView,
 )
-from rewards.views import (
-    RewardPointsSummaryView as UserPointsSummaryView,
-    RewardPointsHistoryView as UserPointsHistoryView,
-    ClaimPurchaseRewardView as ClaimPurchasePointsView,
-)
-
 __all__ = [
     'standard_response',
-    'UserPointsSummaryView',
-    'UserPointsHistoryView',
-    'ClaimPurchasePointsView',
     'delete_profile_data_request_view',
     'ProfileDataDeletionAPIView',
     'VerifyProfileDataDeletionView',

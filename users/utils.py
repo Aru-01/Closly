@@ -113,46 +113,6 @@ def get_user_agent(request):
     return request.META.get('HTTP_USER_AGENT', '')
 
 
-def send_verification_email(user, verification_url):
-    """
-    Send email verification link to user
-    
-    Args:
-        user: User instance
-        verification_url (str): Full URL for email verification
-        
-    Returns:
-        bool: True if email sent successfully, False otherwise
-    """
-    try:
-        subject = 'Verify Your Email Address'
-        
-        # Render HTML email template
-        html_message = render_to_string('emails/verify_email.html', {
-            'user': user,
-            'verification_url': verification_url,
-            'site_name': 'Closly',
-        })
-        
-        # Create plain text version
-        plain_message = strip_tags(html_message)
-        
-        # Send email
-        send_mail(
-            subject=subject,
-            message=plain_message,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[user.email],
-            html_message=html_message,
-            fail_silently=False,
-        )
-        
-        return True
-    
-    except Exception as e:
-        print(f"Error sending verification email: {str(e)}")
-        return False
-
 
 def send_password_reset_email(user, otp):
     """

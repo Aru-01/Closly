@@ -13,6 +13,7 @@ from users.serializers import (
     PasswordChangeSerializer,
 )
 from users.utils import send_password_reset_email, generate_otp
+from users.throttling import PasswordResetRateThrottle, OTPVerifyRateThrottle
 from .base import standard_response
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ class PasswordResetRequestView(APIView):
     """
     
     permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetRateThrottle]
     serializer_class = PasswordResetRequestSerializer
     
     def post(self, request):
@@ -45,11 +47,11 @@ class PasswordResetRequestView(APIView):
             try:
                 user = User.objects.get(email=email)
                 
-                # 30-second rate limiting check
+                # 2-minute (120-second) rate limiting check
                 if user.otp_created_at:
                     seconds_passed = (timezone.now() - user.otp_created_at).total_seconds()
-                    if seconds_passed < 30:
-                        retry_after = int(30 - seconds_passed)
+                    if seconds_passed < 120:
+                        retry_after = int(120 - seconds_passed)
                         return standard_response(
                             success=False,
                             message=f"Please wait {retry_after} seconds before requesting another OTP.",
@@ -91,6 +93,7 @@ class PasswordResetOTPVerifyView(APIView):
     On success, sets password_reset_verified=True and clears the OTP from DB.
     """
     permission_classes = [AllowAny]
+    throttle_classes = [OTPVerifyRateThrottle]
     serializer_class = PasswordResetOTPVerifySerializer
 
     def post(self, request):

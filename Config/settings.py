@@ -81,6 +81,14 @@ REST_FRAMEWORK = {
         "rest_framework_simplejwt.authentication.JWTAuthentication",
         "users.authentication.FirebaseAuthentication",
     ),
+    "DEFAULT_THROTTLE_RATES": {
+        "anon": "120/min",
+        "user": "300/min",
+        "login": "10/120s",
+        "otp_verify": "5/120s",
+        "otp_resend": "3/120s",
+        "password_reset": "5/120s",
+    },
 }
 
 AUTH_USER_MODEL = "users.User"

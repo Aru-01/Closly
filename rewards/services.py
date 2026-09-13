@@ -91,22 +91,23 @@ def process_expired_points(user, profile=None):
     DOES NOT deduct from lifetime_points (user's tier is preserved permanently).
     """
     now = timezone.now()
-    if profile is None:
-        profile, _ = UserRewardProfile.objects.get_or_create(user=user)
 
-    expired_txs = RewardPointTransaction.objects.filter(
-        user=user,
-        is_expired=False,
-        expires_at__isnull=False,
-        expires_at__lte=now,
-        points__gt=0
-    )
-
-    if not expired_txs.exists():
-        return 0
-
-    total_expired = 0
     with transaction.atomic():
+        # Lock user profile row to prevent race conditions during expiration check
+        profile, _ = UserRewardProfile.objects.select_for_update().get_or_create(user=user)
+
+        expired_txs = list(RewardPointTransaction.objects.select_for_update().filter(
+            user=user,
+            is_expired=False,
+            expires_at__isnull=False,
+            expires_at__lte=now,
+            points__gt=0
+        ))
+
+        if not expired_txs:
+            return 0
+
+        total_expired = 0
         for tx in expired_txs:
             tx.is_expired = True
             tx.save(update_fields=['is_expired'])
@@ -137,12 +138,13 @@ def process_expired_points(user, profile=None):
             except Exception as e:
                 logger.debug(f"Failed to dispatch expiration notification: {e}")
 
-    return total_expired
+        return total_expired
 
 
 def award_points(user, action_type, description=None, reference_id='', points_override=None):
     """
     Awards points to user:
+    - Thread-safe and process-safe with select_for_update() row-level locking
     - Increments available_points (valid for 60 days)
     - Increments lifetime_points (never decreases, sets tier)
     - Automatically updates tier if milestone achieved
@@ -162,7 +164,11 @@ def award_points(user, action_type, description=None, reference_id='', points_ov
 
     try:
         with transaction.atomic():
-            # 1. Create transaction with 60-day expiry
+            # 1. Acquire row lock on user reward profile to prevent concurrent race conditions
+            profile, _ = UserRewardProfile.objects.select_for_update().get_or_create(user=user)
+            old_tier = profile.current_tier
+
+            # 2. Create transaction record with 60-day expiry
             tx = RewardPointTransaction.objects.create(
                 user=user,
                 action_type=action_type,
@@ -172,16 +178,13 @@ def award_points(user, action_type, description=None, reference_id='', points_ov
                 expires_at=expires_at
             )
 
-            # 2. Update user reward profile
-            profile, _ = UserRewardProfile.objects.get_or_create(user=user)
-            old_tier = profile.current_tier
-
+            # 3. Update points safely
             profile.available_points += points
             profile.lifetime_points += points
 
             new_tier = get_tier_for_lifetime_points(profile.lifetime_points)
             profile.current_tier = new_tier
-            profile.save()
+            profile.save(update_fields=['available_points', 'lifetime_points', 'current_tier', 'tier_updated_at'])
 
             # 3. In-App Notifications
             try:

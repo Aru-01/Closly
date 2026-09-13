@@ -1,4 +1,5 @@
 from django.test import TestCase
+from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from rest_framework import status
@@ -129,10 +130,22 @@ class ClosetApiTests(TestCase):
         if response.data['data']['image']:
             self.assertTrue(response.data['data']['image'].startswith('https://') or response.data['data']['image'].startswith('http://'))
 
-    def test_ai_scan_clothing_image_success(self):
+    @patch('closet.openai_analyzer.analyze_dress_with_openai')
+    def test_ai_scan_clothing_image_success(self, mock_ai_analyzer):
         import io
         from PIL import Image
         from django.core.files.uploadedfile import SimpleUploadedFile
+
+        mock_ai_analyzer.return_value = {
+            'is_garment': True,
+            'name': 'Navy Shirt',
+            'category': 'top',
+            'color': 'Navy Blue',
+            'brand': 'Closly Studio',
+            'price': 45.0,
+            'style_vibe': 'smart casual',
+            'visual_match_score': 95,
+        }
 
         # Create synthetic navy blue image (aspect ratio ~1.0 for top)
         file_obj = io.BytesIO()
@@ -178,10 +191,22 @@ class ClosetApiTests(TestCase):
             self.assertIn('not appear to be a clothing item', response.data['message'])
             self.assertIn('graphic design', response.data['notes'])
 
-    def test_ai_scan_with_auto_save(self):
+    @patch('closet.openai_analyzer.analyze_dress_with_openai')
+    def test_ai_scan_with_auto_save(self, mock_ai_analyzer):
         import io
         from PIL import Image
         from django.core.files.uploadedfile import SimpleUploadedFile
+
+        mock_ai_analyzer.return_value = {
+            'is_garment': True,
+            'name': 'Dark Trousers',
+            'category': 'bottom',
+            'color': 'Dark Grey',
+            'brand': 'Closly Bottoms',
+            'price': 60.0,
+            'style_vibe': 'Formal',
+            'visual_match_score': 90,
+        }
 
         file_obj = io.BytesIO()
         img = Image.new('RGB', (100, 150), color=(20, 20, 20))  # Tall dark -> bottom or outerwear
