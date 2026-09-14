@@ -125,6 +125,75 @@ class ClosetApiTests(TestCase):
         response = self.client.post(url, data, format='multipart')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(response.data['success'])
+        # Check that image URL starts with https://
+        if response.data['data']['image']:
+            self.assertTrue(response.data['data']['image'].startswith('https://') or response.data['data']['image'].startswith('http://'))
+
+    def test_ai_scan_clothing_image_success(self):
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        # Create synthetic navy blue image (aspect ratio ~1.0 for top)
+        file_obj = io.BytesIO()
+        img = Image.new('RGB', (120, 120), color=(26, 42, 74))
+        img.save(file_obj, format='JPEG')
+        file_obj.seek(0)
+
+        uploaded_file = SimpleUploadedFile("navy_shirt.jpg", file_obj.read(), content_type="image/jpeg")
+
+        url = '/api/closet/ai-scan/'
+        response = self.client.post(url, {'image': uploaded_file}, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['success'])
+        data = response.data['data']
+        self.assertIn('name', data)
+        self.assertIn('category', data)
+        self.assertIn('color', data)
+        self.assertIn('brand', data)
+        self.assertIn('price', data)
+        self.assertIn('style_vibe', data)
+        self.assertIn('confidence', data)
+        self.assertIn('image_url', data)
+        self.assertTrue(data['image_url'].startswith('https://') or data['image_url'].startswith('http://'))
+        self.assertIn('available_categories', data)
+
+    def test_ai_scan_with_auto_save(self):
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        file_obj = io.BytesIO()
+        img = Image.new('RGB', (100, 150), color=(20, 20, 20))  # Tall dark -> bottom or outerwear
+        img.save(file_obj, format='JPEG')
+        file_obj.seek(0)
+
+        uploaded_file = SimpleUploadedFile("trousers.jpg", file_obj.read(), content_type="image/jpeg")
+
+        url = '/api/closet/ai-scan/?auto_save=true'
+        response = self.client.post(url, {'image': uploaded_file}, format='multipart')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data['success'])
+        self.assertIn('item', response.data['data'])
+        saved_item = response.data['data']['item']
+        self.assertTrue(ClosetItem.objects.filter(id=saved_item['id'], user=self.user).exists())
+        self.assertTrue(saved_item['image'].startswith('https://') or saved_item['image'].startswith('http://'))
+
+    def test_ai_scan_no_image_returns_400(self):
+        url = '/api/closet/ai-scan/'
+        response = self.client.post(url, {}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.data['success'])
+        self.assertIn('image', response.data['errors'])
+
+    def test_build_absolute_media_url_utility(self):
+        from users.utils import build_absolute_media_url
+        url = build_absolute_media_url('closet_items/test.jpg')
+        self.assertTrue(url.startswith('https://'))
+        self.assertIn('/media/closet_items/test.jpg', url)
+
 
 
 

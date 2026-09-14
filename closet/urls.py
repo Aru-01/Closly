@@ -5,6 +5,7 @@ from .views import (
     WearTodayView,
     ClosetAuditView,
     ClosetScoreDashboardView,
+    ClosetAIScanView,
 )
 
 app_name = 'closet'
@@ -15,4 +16,5 @@ urlpatterns = [
     path('items/<int:pk>/wear-today/', WearTodayView.as_view(), name='wear-today'),
     path('audit/', ClosetAuditView.as_view(), name='closet-audit'),
     path('score/', ClosetScoreDashboardView.as_view(), name='closet-score'),
+    path('ai-scan/', ClosetAIScanView.as_view(), name='closet-ai-scan'),
 ]

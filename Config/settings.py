@@ -228,5 +228,18 @@ RAKUTEN_CLIENT_ID     = config('RAKUTEN_CLIENT_ID', default=None)
 RAKUTEN_CLIENT_SECRET = config('RAKUTEN_CLIENT_SECRET', default=None)
 RAKUTEN_PUBLISHER_SID = config('RAKUTEN_PUBLISHER_SID', default='4674442')
 
+# Reverse Proxy SSL Headers (ngrok, Nginx, Cloudflare, etc.)
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+USE_X_FORWARDED_HOST = True
+USE_X_FORWARDED_PORT = True
+
+# Media & Base URL Configuration
+BACKEND_URL = config('BACKEND_URL', default='https://politically-unenshrined-jerry.ngrok-free.dev')
+FORCE_HTTPS_MEDIA_URL = config('FORCE_HTTPS_MEDIA_URL', default=True, cast=bool)
+
+# AI Vision Configuration (Optional Google Gemini Vision API Key)
+GEMINI_API_KEY = config('GEMINI_API_KEY', default=None)
+
+
 
 

@@ -48,6 +48,7 @@ from .utils import (
     send_password_reset_email,
     get_client_ip,
     get_user_agent,
+    build_absolute_media_url,
 )
 from .models import UserLoginHistory, AccountDeletionRequest, ProfileDataDeletionRequest
 from django.shortcuts import render
@@ -306,7 +307,7 @@ class UserLoginView(APIView):
                 hasattr(user, 'preferences') and user.preferences.onboarding_completed
             ) or False
 
-            profile_picture_url = request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None
+            profile_picture_url = build_absolute_media_url(user.profile_picture, request=request)
 
             # Return success response with tokens
             return standard_response(
@@ -497,7 +498,7 @@ class FirebaseAuthView(APIView):
                     hasattr(user, 'preferences') and user.preferences.onboarding_completed
                 ) or False
 
-                profile_picture_url = request.build_absolute_uri(user.profile_picture.url) if user.profile_picture else None
+                profile_picture_url = build_absolute_media_url(user.profile_picture, request=request)
 
                 # Return success response
                 return standard_response(

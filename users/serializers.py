@@ -22,7 +22,7 @@ from .exceptions import (
     PasswordMismatchException,
     EmailAlreadyExistsException,
 )
-from .utils import validate_age
+from .utils import validate_age, build_absolute_media_url
 from rewards.models import UserRewardProfile, RewardPointTransaction
 
 User = get_user_model()
@@ -475,10 +475,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         """Build full absolute URL for profile picture"""
         if not obj.profile_picture:
             return None
-        request = self.context.get('request')
-        if request is not None:
-            return request.build_absolute_uri(obj.profile_picture.url)
-        return obj.profile_picture.url
+        return build_absolute_media_url(obj.profile_picture, request=self.context.get('request'))
 
     def get_share_url(self, obj):
         """Build full public profile share URL"""

@@ -316,3 +316,55 @@ def validate_age(date_of_birth, min_age=13):
         return False
     
     return age >= min_age
+
+
+def build_absolute_media_url(file_or_url, request=None):
+    """
+    Constructs a fully qualified absolute URL with scheme and host for media files.
+    Ensures URLs start with 'https://' when configured or when accessed via secure proxies.
+    """
+    if not file_or_url:
+        return None
+
+    if hasattr(file_or_url, 'url'):
+        try:
+            raw_url = file_or_url.url
+        except Exception:
+            return None
+    else:
+        raw_url = str(file_or_url)
+
+    if not raw_url:
+        return None
+
+    # If it's already a full URL
+    if raw_url.startswith('http://') or raw_url.startswith('https://'):
+        if getattr(settings, 'FORCE_HTTPS_MEDIA_URL', False) and raw_url.startswith('http://'):
+            return 'https://' + raw_url[7:]
+        return raw_url
+
+    media_url = getattr(settings, 'MEDIA_URL', '/media/')
+    if not raw_url.startswith(media_url):
+        clean_path = f"{media_url.rstrip('/')}/{raw_url.lstrip('/')}"
+    else:
+        clean_path = raw_url if raw_url.startswith('/') else f"/{raw_url}"
+
+    # Try building with request first if available
+    if request is not None:
+        try:
+            abs_url = request.build_absolute_uri(clean_path)
+            if getattr(settings, 'FORCE_HTTPS_MEDIA_URL', False) and abs_url.startswith('http://'):
+                abs_url = 'https://' + abs_url[7:]
+            return abs_url
+        except Exception:
+            pass
+
+    # Fallback to BACKEND_URL setting
+    backend_url = getattr(settings, 'BACKEND_URL', '') or ''
+    if backend_url:
+        base = backend_url.rstrip('/')
+        if getattr(settings, 'FORCE_HTTPS_MEDIA_URL', False) and base.startswith('http://'):
+            base = 'https://' + base[7:]
+        return f"{base}{clean_path}"
+
+    return clean_path

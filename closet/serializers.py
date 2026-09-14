@@ -1,12 +1,13 @@
 from rest_framework import serializers
 from users.validators import validate_image_file
+from users.fields import AbsoluteImageField
 from .models import ClosetItem
 
 class ClosetItemSerializer(serializers.ModelSerializer):
     """
     Serializer for ClosetItem read, create, and update
     """
-    image = serializers.ImageField(max_length=500, required=False, allow_null=True)
+    image = AbsoluteImageField(max_length=500, required=False, allow_null=True)
     per_wear_cost = serializers.ReadOnlyField()
 
     class Meta:

@@ -10,6 +10,8 @@ import calendar
 
 from .models import ClosetItem
 from .serializers import ClosetItemSerializer
+from users.validators import validate_image_file
+from .ai_scanner import scan_clothing_image
 
 class ClosetItemListCreateView(generics.ListCreateAPIView):
     """
@@ -115,7 +117,7 @@ class WearTodayView(APIView):
             item.last_worn_at = timezone.now()
             item.save()
 
-            serializer = ClosetItemSerializer(item)
+            serializer = ClosetItemSerializer(item, context={'request': request})
             return Response({
                 'success': True,
                 'message': f"Calculated today's wear for '{item.name}'. Times worn is now {item.times_worn}.",
@@ -363,8 +365,97 @@ class ClosetAuditView(APIView):
                 'utilization_rate': analytics['utilization_rate'],
                 'wardrobe_status': analytics['status'],
                 'environmental_and_space_impact': analytics['impact'],
-                'list_of_most_worn': ClosetItemSerializer(worn_items_sorted, many=True).data,
-                'list_of_ghost_pieces': ClosetItemSerializer(ghost_items_sorted, many=True).data
+                'list_of_most_worn': ClosetItemSerializer(worn_items_sorted, many=True, context={'request': request}).data,
+                'list_of_ghost_pieces': ClosetItemSerializer(ghost_items_sorted, many=True, context={'request': request}).data
             }
         }, status=status.HTTP_200_OK)
+
+
+class ClosetAIScanView(APIView):
+    """
+    AI Garment Scanner endpoint.
+    Scans a garment image taken via camera or selected from device gallery.
+    
+    POST /api/closet/ai-scan/ (multipart/form-data with 'image')
+    Query Params:
+      ?auto_save=true (optional, creates ClosetItem directly and awards points)
+    
+    Returns pre-filled attributes:
+    - name, category, color, brand, price, style_vibe, confidence, image_url
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        image_file = request.FILES.get('image')
+        if not image_file:
+            return Response({
+                'success': False,
+                'message': 'No image file provided. Please capture or upload a cloth image.',
+                'errors': {'image': ['Image file is required for AI scanning.']}
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Validate image file
+        try:
+            validate_image_file(image_file, max_mb=30)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': 'Invalid image file.',
+                'errors': {'image': [str(e)]}
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Run AI Scanner
+        try:
+            scanned_data = scan_clothing_image(image_file, request=request)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': f"Failed to scan garment image: {str(e)}"
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Check for auto_save
+        auto_save = request.query_params.get('auto_save', '').lower() in ('true', '1', 'yes')
+        if auto_save:
+            item = ClosetItem.objects.create(
+                user=request.user,
+                name=scanned_data.get('name', 'Wardrobe Essential'),
+                category=scanned_data.get('category', 'top'),
+                color=scanned_data.get('color', 'Neutral'),
+                brand=scanned_data.get('brand', 'Zara'),
+                price=float(scanned_data.get('price', 35.00)),
+                image=scanned_data.get('saved_image_path', '')
+            )
+            # Award closet points
+            try:
+                from rewards.services import award_points
+                award_points(
+                    user=request.user,
+                    action_type='add_closet_item',
+                    description=f"Auto-scanned & added '{item.name}' to closet",
+                    reference_id=str(item.id)
+                )
+            except Exception:
+                pass
+
+            serializer = ClosetItemSerializer(item, context={'request': request})
+            return Response({
+                'success': True,
+                'message': f"Garment scanned and automatically saved to closet as '{item.name}'.",
+                'data': {
+                    'item': serializer.data,
+                    'ai_metadata': {
+                        'style_vibe': scanned_data.get('style_vibe'),
+                        'confidence': scanned_data.get('confidence'),
+                    }
+                }
+            }, status=status.HTTP_201_CREATED)
+
+        # Standard Pre-Fill Response for mobile app form
+        return Response({
+            'success': True,
+            'message': 'Garment image scanned successfully. Pre-fill data generated.',
+            'data': scanned_data
+        }, status=status.HTTP_200_OK)
+
 

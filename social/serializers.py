@@ -1,6 +1,8 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from users.validators import validate_image_file
+from users.fields import AbsoluteImageField
+from users.utils import build_absolute_media_url
 from .models import TodayOutfit, OutfitLike, UserFollow, DirectMessage
 from closet.serializers import ClosetItemSerializer
 
@@ -18,10 +20,7 @@ class UserSimpleSerializer(serializers.ModelSerializer):
 
     def get_profile_picture(self, obj):
         if obj.profile_picture:
-            request = self.context.get('request')
-            if request is not None:
-                return request.build_absolute_uri(obj.profile_picture.url)
-            return obj.profile_picture.url
+            return build_absolute_media_url(obj.profile_picture, request=self.context.get('request'))
         return None
 
 
@@ -30,7 +29,7 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
     Serializer for TodayOutfit creation and feed listing
     """
     user = UserSimpleSerializer(read_only=True)
-    image = serializers.ImageField(max_length=500, required=True)
+    image = AbsoluteImageField(max_length=500, required=True)
     likes_count = serializers.ReadOnlyField()
     is_liked = serializers.SerializerMethodField()
     tagged_items_details = ClosetItemSerializer(source='tagged_items', many=True, read_only=True)
