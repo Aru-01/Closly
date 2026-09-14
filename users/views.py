@@ -21,7 +21,6 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
 from rest_framework_simplejwt.exceptions import TokenError, InvalidToken
 from django.contrib.auth import get_user_model
-#from progress.utils import mark_user_login
 from django.utils import timezone
 from django.conf import settings
 from .serializers import (
@@ -290,9 +289,6 @@ class UserLoginView(APIView):
                 user_agent=get_user_agent(request),
                 auth_method='email'
             )
-
-            # Track daily login in progress app
-            #mark_user_login(user)
             
             # Check onboarding completion status
             onboarding_completed = (
@@ -484,9 +480,6 @@ class FirebaseAuthView(APIView):
                     user_agent=get_user_agent(request),
                     auth_method=auth_provider
                 )
-
-                # Mark user login in DailyProgress
-                #mark_user_login(user)
                 
                 # Check onboarding completion status
                 onboarding_completed = (

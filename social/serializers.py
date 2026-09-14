@@ -51,6 +51,10 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'user', 'likes_count', 'is_liked', 'created_at', 'updated_at']
 
     def get_is_liked(self, obj):
+        liked_outfit_ids = self.context.get('liked_outfit_ids')
+        if liked_outfit_ids is not None:
+            return obj.id in liked_outfit_ids
+
         request = self.context.get('request')
         if request and request.user.is_authenticated:
             return OutfitLike.objects.filter(outfit=obj, user=request.user).exists()
@@ -80,3 +84,17 @@ class DirectMessageSerializer(serializers.ModelSerializer):
         model = DirectMessage
         fields = ['id', 'sender', 'recipient', 'content', 'is_read', 'created_at']
         read_only_fields = ['id', 'sender', 'recipient', 'is_read', 'created_at']
+
+
+class ConversationLastMessageSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    content = serializers.CharField()
+    sender_id = serializers.CharField()
+    created_at = serializers.DateTimeField()
+    is_read = serializers.BooleanField()
+
+
+class ConversationSummarySerializer(serializers.Serializer):
+    other_user = UserSimpleSerializer()
+    last_message = ConversationLastMessageSerializer()
+    unread_count = serializers.IntegerField()

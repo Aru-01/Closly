@@ -130,7 +130,7 @@ def send_verification_email(user, verification_url):
         html_message = render_to_string('emails/verify_email.html', {
             'user': user,
             'verification_url': verification_url,
-            'site_name': 'Your App Name',
+            'site_name': 'Closly',
         })
         
         # Create plain text version

@@ -10,6 +10,7 @@ from .views import (
     UserFollowingListView,
     DirectMessageSendView,
     DirectMessageConversationView,
+    ConversationListView,
 )
 
 app_name = 'social'
@@ -27,7 +28,9 @@ urlpatterns = [
     path('users/<uuid:user_id>/followers/', UserFollowersListView.as_view(), name='user-followers'),
     path('users/<uuid:user_id>/following/', UserFollowingListView.as_view(), name='user-following'),
 
-    # Direct Messaging
+    # Direct Messaging & Inbox
     path('messages/', DirectMessageSendView.as_view(), name='message-send'),
+    path('messages/inbox/', ConversationListView.as_view(), name='messages-inbox'),
+    path('conversations/', ConversationListView.as_view(), name='conversations-list'),
     path('messages/<uuid:user_id>/', DirectMessageConversationView.as_view(), name='message-conversation'),
 ]

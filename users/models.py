@@ -167,8 +167,6 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text=_("Designates whether user has verified OTP for password reset")
     )
 
-    # journal_pin = models.CharField(max_length=128, null=True, blank=True)
-
     preferred_language = models.CharField(
         max_length=10,
         choices=[('en', 'English'), ('hi', 'Hindi'), ('pt', 'Portuguese')],

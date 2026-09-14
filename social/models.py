@@ -34,6 +34,8 @@ class TodayOutfit(models.Model):
 
     @property
     def likes_count(self):
+        if hasattr(self, '_likes_count'):
+            return self._likes_count
         return self.likes.count()
 
 

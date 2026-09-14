@@ -6,7 +6,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
-from django.db.models import Q
+from django.db.models import Q, Count
 
 from .models import TodayOutfit, OutfitLike, UserFollow, DirectMessage
 from .serializers import (
@@ -14,6 +14,7 @@ from .serializers import (
     UserFollowSerializer,
     DirectMessageSerializer,
     UserSimpleSerializer,
+    ConversationSummarySerializer,
 )
 
 User = get_user_model()
@@ -78,7 +79,21 @@ class MyOutfitsListView(generics.ListAPIView):
     pagination_class = StandardSocialPagination
 
     def get_queryset(self):
-        return TodayOutfit.objects.filter(user=self.request.user)
+        return (
+            TodayOutfit.objects.filter(user=self.request.user)
+            .select_related('user')
+            .prefetch_related('tagged_items')
+            .annotate(_likes_count=Count('likes', distinct=True))
+            .order_by('-created_at')
+        )
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if self.request.user.is_authenticated:
+            context['liked_outfit_ids'] = set(
+                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
+            )
+        return context
 
 
 class PublicNewsfeedView(generics.ListAPIView):
@@ -93,8 +108,22 @@ class PublicNewsfeedView(generics.ListAPIView):
     pagination_class = StandardSocialPagination
 
     def get_queryset(self):
-        # Public posts only
-        return TodayOutfit.objects.filter(visibility='public')
+        # Public posts only with optimized prefetching and like count annotation
+        return (
+            TodayOutfit.objects.filter(visibility='public')
+            .select_related('user')
+            .prefetch_related('tagged_items')
+            .annotate(_likes_count=Count('likes', distinct=True))
+            .order_by('-created_at')
+        )
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if self.request.user.is_authenticated:
+            context['liked_outfit_ids'] = set(
+                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
+            )
+        return context
 
 
 class FollowingNewsfeedView(generics.ListAPIView):
@@ -111,8 +140,22 @@ class FollowingNewsfeedView(generics.ListAPIView):
     def get_queryset(self):
         # Get IDs of users current user is following
         following_user_ids = UserFollow.objects.filter(follower=self.request.user).values_list('following_id', flat=True)
-        # Filter public posts from followed users
-        return TodayOutfit.objects.filter(user_id__in=following_user_ids, visibility='public')
+        # Filter public posts from followed users with optimized prefetching
+        return (
+            TodayOutfit.objects.filter(user_id__in=following_user_ids, visibility='public')
+            .select_related('user')
+            .prefetch_related('tagged_items')
+            .annotate(_likes_count=Count('likes', distinct=True))
+            .order_by('-created_at')
+        )
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if self.request.user.is_authenticated:
+            context['liked_outfit_ids'] = set(
+                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
+            )
+        return context
 
 
 class OutfitLikeToggleView(APIView):
@@ -274,7 +317,71 @@ class DirectMessageConversationView(generics.ListAPIView):
         # Mark received messages from this user as read
         DirectMessage.objects.filter(sender_id=other_user_id, recipient=current_user, is_read=False).update(is_read=True)
 
-        return DirectMessage.objects.filter(
-            (Q(sender=current_user) & Q(recipient_id=other_user_id)) |
-            (Q(sender_id=other_user_id) & Q(recipient=current_user))
+        return (
+            DirectMessage.objects.filter(
+                (Q(sender=current_user) & Q(recipient_id=other_user_id)) |
+                (Q(sender_id=other_user_id) & Q(recipient=current_user))
+            )
+            .select_related('sender', 'recipient')
         )
+
+
+class ConversationListView(APIView):
+    """
+    API endpoint to list user's conversation threads (Inbox).
+    Returns all conversations grouped by partner user, ordered by latest message time.
+    Includes partner user details, latest message preview, and unread count.
+
+    GET /api/social/conversations/
+    GET /api/social/messages/inbox/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        user = request.user
+
+        # 1. Fetch unread counts grouped by sender in 1 query
+        unread_counts_qs = (
+            DirectMessage.objects.filter(recipient=user, is_read=False)
+            .values('sender_id')
+            .annotate(count=Count('id'))
+        )
+        unread_map = {item['sender_id']: item['count'] for item in unread_counts_qs}
+
+        # 2. Fetch all messages involving user, ordered newest first with related users
+        messages = (
+            DirectMessage.objects.filter(Q(sender=user) | Q(recipient=user))
+            .select_related('sender', 'recipient')
+            .order_by('-created_at', '-id')
+        )
+
+        # 3. Deduplicate by conversation partner while preserving latest message
+        conversations = {}
+        for msg in messages:
+            partner = msg.recipient if msg.sender_id == user.id else msg.sender
+            if partner.id not in conversations:
+                conversations[partner.id] = {
+                    'other_user': partner,
+                    'last_message': {
+                        'id': msg.id,
+                        'content': msg.content,
+                        'sender_id': str(msg.sender_id),
+                        'created_at': msg.created_at,
+                        'is_read': msg.is_read,
+                    },
+                    'unread_count': unread_map.get(partner.id, 0),
+                }
+
+        serializer = ConversationSummarySerializer(
+            list(conversations.values()),
+            many=True,
+            context={'request': request}
+        )
+
+        return Response({
+            'success': True,
+            'message': 'Conversations retrieved successfully.',
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
+

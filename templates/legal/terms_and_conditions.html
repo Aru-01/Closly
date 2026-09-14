@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Terms and Conditions - VoiceMind</title>
+    <title>Terms and Conditions - Closly</title>
     <style>
         * {
             margin: 0;
@@ -12,40 +12,39 @@
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background: linear-gradient(135deg, #f5f7fa 0%, #e8f4f8 100%);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.7;
+            color: #2c3e50;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             padding: 20px;
+            min-height: 100vh;
         }
 
         .container {
             max-width: 900px;
             margin: 0 auto;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(28, 163, 236, 0.1);
+            background: #ffffff;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
             overflow: hidden;
         }
 
         .header {
             background: linear-gradient(135deg, #1ca3ec 0%, #0d8bd9 100%);
             color: white;
-            padding: 60px 40px;
+            padding: 50px 40px;
             text-align: center;
         }
 
         .header h1 {
-            font-size: 2.5em;
-            font-weight: 700;
+            font-size: 2.5rem;
             margin-bottom: 10px;
-            letter-spacing: -0.5px;
+            font-weight: 700;
         }
 
         .header .effective-date {
-            font-size: 0.95em;
-            opacity: 0.95;
-            font-weight: 400;
+            font-size: 1rem;
+            opacity: 0.9;
         }
 
         .content {
@@ -53,40 +52,28 @@
         }
 
         .intro {
-            font-size: 1.05em;
-            color: #555;
+            font-size: 1.15rem;
+            color: #34495e;
             margin-bottom: 40px;
-            line-height: 1.8;
             padding: 25px;
-            background: #f8fcff;
+            background: #f8f9fa;
             border-left: 4px solid #1ca3ec;
             border-radius: 8px;
+            line-height: 1.8;
         }
 
         .section {
             margin-bottom: 40px;
-            animation: fadeIn 0.6s ease-in;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
         }
 
         .section-title {
-            font-size: 1.4em;
-            font-weight: 600;
-            color: #1ca3ec;
-            margin-bottom: 15px;
+            font-size: 1.5rem;
+            color: #1a252f;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e9ecef;
             display: flex;
             align-items: center;
-            gap: 10px;
         }
 
         .section-number {
@@ -98,125 +85,97 @@
             display: inline-flex;
             align-items: center;
             justify-content: center;
-            font-size: 0.85em;
-            font-weight: 700;
+            font-size: 0.9rem;
+            margin-right: 12px;
+            font-weight: 600;
         }
 
         .section-content {
-            color: #555;
-            line-height: 1.8;
+            padding-left: 44px;
         }
 
         .section-content p {
             margin-bottom: 15px;
+            color: #4a5568;
         }
 
-        ul {
-            list-style: none;
-            margin: 15px 0;
+        .section-content ul {
+            margin-left: 20px;
+            margin-bottom: 15px;
         }
 
-        ul li {
-            padding: 8px 0 8px 30px;
-            position: relative;
-            color: #555;
-        }
-
-        ul li:before {
-            content: "•";
-            color: #1ca3ec;
-            font-weight: bold;
-            font-size: 1.4em;
-            position: absolute;
-            left: 10px;
-            top: 2px;
+        .section-content li {
+            margin-bottom: 10px;
+            color: #4a5568;
         }
 
         .highlight-box {
-            background: linear-gradient(135deg, #e8f7fd 0%, #f0f9ff 100%);
-            border: 2px solid #1ca3ec;
-            border-radius: 12px;
+            background: #ebf8ff;
+            border-left: 4px solid #3182ce;
             padding: 20px;
+            border-radius: 8px;
             margin: 20px 0;
         }
 
         .warning-box {
-            background: linear-gradient(135deg, #fff5e6 0%, #fff9f0 100%);
-            border: 2px solid #ff9800;
-            border-radius: 12px;
+            background: #fffaf0;
+            border-left: 4px solid #dd6b20;
             padding: 20px;
+            border-radius: 8px;
             margin: 20px 0;
         }
 
-        .warning-box strong {
-            color: #ff6f00;
-        }
-
         .contact-box {
-            background: #f8fcff;
-            border-radius: 12px;
+            background: #f7fafc;
+            border: 2px dashed #cbd5e0;
             padding: 25px;
-            margin-top: 20px;
-            border: 1px solid #d4eef9;
+            border-radius: 12px;
+            margin: 20px 0;
         }
 
-        .contact-box strong {
-            color: #1ca3ec;
-            display: block;
+        .contact-box p {
             margin-bottom: 8px;
         }
 
-        .contact-box a {
-            color: #1ca3ec;
-            text-decoration: none;
-            font-weight: 500;
-        }
-
-        .contact-box a:hover {
-            text-decoration: underline;
-        }
-
         .footer {
-            background: #f8f9fa;
+            background: #2d3748;
+            color: #cbd5e0;
             padding: 30px 40px;
             text-align: center;
-            color: #666;
-            font-size: 0.9em;
-            border-top: 1px solid #e0e0e0;
+            font-size: 0.9rem;
         }
 
         .footer-logo {
-            font-size: 1.5em;
-            font-weight: 700;
+            font-size: 1.5rem;
             color: #1ca3ec;
+            font-weight: 700;
             margin-bottom: 10px;
         }
 
         @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+
             .header {
-                padding: 40px 25px;
+                padding: 35px 20px;
             }
 
             .header h1 {
-                font-size: 2em;
+                font-size: 1.8rem;
             }
 
             .content {
-                padding: 30px 25px;
+                padding: 30px 20px;
+            }
+
+            .section-content {
+                padding-left: 0;
             }
 
             .section-title {
-                font-size: 1.2em;
+                font-size: 1.3rem;
             }
-
-            .footer {
-                padding: 25px 20px;
-            }
-        }
-
-        strong {
-            color: #222;
-            font-weight: 600;
         }
 
         .emphasis {
@@ -229,12 +188,12 @@
     <div class="container">
         <div class="header">
             <h1>Terms and Conditions</h1>
-            <div class="effective-date">Effective Date: [Insert Date]</div>
+            <div class="effective-date">Effective Date: January 1, 2025</div>
         </div>
 
         <div class="content">
             <div class="intro">
-                Welcome to VoiceMind, operated by VoiceMind PTY Ltd ("VoiceMind," "we," "us," or "our"). By downloading, accessing, or using the VoiceMind mobile application ("the App"), you agree to these Terms and Conditions. Please read them carefully.
+                Welcome to Closly ("Closly," "we," "us," or "our"). By downloading, accessing, or using the Closly mobile application ("the App"), you agree to these Terms and Conditions. Please read them carefully.
             </div>
 
             <div class="section">
@@ -244,11 +203,9 @@
                 </h2>
                 <div class="section-content">
                     <div class="contact-box">
-                        <strong>VoiceMind PTY Ltd</strong>
-                        <p>Registered in South Africa<br>
-                        Address: [Insert Province/State], South Africa</p>
-                        <strong>Email:</strong> <a href="mailto:info@voicemind.co.za">info@voicemind.co.za</a><br>
-                        <strong>Website:</strong> <a href="https://voicemind.co.za" target="_blank">https://voicemind.co.za</a>
+                        <strong>Closly Platform</strong>
+                        <p>Digital Wardrobe & Fashion Community Platform</p>
+                        <strong>Email:</strong> <a href="mailto:support@myclosly.com">support@myclosly.com</a><br>
                     </div>
                 </div>
             </div>
@@ -259,7 +216,7 @@
                     Acceptance of Terms
                 </h2>
                 <div class="section-content">
-                    <p>By using the App, you confirm that you are at least 18 years old or have obtained parental or guardian consent if aged between 12 and 17. If you do not agree with these Terms, do not use the App.</p>
+                    <p>By using the App, you confirm that you are at least 13 years old. If you do not agree with these Terms, please do not use the App.</p>
                 </div>
             </div>
 
@@ -269,10 +226,7 @@
                     App Overview
                 </h2>
                 <div class="section-content">
-                    <p>VoiceMind provides AI-powered mental wellness support, including chatbot interactions, voice features, and mental exercise tools.</p>
-                    <div class="warning-box">
-                        <strong>Important Notice:</strong> VoiceMind is designed for educational and supportive purposes only and does not replace professional medical advice or therapy.
-                    </div>
+                    <p>Closly provides digital wardrobe organization, cost-per-wear tracking, outfit sharing ("MyDay"), community interactions, and fashion affiliate product discovery.</p>
                 </div>
             </div>
 
@@ -282,17 +236,17 @@
                     User Accounts
                 </h2>
                 <div class="section-content">
-                    <p>Users may sign up using email/password, Google, or Apple login. You are responsible for maintaining the confidentiality of your account and password. You agree to provide accurate and complete information.</p>
+                    <p>Users may sign up using email/password, Google, or Apple login. You are responsible for maintaining the confidentiality of your account credentials. You agree to provide accurate and complete information.</p>
                 </div>
             </div>
 
             <div class="section">
                 <h2 class="section-title">
                     <span class="section-number">5</span>
-                    Subscriptions and Payments
+                    Affiliate Links & Third-Party Merchants
                 </h2>
                 <div class="section-content">
-                    <p>VoiceMind offers subscription-based access to certain features. Payments are securely processed via Stripe. Subscription terms, renewal options, and cancellation policies are presented at the time of purchase.</p>
+                    <p>Closly features products via affiliate marketing networks (including Awin and Rakuten). When you choose to purchase an item, you will be redirected to the third-party merchant's website. Closly does not process product payments, handle shipping, or manage returns for third-party merchant goods.</p>
                 </div>
             </div>
 
@@ -302,7 +256,7 @@
                     User Content
                 </h2>
                 <div class="section-content">
-                    <p>You may upload or create content such as journal entries or voice recordings. You retain ownership of your content but grant VoiceMind a limited license to store, process, and display it for app functionality. You are solely responsible for your content.</p>
+                    <p>You may upload content such as wardrobe clothing photos, outfit images, and messages. You retain ownership of your content but grant Closly a non-exclusive license to store, process, and display it for app functionality. You are solely responsible for content you upload.</p>
                 </div>
             </div>
 
@@ -312,15 +266,15 @@
                     Community Code of Conduct
                 </h2>
                 <div class="section-content">
-                    <p>By using VoiceMind, you agree not to:</p>
+                    <p>By using Closly, you agree not to:</p>
                     <ul>
                         <li>Use the App for any unlawful or harmful purpose</li>
-                        <li>Harass, abuse, or intimidate other users</li>
-                        <li>Post or share offensive, discriminatory, or explicit content</li>
-                        <li>Misuse the AI or attempt to manipulate responses in harmful ways</li>
+                        <li>Harass, abuse, or spam other users</li>
+                        <li>Post or share offensive, discriminatory, or infringing content</li>
+                        <li>Attempt to interfere with or compromise the security of the App</li>
                     </ul>
                     <div class="highlight-box">
-                        <strong>Enforcement:</strong> VoiceMind reserves the right to suspend or terminate accounts violating these terms.
+                        <strong>Enforcement:</strong> Closly reserves the right to remove inappropriate content and suspend or terminate accounts that violate these terms.
                     </div>
                 </div>
             </div>
@@ -331,7 +285,7 @@
                     Intellectual Property
                 </h2>
                 <div class="section-content">
-                    <p>All intellectual property related to VoiceMind, including trademarks, software, design, and content (excluding user-generated content), remains the property of VoiceMind PTY Ltd.</p>
+                    <p>All intellectual property related to Closly, including trademarks, software, branding, and design (excluding user-uploaded content), remains the property of Closly.</p>
                 </div>
             </div>
 
@@ -342,7 +296,7 @@
                 </h2>
                 <div class="section-content">
                     <div class="warning-box">
-                        <strong>Medical Disclaimer:</strong> VoiceMind is not a medical or therapeutic service. The information and interactions provided are for general educational and emotional support purposes only and do not constitute medical advice. Always seek professional guidance for mental health concerns.
+                        <strong>Fashion & Product Disclaimer:</strong> Closly provides fashion recommendations, wardrobe analytics, and affiliate links for informational and personal styling purposes only. We do not guarantee item availability or pricing on merchant websites.
                     </div>
                 </div>
             </div>
@@ -353,48 +307,37 @@
                     Limitation of Liability
                 </h2>
                 <div class="section-content">
-                    <p>To the fullest extent permitted by South African law, VoiceMind PTY Ltd shall not be liable for any indirect, incidental, or consequential damages arising from the use of the App.</p>
+                    <p>To the fullest extent permitted by applicable law, Closly shall not be liable for any indirect, incidental, or consequential damages arising from the use of the App or third-party merchant purchases.</p>
                 </div>
             </div>
 
             <div class="section">
                 <h2 class="section-title">
                     <span class="section-number">11</span>
-                    Termination
+                    Termination & Deletion
                 </h2>
                 <div class="section-content">
-                    <p>Users may delete their account at any time through the App. VoiceMind reserves the right to suspend or terminate access if a user violates these Terms or misuses the App.</p>
+                    <p>Users may delete their account and associated data at any time through the App or via our account deletion request form.</p>
                 </div>
             </div>
 
             <div class="section">
                 <h2 class="section-title">
                     <span class="section-number">12</span>
-                    Governing Law
-                </h2>
-                <div class="section-content">
-                    <p>These Terms are governed by and construed in accordance with the laws of South Africa. Any disputes shall be subject to the exclusive jurisdiction of South African courts.</p>
-                </div>
-            </div>
-
-            <div class="section">
-                <h2 class="section-title">
-                    <span class="section-number">13</span>
                     Contact Information
                 </h2>
                 <div class="section-content">
                     <p>For any inquiries or legal matters, contact:</p>
                     <div class="contact-box">
-                        <strong>Email:</strong> <a href="mailto:info@voicemind.co.za">info@voicemind.co.za</a><br>
-                        <strong>Website:</strong> <a href="https://voicemind.co.za" target="_blank">https://voicemind.co.za</a>
+                        <strong>Email:</strong> <a href="mailto:support@myclosly.com">support@myclosly.com</a>
                     </div>
                 </div>
             </div>
         </div>
 
         <div class="footer">
-            <div class="footer-logo">VoiceMind</div>
-            <p>© 2025 VoiceMind PTY Ltd. All rights reserved.</p>
+            <div class="footer-logo">Closly</div>
+            <p>© 2025 Closly. All rights reserved.</p>
         </div>
     </div>
 </body>
