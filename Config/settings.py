@@ -52,6 +52,8 @@ INSTALLED_APPS = [
     'affiliate.apps.AffiliateConfig',
     'closet.apps.ClosetConfig',
     'social.apps.SocialConfig',
+    'notifications.apps.NotificationsConfig',
+    'rewards.apps.RewardsConfig',
 ]
 
 REST_FRAMEWORK = {
