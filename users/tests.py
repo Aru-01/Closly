@@ -129,4 +129,99 @@ class UserPreferenceAndLoginTestCase(TestCase):
         self.assertFalse(middleware._should_skip_string('Welcome to your closet'))
         self.assertFalse(middleware._should_skip_string('Casual Friday outfit with a white tee'))
 
+    def test_closet_points_and_gamification_tiers(self):
+        from rewards.services import award_points, get_tier_info
+        from rewards.models import UserRewardProfile, RewardPointTransaction
+
+        self.client.force_authenticate(user=self.user)
+
+        # 1. Award share_look (+120)
+        t1 = award_points(self.user, 'share_look')
+        self.assertEqual(t1.points, 120)
+
+        # 2. Award add_closet_item (+50)
+        t2 = award_points(self.user, 'add_closet_item')
+        self.assertEqual(t2.points, 50)
+
+        # 3. Check summary via API
+        points_res = self.client.get(reverse('users:points-summary'))
+        self.assertEqual(points_res.status_code, status.HTTP_200_OK)
+        data = points_res.data['data']
+        self.assertEqual(data['total_points'], 170)
+        self.assertEqual(data['current_tier'], 'Bronze')
+        self.assertEqual(data['next_tier'], 'Silver')
+        self.assertEqual(data['points_to_next_tier'], 1830)
+
+        # 4. Check history via API
+        history_res = self.client.get(reverse('users:points-history'))
+        self.assertEqual(history_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(history_res.data['data']), 2)
+
+        # 5. Claim purchase points (+200)
+        claim_res = self.client.post(reverse('users:claim-purchase-points'), {
+            'order_id': 'ORDER-99182',
+            'store': 'H&M',
+            'amount': '85.50'
+        }, format='json')
+        self.assertEqual(claim_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(claim_res.data['data']['points_awarded'], 200)
+
+        # Duplicate claim should be rejected
+        dup_res = self.client.post(reverse('users:claim-purchase-points'), {
+            'order_id': 'ORDER-99182',
+            'store': 'H&M',
+        }, format='json')
+        self.assertEqual(dup_res.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 6. Level up to Silver by adding points to reach 2,000 threshold
+        # Current: 170 + 200 = 370. Need 1630 more.
+        award_points(self.user, 'custom_reward', points_override=1630)
+        profile = UserRewardProfile.objects.get(user=self.user)
+        self.assertEqual(profile.available_points, 2000)
+        self.assertEqual(profile.current_tier, 'Silver')
+
+    def test_referral_award_on_registration(self):
+        from rewards.models import UserRewardProfile
+
+        # User 1 has a referral code
+        self.assertTrue(self.user.referral_code.startswith('CLO-'))
+        ref_code = self.user.referral_code
+
+        # New user signs up with User 1's referral code
+        signup_url = reverse('users:signup')
+        signup_data = {
+            'name': 'Friend User',
+            'email': 'friend@example.com',
+            'date_of_birth': '1998-08-20',
+            'gender': 'female',
+            'password': 'FriendPassword123!',
+            'confirm_password': 'FriendPassword123!',
+            'referral_code': ref_code
+        }
+        res = self.client.post(signup_url, signup_data, format='json')
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+        # User 1 should have received +200 points for inviting a friend!
+        profile = UserRewardProfile.objects.filter(user=self.user).first()
+        self.assertIsNotNone(profile)
+        self.assertGreaterEqual(profile.available_points, 200)
+
+    def test_profile_sharing_and_public_landing(self):
+        self.client.force_authenticate(user=self.user)
+
+        # 1. Get share info via API
+        share_res = self.client.get(reverse('users:profile-share'))
+        self.assertEqual(share_res.status_code, status.HTTP_200_OK)
+        self.assertIn('share_url', share_res.data['data'])
+        self.assertIn('referral_code', share_res.data['data'])
+        self.assertIn('deep_link', share_res.data['data'])
+
+        # 2. Public web landing page
+        landing_url = f'/u/{self.user.id}/'
+        landing_res = self.client.get(landing_url)
+        self.assertEqual(landing_res.status_code, status.HTTP_200_OK)
+        self.assertContains(landing_res, self.user.name)
+        self.assertContains(landing_res, self.user.referral_code)
+
+
 

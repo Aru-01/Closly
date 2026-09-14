@@ -23,6 +23,7 @@ from .exceptions import (
     EmailAlreadyExistsException,
 )
 from .utils import validate_age
+from rewards.models import UserRewardProfile, RewardPointTransaction
 
 User = get_user_model()
 
@@ -53,10 +54,17 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         style={'input_type': 'password'},
         help_text="User's password (min 8 chars, must include uppercase, lowercase, number, special char)"
     )
+
+    referral_code = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        help_text="Optional referral code of the inviter"
+    )
     
     class Meta:
         model = User
-        fields = ['name', 'email', 'date_of_birth', 'gender', 'password', 'confirm_password']
+        fields = ['name', 'email', 'date_of_birth', 'gender', 'password', 'confirm_password', 'referral_code']
         extra_kwargs = {
             'name': {'required': True},
             'email': {'required': True, 'validators': []},
@@ -130,6 +138,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         """Create new user or update unverified user and send OTP"""
         validated_data.pop('confirm_password')
+        referral_code = validated_data.pop('referral_code', None)
         unverified_user = self.context.get('unverified_existing_user')
         
         if unverified_user:
@@ -153,6 +162,22 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
                 is_active=False  # User is inactive until OTP verification
             )
         
+        # If referral code provided, reward the referring user with 200 points
+        if referral_code:
+            ref_clean = referral_code.strip().upper()
+            referrer = User.objects.filter(referral_code=ref_clean).first()
+            if referrer and referrer.id != user.id:
+                try:
+                    from rewards.services import award_points
+                    award_points(
+                        user=referrer,
+                        action_type='invite_friend',
+                        description=f"Invited friend {user.name or user.email}",
+                        reference_id=str(user.id)
+                    )
+                except Exception:
+                    pass
+
         # Generate and send OTP
         from .utils import generate_otp, send_otp_email
         otp = generate_otp()
@@ -387,6 +412,14 @@ class UserProfileSerializer(serializers.ModelSerializer):
         help_text="Whether user has completed onboarding preferences"
     )
     
+    share_url = serializers.SerializerMethodField(
+        help_text="Shareable public profile URL"
+    )
+
+    points_summary = serializers.SerializerMethodField(
+        help_text="Current points balance and tier status"
+    )
+    
     class Meta:
         model = User
         fields = [
@@ -397,6 +430,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'gender',
             'occupation',
             'country',
+            'city',
             'age',
             'bio',
             'profile_picture',
@@ -404,6 +438,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'is_email_verified',
             'is_subscribed',
             'onboarding_completed',
+            'referral_code',
+            'share_url',
+            'points_summary',
             'date_joined',
             'last_login',
         ]
@@ -414,6 +451,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'is_email_verified',
             'is_subscribed',
             'onboarding_completed',
+            'referral_code',
+            'share_url',
+            'points_summary',
             'date_joined',
             'last_login',
         ]
@@ -439,6 +479,28 @@ class UserProfileSerializer(serializers.ModelSerializer):
         if request is not None:
             return request.build_absolute_uri(obj.profile_picture.url)
         return obj.profile_picture.url
+
+    def get_share_url(self, obj):
+        """Build full public profile share URL"""
+        request = self.context.get('request')
+        if request is not None:
+            return request.build_absolute_uri(f"/u/{obj.id}/")
+        return f"https://closly.app/u/{obj.id}/"
+
+    def get_points_summary(self, obj):
+        """Get points balance and tier info"""
+        from rewards.services import get_tier_info, process_expired_points
+        process_expired_points(obj)
+        reward_profile = getattr(obj, 'reward_profile', None)
+        available = reward_profile.available_points if reward_profile else 0
+        lifetime = reward_profile.lifetime_points if reward_profile else 0
+        tier_info = get_tier_info(lifetime)
+        return {
+            'available_points': available,
+            'lifetime_points': lifetime,
+            'total_points': available,
+            **tier_info
+        }
 
     # Mood tracking removed from the project. Any mood-related data/relations
     # have been intentionally omitted from the serializer.
@@ -483,7 +545,7 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = User
-        fields = ['name', 'date_of_birth', 'gender', 'occupation', 'country', 'bio', 'profile_picture']
+        fields = ['name', 'date_of_birth', 'gender', 'occupation', 'country', 'city', 'bio', 'profile_picture']
     
     def validate_name(self, value):
         """Validate name"""
@@ -745,3 +807,15 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
         instance.onboarding_completed = True
         instance.save()
         return instance
+
+
+from rewards.serializers import (
+    RewardPointTransactionSerializer,
+    UserRewardProfileSerializer,
+)
+
+# Backward-compatibility aliases
+ClosetPointTransactionSerializer = RewardPointTransactionSerializer
+UserPointSummarySerializer = UserRewardProfileSerializer
+
+

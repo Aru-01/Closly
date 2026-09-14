@@ -22,6 +22,11 @@ from .views import (
     ProfileDataDeletionAPIView,
     VerifyProfileDataDeletionView,
     UserPreferenceView,
+    UserPointsSummaryView,
+    UserPointsHistoryView,
+    ClaimPurchasePointsView,
+    ShareProfileAPIView,
+    PublicProfileWebView,
 )
 
 app_name = 'users'
@@ -66,4 +71,13 @@ urlpatterns = [
     path('preferences/', UserPreferenceView.as_view(), name='user-preferences'),
     path('onboarding/', UserPreferenceView.as_view(), name='user-onboarding'),
     path('onboarding/update/', UserPreferenceView.as_view(), name='user-onboarding-update'),
+
+    # Closet Points & Gamification Tiers
+    path('points/', UserPointsSummaryView.as_view(), name='points-summary'),
+    path('points/history/', UserPointsHistoryView.as_view(), name='points-history'),
+    path('points/claim-purchase/', ClaimPurchasePointsView.as_view(), name='claim-purchase-points'),
+
+    # Profile Sharing
+    path('profile/share/', ShareProfileAPIView.as_view(), name='profile-share'),
+    path('profile/public/<uuid:user_id>/', PublicProfileWebView.as_view(), name='public-profile'),
 ]

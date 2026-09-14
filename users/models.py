@@ -72,6 +72,14 @@ class User(AbstractBaseUser, PermissionsMixin):
         blank=True,
         help_text=_("User's country")
     )
+
+    city = models.CharField(
+        _('city / area'),
+        max_length=100,
+        null=True,
+        blank=True,
+        help_text=_("User's city, district, or area")
+    )
     
     # Status fields
     is_active = models.BooleanField(
@@ -174,6 +182,16 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text=_("User's preferred language for API responses")
     )
 
+    referral_code = models.CharField(
+        _('referral code'),
+        max_length=20,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=_("Unique referral code for sharing profile and inviting friends")
+    )
+
     # Set email as the unique identifier
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['name']  # Required when creating superuser
@@ -229,6 +247,23 @@ class User(AbstractBaseUser, PermissionsMixin):
         self.otp = None
         self.otp_created_at = None
         self.save(update_fields=['otp', 'otp_created_at'])
+
+    def generate_unique_referral_code(self):
+        """Generate a random unique referral code like CLO-7K2X9B"""
+        import secrets
+        import string
+        chars = string.ascii_uppercase + string.digits
+        for _ in range(20):
+            code = 'CLO-' + ''.join(secrets.choice(chars) for _ in range(6))
+            if not self.__class__.objects.filter(referral_code=code).exists():
+                return code
+        return f"CLO-{uuid.uuid4().hex[:6].upper()}"
+
+    def save(self, *args, **kwargs):
+        if not self.referral_code:
+            self.referral_code = self.generate_unique_referral_code()
+        super().save(*args, **kwargs)
+
 
 
 
@@ -500,3 +535,4 @@ class UserLoginHistory(models.Model):
     
     def __str__(self):
         return f"{self.user.email} - {self.login_time}"
+

@@ -1,5 +1,5 @@
 import logging
-from django.shortcuts import render
+from django.shortcuts import render, get_object_or_404
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.core.mail import send_mail
@@ -1163,3 +1163,72 @@ class UserPreferenceView(APIView):
     def patch(self, request):
         """Partial update onboarding preferences"""
         return self.post(request)
+
+
+from rewards.views import (
+    RewardPointsSummaryView as UserPointsSummaryView,
+    RewardPointsHistoryView as UserPointsHistoryView,
+    ClaimPurchaseRewardView as ClaimPurchasePointsView,
+)
+
+
+class ShareProfileAPIView(APIView):
+    """
+    API endpoint to retrieve user's shareable profile link, referral code, and share text.
+    
+    GET /api/users/profile/share/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication, FirebaseAuthentication]
+
+    def get(self, request):
+        user = request.user
+        if not user.referral_code:
+            user.save()
+
+        share_url = request.build_absolute_uri(f"/u/{user.id}/")
+        referral_code = user.referral_code
+        share_text = f"Check out my fashion closet and daily styles on Closly! Join using my link: {share_url}?ref={referral_code}"
+
+        return Response({
+            'success': True,
+            'message': 'Share profile data retrieved successfully.',
+            'data': {
+                'share_url': share_url,
+                'referral_code': referral_code,
+                'share_text': share_text,
+                'deep_link': f"closly://user/{user.id}?ref={referral_code}",
+            }
+        }, status=status.HTTP_200_OK)
+
+
+class PublicProfileWebView(APIView):
+    """
+    Public web landing page for a shared profile.
+    Renders mobile-first luxury profile view with deep-link into Closly app.
+    
+    GET /u/<uuid:user_id>/
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request, user_id):
+        profile_user = get_object_or_404(User, pk=user_id)
+        
+        reward_profile = getattr(profile_user, 'reward_profile', None)
+        tier = reward_profile.current_tier if reward_profile else 'Bronze'
+        
+        closet_count = profile_user.closet_items.count()
+        outfit_count = profile_user.today_outfits.filter(visibility='public').count()
+        followers_count = profile_user.followers_set.count()
+        recent_outfits = profile_user.today_outfits.filter(visibility='public')[:6]
+
+        context = {
+            'profile_user': profile_user,
+            'tier': tier,
+            'closet_count': closet_count,
+            'outfit_count': outfit_count,
+            'followers_count': followers_count,
+            'recent_outfits': recent_outfits,
+        }
+        return render(request, 'users/public_profile.html', context)
