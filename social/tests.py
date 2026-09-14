@@ -106,3 +106,138 @@ class SocialApiTests(TestCase):
         self.assertTrue(first_item['is_liked'])
         self.assertEqual(len(first_item['tagged_items_details']), 1)
 
+    def test_notifications_flow(self):
+        from notifications.models import Notification
+
+        # 1. User1 likes User2's outfit -> should trigger notification for User2
+        dummy_img = SimpleUploadedFile("u2.jpg", b"image data", content_type="image/jpeg")
+        outfit2 = TodayOutfit.objects.create(user=self.user2, image=dummy_img, caption="U2 look", visibility="public")
+        self.client.post(f'/api/social/outfits/{outfit2.id}/like/')
+
+        u2_notifs = Notification.objects.filter(recipient=self.user2)
+        self.assertEqual(u2_notifs.count(), 1)
+        self.assertEqual(u2_notifs.first().notification_type, 'outfit_like')
+
+        # 2. User1 likes their own outfit -> should NOT create self-notification
+        outfit1 = TodayOutfit.objects.create(user=self.user1, image=dummy_img, caption="U1 look", visibility="public")
+        self.client.post(f'/api/social/outfits/{outfit1.id}/like/')
+        self.assertEqual(Notification.objects.filter(recipient=self.user1, notification_type='outfit_like').count(), 0)
+
+        # 3. User1 follows User2 -> creates new_follower notification
+        self.client.post(f'/api/social/users/{self.user2.id}/follow/')
+        self.assertTrue(Notification.objects.filter(recipient=self.user2, notification_type='new_follower').exists())
+
+        # 4. User1 sends DM to User2 -> creates direct_message notification
+        self.client.post('/api/social/messages/', {'recipient_id': str(self.user2.id), 'content': 'Test notification message'})
+        self.assertTrue(Notification.objects.filter(recipient=self.user2, notification_type='direct_message').exists())
+
+        # 5. User2 checks notification list & unread count
+        self.client.force_authenticate(user=self.user2)
+        res = self.client.get('/api/notifications/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(res.data['unread_count'], 3)
+
+        # 6. User2 marks single notification as read
+        notif_id = u2_notifs.first().id
+        read_res = self.client.post(f'/api/notifications/{notif_id}/read/')
+        self.assertEqual(read_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(Notification.objects.get(id=notif_id).is_read)
+
+        # 7. User2 marks all notifications as read
+        mark_all_res = self.client.post('/api/notifications/mark-all-read/')
+        self.assertEqual(mark_all_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(Notification.objects.filter(recipient=self.user2, is_read=False).count(), 0)
+
+    def test_liked_outfits_excludes_self_outfits(self):
+        from .models import OutfitLike
+
+        dummy_img = SimpleUploadedFile("look.jpg", b"look data", content_type="image/jpeg")
+        outfit_u1 = TodayOutfit.objects.create(user=self.user1, image=dummy_img, caption="My own look", visibility="public")
+        outfit_u2 = TodayOutfit.objects.create(user=self.user2, image=dummy_img, caption="User2 chic look", visibility="public")
+
+        # User1 likes both their own look and User2's look
+        OutfitLike.objects.create(outfit=outfit_u1, user=self.user1)
+        OutfitLike.objects.create(outfit=outfit_u2, user=self.user1)
+
+        # GET /api/social/outfits/liked/
+        res = self.client.get('/api/social/outfits/liked/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        results = res.data['data']['results']
+
+        # Self outfit MUST be excluded, only User2's outfit should be present!
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]['id'], outfit_u2.id)
+        self.assertEqual(results[0]['caption'], "User2 chic look")
+
+    def test_outfit_calendar_view(self):
+        from django.utils import timezone
+
+        dummy_img = SimpleUploadedFile("cal.jpg", b"cal data", content_type="image/jpeg")
+        TodayOutfit.objects.create(user=self.user1, image=dummy_img, caption="Calendar outfit", visibility="public")
+
+        now = timezone.now()
+        # Test with explicit year & month
+        cal_url = f'/api/social/outfits/calendar/?year={now.year}&month={now.month}'
+        res = self.client.get(cal_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data['success'])
+        self.assertIn('days', res.data['data'])
+        self.assertGreaterEqual(res.data['data']['total_outfits'], 1)
+
+        # Test without ANY query parameters (must default to running month)
+        default_cal_url = '/api/social/outfits/calendar/'
+        def_res = self.client.get(default_cal_url)
+        self.assertEqual(def_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(def_res.data['data']['is_running_month'])
+        self.assertEqual(def_res.data['data']['year'], now.year)
+        self.assertEqual(def_res.data['data']['month'], now.month)
+
+    def test_follower_tabs_dna_match_and_self_following(self):
+        # Setup location and preferences
+        self.user1.city = "New York"
+        self.user1.country = "USA"
+        self.user1.save()
+
+        self.user2.city = "New York"
+        self.user2.country = "USA"
+        self.user2.save()
+
+        # Follow user2
+        self.client.post(f'/api/social/users/{self.user2.id}/follow/')
+
+        # 1. Test Self following endpoint: GET /api/social/following/?tab=all
+        following_res = self.client.get('/api/social/following/?tab=all')
+        self.assertEqual(following_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(following_res.data), 1)
+        item = following_res.data[0]
+        self.assertIn('dna_match', item)
+        self.assertIn('score', item['dna_match'])
+        self.assertTrue(item['is_new'])
+        self.assertTrue(item['same_location'])
+
+        # 2. Test DNA Match tab: GET /api/social/following/?tab=dna_match
+        dna_res = self.client.get('/api/social/following/?tab=dna_match')
+        self.assertEqual(dna_res.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(len(dna_res.data), 1)
+
+        # 3. Test New Followers tab: GET /api/social/following/?tab=new_followers
+        new_res = self.client.get('/api/social/following/?tab=new_followers')
+        self.assertEqual(new_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(new_res.data), 1)
+
+        # 4. Test Same Location tab: GET /api/social/following/?tab=same_location
+        loc_res = self.client.get('/api/social/following/?tab=same_location')
+        self.assertEqual(loc_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(loc_res.data), 1)
+
+        # 5. Test Visit Other User Profile: GET /api/social/users/<user2_id>/profile/
+        prof_res = self.client.get(f'/api/social/users/{self.user2.id}/profile/')
+        self.assertEqual(prof_res.status_code, status.HTTP_200_OK)
+        prof_data = prof_res.data['data']
+        self.assertEqual(prof_data['id'], str(self.user2.id))
+        self.assertTrue(prof_data['is_following'])
+        self.assertIn('dna_match', prof_data)
+        self.assertIn('score', prof_data['dna_match'])
+
+
+

@@ -75,3 +75,5 @@ class DirectMessage(models.Model):
 
     def __str__(self):
         return f"From {self.sender.email} to {self.recipient.email} at {self.created_at}"
+
+

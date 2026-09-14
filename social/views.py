@@ -7,6 +7,7 @@ from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.db.models import Q, Count
+from django.utils import timezone
 
 from .models import TodayOutfit, OutfitLike, UserFollow, DirectMessage
 from .serializers import (
@@ -49,7 +50,17 @@ class TodayOutfitCreateView(generics.CreateAPIView):
     serializer_class = TodayOutfitSerializer
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        outfit = serializer.save(user=self.request.user)
+        try:
+            from rewards.services import award_points
+            award_points(
+                user=self.request.user,
+                action_type='share_look',
+                description="Shared a today outfit look",
+                reference_id=str(outfit.id)
+            )
+        except Exception:
+            pass
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -184,6 +195,19 @@ class OutfitLikeToggleView(APIView):
         else:
             is_liked = True
             message = "Liked outfit post."
+            if outfit.user != request.user:
+                try:
+                    from notifications.services import create_notification
+                    create_notification(
+                        recipient=outfit.user,
+                        sender=request.user,
+                        notification_type='outfit_like',
+                        title='New Outfit Like',
+                        message=f"{request.user.name or 'A user'} liked your outfit look.",
+                        data={'outfit_id': outfit.id, 'deep_link': f"closly://outfit/{outfit.id}"}
+                    )
+                except Exception:
+                    pass
 
         return Response({
             'success': True,
@@ -223,6 +247,18 @@ class UserFollowToggleView(APIView):
         else:
             is_following = True
             message = f"Now following {target_user.name}."
+            try:
+                from notifications.services import create_notification
+                create_notification(
+                    recipient=target_user,
+                    sender=request.user,
+                    notification_type='new_follower',
+                    title='New Follower',
+                    message=f"{request.user.name or 'A user'} started following you.",
+                    data={'user_id': str(request.user.id), 'deep_link': f"closly://user/{request.user.id}"}
+                )
+            except Exception:
+                pass
 
         return Response({
             'success': True,
@@ -237,31 +273,183 @@ class UserFollowToggleView(APIView):
 class UserFollowersListView(generics.ListAPIView):
     """
     API endpoint to list followers of a user.
+    Supports tab filtering:
+    - ?tab=all (default, all followers with DNA match scores)
+    - ?tab=dna_match (sorted descending by DNA match score %)
+    - ?tab=new_followers (followed within the last 14 days)
+    - ?tab=same_location (same city, district, or country)
     
-    GET /api/social/users/<user_id>/followers/
+    GET /api/social/users/<user_id>/followers/?tab=dna_match
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
     serializer_class = UserFollowSerializer
 
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['view_type'] = 'followers'
+        return ctx
+
     def get_queryset(self):
         user_id = self.kwargs.get('user_id')
-        return UserFollow.objects.filter(following_id=user_id)
+        if not user_id or str(user_id) == 'me':
+            user_id = self.request.user.id
+
+        qs = UserFollow.objects.filter(following_id=user_id).select_related('follower', 'following')
+        tab = self.request.query_params.get('tab', 'all').lower()
+
+        if tab == 'new_followers':
+            cutoff = timezone.now() - timezone.timedelta(days=14)
+            qs = qs.filter(created_at__gte=cutoff)
+        elif tab == 'same_location':
+            u = self.request.user
+            q_loc = Q()
+            if u.city:
+                q_loc |= Q(follower__city__iexact=u.city.strip())
+            if u.country:
+                q_loc |= Q(follower__country__iexact=u.country.strip())
+            if q_loc:
+                qs = qs.filter(q_loc)
+
+        return qs.order_by('-created_at')
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        tab = request.query_params.get('tab', 'all').lower()
+        if tab == 'dna_match' and isinstance(response.data, list):
+            response.data.sort(
+                key=lambda x: (x.get('dna_match') or {}).get('score', 0),
+                reverse=True
+            )
+        return response
 
 
 class UserFollowingListView(generics.ListAPIView):
     """
     API endpoint to list users followed by a user.
+    Supports tab filtering:
+    - ?tab=all
+    - ?tab=dna_match (sorted descending by DNA match score %)
+    - ?tab=new_followers (followed within last 14 days)
+    - ?tab=same_location (same city, district, or country)
     
-    GET /api/social/users/<user_id>/following/
+    GET /api/social/users/<user_id>/following/?tab=all
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
     serializer_class = UserFollowSerializer
 
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['view_type'] = 'following'
+        return ctx
+
     def get_queryset(self):
         user_id = self.kwargs.get('user_id')
-        return UserFollow.objects.filter(follower_id=user_id)
+        if not user_id or str(user_id) == 'me':
+            user_id = self.request.user.id
+
+        qs = UserFollow.objects.filter(follower_id=user_id).select_related('follower', 'following')
+        tab = self.request.query_params.get('tab', 'all').lower()
+
+        if tab == 'new_followers':
+            cutoff = timezone.now() - timezone.timedelta(days=14)
+            qs = qs.filter(created_at__gte=cutoff)
+        elif tab == 'same_location':
+            u = self.request.user
+            q_loc = Q()
+            if u.city:
+                q_loc |= Q(following__city__iexact=u.city.strip())
+            if u.country:
+                q_loc |= Q(following__country__iexact=u.country.strip())
+            if q_loc:
+                qs = qs.filter(q_loc)
+
+        return qs.order_by('-created_at')
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        tab = request.query_params.get('tab', 'all').lower()
+        if tab == 'dna_match' and isinstance(response.data, list):
+            response.data.sort(
+                key=lambda x: (x.get('dna_match') or {}).get('score', 0),
+                reverse=True
+            )
+        return response
+
+
+class MyFollowingListView(UserFollowingListView):
+    """
+    Direct endpoint for authenticated user to see who they follow (Self Profile).
+    
+    GET /api/social/following/?tab=all|dna_match|new_followers|same_location
+    """
+    def get_queryset(self):
+        self.kwargs['user_id'] = self.request.user.id
+        return super().get_queryset()
+
+
+class MyFollowersListView(UserFollowersListView):
+    """
+    Direct endpoint for authenticated user to see their followers (Self Profile).
+    
+    GET /api/social/followers/?tab=all|dna_match|new_followers|same_location
+    """
+    def get_queryset(self):
+        self.kwargs['user_id'] = self.request.user.id
+        return super().get_queryset()
+
+
+class OtherUserProfileView(APIView):
+    """
+    API endpoint to view another user's profile with real-time Style DNA match percentage.
+    
+    GET /api/social/users/<user_id>/profile/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request, user_id):
+        target_user = get_object_or_404(User, pk=user_id)
+        is_following = UserFollow.objects.filter(follower=request.user, following=target_user).exists()
+        is_self = (request.user.id == target_user.id)
+
+        from .dna import calculate_dna_match
+        dna = calculate_dna_match(request.user, target_user)
+
+        reward_profile = getattr(target_user, 'reward_profile', None)
+        tier = reward_profile.current_tier if reward_profile else 'Bronze'
+
+        followers_count = UserFollow.objects.filter(following=target_user).count()
+        following_count = UserFollow.objects.filter(follower=target_user).count()
+        outfit_count = TodayOutfit.objects.filter(user=target_user, visibility='public').count()
+        closet_count = target_user.closet_items.count()
+
+        pic_url = target_user.profile_picture.url if target_user.profile_picture else None
+        if pic_url and not pic_url.startswith(('http://', 'https://')):
+            pic_url = request.build_absolute_uri(pic_url)
+
+        return Response({
+            'success': True,
+            'message': f"Profile of {target_user.name or 'User'} retrieved successfully.",
+            'data': {
+                'id': str(target_user.id),
+                'name': target_user.name,
+                'email': target_user.email,
+                'bio': target_user.bio or '',
+                'country': target_user.country or '',
+                'city': target_user.city or '',
+                'profile_picture': pic_url,
+                'current_tier': tier,
+                'is_self': is_self,
+                'is_following': is_following,
+                'followers_count': followers_count,
+                'following_count': following_count,
+                'outfit_count': outfit_count,
+                'closet_count': closet_count,
+                'dna_match': dna,
+            }
+        }, status=status.HTTP_200_OK)
 
 
 class DirectMessageSendView(APIView):
@@ -290,6 +478,20 @@ class DirectMessageSendView(APIView):
             recipient=recipient,
             content=content
         )
+
+        if recipient != request.user:
+            try:
+                from notifications.services import create_notification
+                create_notification(
+                    recipient=recipient,
+                    sender=request.user,
+                    notification_type='direct_message',
+                    title='New Message',
+                    message=f"{request.user.name or 'A user'}: {content[:60]}",
+                    data={'sender_id': str(request.user.id), 'deep_link': f"closly://chat/{request.user.id}"}
+                )
+            except Exception:
+                pass
 
         serializer = DirectMessageSerializer(message)
         return Response({
@@ -384,4 +586,104 @@ class ConversationListView(APIView):
             'message': 'Conversations retrieved successfully.',
             'data': serializer.data
         }, status=status.HTTP_200_OK)
+
+
+class LikedOutfitsListView(generics.ListAPIView):
+    """
+    API endpoint to list outfits liked by the authenticated user.
+    Note: As per user specification, self-outfits are excluded from this list.
+    
+    GET /api/social/outfits/liked/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = TodayOutfitSerializer
+    pagination_class = StandardSocialPagination
+
+    def get_queryset(self):
+        return (
+            TodayOutfit.objects.filter(likes__user=self.request.user)
+            .exclude(user=self.request.user)
+            .select_related('user')
+            .prefetch_related('tagged_items')
+            .annotate(_likes_count=Count('likes', distinct=True))
+            .order_by('-likes__created_at')
+        )
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if self.request.user.is_authenticated:
+            context['liked_outfit_ids'] = set(
+                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
+            )
+        return context
+
+
+class OutfitCalendarView(APIView):
+    """
+    API endpoint to retrieve calendar-wise outfits for a given month and year.
+    Returns outfits grouped by date (YYYY-MM-DD) for rendering in calendar cells.
+    
+    GET /api/social/outfits/calendar/?year=2026&month=9
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        now = timezone.now()
+        year_param = request.query_params.get('year')
+        month_param = request.query_params.get('month')
+
+        try:
+            year = int(year_param) if (year_param and str(year_param).strip()) else now.year
+            month = int(month_param) if (month_param and str(month_param).strip()) else now.month
+            if not (1 <= month <= 12 and 1900 <= year <= 2100):
+                year, month = now.year, now.month
+        except (ValueError, TypeError):
+            year, month = now.year, now.month
+
+        outfits = (
+            TodayOutfit.objects.filter(
+                user=request.user,
+                created_at__year=year,
+                created_at__month=month
+            )
+            .select_related('user')
+            .prefetch_related('tagged_items')
+            .annotate(_likes_count=Count('likes', distinct=True))
+            .order_by('created_at')
+        )
+
+        days_map = {}
+        for outfit in outfits:
+            date_str = outfit.created_at.strftime('%Y-%m-%d')
+            if date_str not in days_map:
+                days_map[date_str] = []
+
+            img_url = outfit.image.url if outfit.image else None
+            if img_url and not img_url.startswith(('http://', 'https://')):
+                img_url = request.build_absolute_uri(img_url)
+
+            days_map[date_str].append({
+                'id': outfit.id,
+                'image': img_url,
+                'caption': outfit.caption,
+                'visibility': outfit.visibility,
+                'likes_count': outfit.likes_count,
+                'created_at': outfit.created_at.isoformat(),
+            })
+
+        return Response({
+            'success': True,
+            'message': 'Calendar outfits retrieved successfully.',
+            'data': {
+                'year': year,
+                'month': month,
+                'is_running_month': (year == now.year and month == now.month),
+                'total_outfits': outfits.count(),
+                'days': days_map
+            }
+        }, status=status.HTTP_200_OK)
+
+
 
