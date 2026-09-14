@@ -39,11 +39,11 @@ def send_otp_email(user, otp):
     Send OTP to user's email
     """
     try:
-        subject = 'Your One-Time Password (OTP)'
+        subject = 'Your Closly Verification Code'
         html_message = render_to_string('emails/otp_email.html', {
             'user': user,
             'otp': otp,
-            'site_name': 'Your App Name',
+            'site_name': 'Closly',
         })
         plain_message = strip_tags(html_message)
         send_mail(
@@ -153,26 +153,26 @@ def send_verification_email(user, verification_url):
         return False
 
 
-def send_password_reset_email(user, reset_url):
+def send_password_reset_email(user, otp):
     """
-    Send password reset link to user
+    Send password reset OTP to user
     
     Args:
         user: User instance
-        reset_url (str): Full URL for password reset
+        otp (str): One-time password for reset
         
     Returns:
         bool: True if email sent successfully, False otherwise
     """
     try:
-        subject = 'Reset Your Password'
+        subject = 'Reset Your Password - Closly'
         
         # Render HTML email template
         html_message = render_to_string('emails/reset_password.html', {
             'user': user,
-            'reset_url': reset_url,
-            'site_name': 'Your App Name',
-            'expiry_hours': settings.PASSWORD_RESET_TOKEN_EXPIRY_HOURS,
+            'otp': otp,
+            'site_name': 'Closly',
+            'expiry_minutes': 10,
         })
         
         # Create plain text version
@@ -206,12 +206,12 @@ def send_welcome_email(user):
         bool: True if email sent successfully, False otherwise
     """
     try:
-        subject = 'Welcome to Our App!'
+        subject = 'Welcome to Closly!'
         
         # Render HTML email template
         html_message = render_to_string('emails/welcome.html', {
             'user': user,
-            'site_name': 'Your App Name',
+            'site_name': 'Closly',
         })
         
         # Create plain text version
@@ -245,12 +245,12 @@ def send_account_deletion_email(user):
         bool: True if email sent successfully, False otherwise
     """
     try:
-        subject = 'Your Account Has Been Deleted'
+        subject = 'Your Closly Account Has Been Deleted'
         
         # Render HTML email template
         html_message = render_to_string('emails/account_deleted.html', {
             'user': user,
-            'site_name': 'Your App Name',
+            'site_name': 'Closly',
         })
         
         # Create plain text version

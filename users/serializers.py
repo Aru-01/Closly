@@ -218,6 +218,11 @@ class FirebaseAuthSerializer(serializers.Serializer):
         help_text="User's full name (optional, will use Firebase data if not provided)"
     )
     
+    email = serializers.EmailField(
+        required=False,
+        help_text="User's email address (optional, fallback if not provided in Firebase token)"
+    )
+    
     date_of_birth = serializers.DateField(
         required=False,
         help_text="User's date of birth (optional)"

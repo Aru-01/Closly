@@ -43,6 +43,7 @@ from .utils import (
     verify_firebase_token,
     send_welcome_email,
     send_account_deletion_email,
+    send_password_reset_email,
     get_client_ip,
     get_user_agent,
 )
@@ -418,10 +419,16 @@ class FirebaseAuthView(APIView):
                 decoded_token = verify_firebase_token(firebase_token)
                 logger.info(f"Firebase token verified successfully. Decoded token: {decoded_token}")
                 
-                # Extract user data from token
+                # Extract user data from token and request
                 firebase_uid = decoded_token.get('uid')
-                email = decoded_token.get('email')
-                name = serializer.validated_data.get('name') or decoded_token.get('name', email.split('@')[0])
+                email = decoded_token.get('email') or serializer.validated_data.get('email')
+                raw_name = serializer.validated_data.get('name') or decoded_token.get('name')
+                if raw_name:
+                    name = raw_name
+                elif email:
+                    name = email.split('@')[0]
+                else:
+                    name = f"user_{firebase_uid[:8]}" if firebase_uid else "Closly User"
                 
                 # Determine auth provider
                 firebase_provider = decoded_token.get('firebase', {}).get('sign_in_provider', 'google')
@@ -430,6 +437,22 @@ class FirebaseAuthView(APIView):
                     'apple.com': 'apple',
                 }
                 auth_provider = auth_provider_map.get(firebase_provider, 'google')
+                
+                # Validate UID
+                if not firebase_uid:
+                    return standard_response(
+                        success=False,
+                        message="Invalid token: missing UID",
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # If new user and email is missing from both token and payload, require email
+                if not email and not User.objects.filter(firebase_uid=firebase_uid).exists():
+                    return standard_response(
+                        success=False,
+                        message="Email is required to complete registration with Closly.",
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
                 
                 # Create or get user
                 user = User.objects.create_firebase_user(
@@ -518,7 +541,7 @@ class VerifyOTPView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     """
-    API endpoint to verify OTP
+    API endpoint to verify OTP for account activation
     """
     permission_classes = [AllowAny]
     serializer_class = VerifyOTPSerializer
@@ -535,8 +558,16 @@ class VerifyOTPView(APIView):
                     user.is_email_verified = True
                     user.clear_otp()
                     user.save()
-                    return standard_response(success=True, message="OTP verified successfully.")
+                    
+                    # Send welcome email upon successful account verification
+                    try:
+                        send_welcome_email(user)
+                    except Exception as e:
+                        logger.error(f"Failed to send welcome email: {e}")
+                        
+                    return standard_response(success=True, message="OTP verified successfully. Your account is now active.")
                 else:
+                    # Expired OTP is automatically cleared from the DB by is_otp_valid()
                     return standard_response(success=False, message="Invalid or expired OTP.", status_code=status.HTTP_400_BAD_REQUEST)
             except User.DoesNotExist:
                 return standard_response(success=False, message="User not found.", status_code=status.HTTP_404_NOT_FOUND)
@@ -546,7 +577,7 @@ class ResendOTPView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     """
-    API endpoint to resend OTP
+    API endpoint to resend OTP with 30-second rate limiting
     """
     permission_classes = [AllowAny]
     serializer_class = ResendOTPSerializer
@@ -558,6 +589,17 @@ class ResendOTPView(APIView):
             try:
                 user = User.objects.get(email=email)
                 if not user.is_active:
+                    # 30-second rate limiting check
+                    if user.otp_created_at:
+                        seconds_passed = (timezone.now() - user.otp_created_at).total_seconds()
+                        if seconds_passed < 30:
+                            retry_after = int(30 - seconds_passed)
+                            return standard_response(
+                                success=False,
+                                message=f"Please wait {retry_after} seconds before requesting another OTP.",
+                                status_code=status.HTTP_429_TOO_MANY_REQUESTS
+                            )
+                    
                     from .utils import generate_otp, send_otp_email
                     otp = generate_otp()
                     user.otp = otp
@@ -576,7 +618,7 @@ class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     """
-    API endpoint to request password reset
+    API endpoint to request password reset with 30-second rate limiting
     
     POST /api/users/password-reset/
     
@@ -599,13 +641,25 @@ class PasswordResetRequestView(APIView):
             try:
                 user = User.objects.get(email=email)
                 
-                # Generate and send OTP
-                from .utils import generate_otp, send_otp_email
+                # 30-second rate limiting check
+                if user.otp_created_at:
+                    seconds_passed = (timezone.now() - user.otp_created_at).total_seconds()
+                    if seconds_passed < 30:
+                        retry_after = int(30 - seconds_passed)
+                        return standard_response(
+                            success=False,
+                            message=f"Please wait {retry_after} seconds before requesting another OTP.",
+                            status_code=status.HTTP_429_TOO_MANY_REQUESTS
+                        )
+                
+                # Generate and send password reset OTP
+                from .utils import generate_otp, send_password_reset_email
                 otp = generate_otp()
                 user.otp = otp
                 user.otp_created_at = timezone.now()
-                user.save(update_fields=['otp', 'otp_created_at'])
-                send_otp_email(user, otp)
+                user.password_reset_verified = False
+                user.save(update_fields=['otp', 'otp_created_at', 'password_reset_verified'])
+                send_password_reset_email(user, otp)
             
             except User.DoesNotExist:
                 # For security, don't reveal if email exists or not
@@ -614,7 +668,7 @@ class PasswordResetRequestView(APIView):
             # Always return success message
             return standard_response(
                 success=True,
-                message="If an account with that email exists, an OTP has been sent.",
+                message="If an account with that email exists, a password reset OTP has been sent.",
                 status_code=status.HTTP_200_OK
             )
         
@@ -630,7 +684,8 @@ class PasswordResetOTPVerifyView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     """
-    API endpoint to verify OTP for password reset
+    API endpoint to verify OTP for password reset.
+    On success, sets password_reset_verified=True and clears the OTP from DB.
     """
     permission_classes = [AllowAny]
     serializer_class = PasswordResetOTPVerifySerializer
@@ -643,21 +698,41 @@ class PasswordResetOTPVerifyView(APIView):
             try:
                 user = User.objects.get(email=email)
                 if user.otp == otp and user.is_otp_valid():
-                    # OTP is correct, allow password reset
+                    # OTP is valid: allow password reset and remove OTP from database
+                    user.password_reset_verified = True
                     user.clear_otp()
-                    return standard_response(success=True, message="OTP verified successfully. You can now reset your password.")
+                    user.save(update_fields=['password_reset_verified'])
+                    return standard_response(
+                        success=True,
+                        message="OTP verified successfully. You can now reset your password."
+                    )
                 else:
-                    return standard_response(success=False, message="Invalid or expired OTP.", status_code=status.HTTP_400_BAD_REQUEST)
+                    # Expired OTP is automatically cleared from the DB by is_otp_valid()
+                    return standard_response(
+                        success=False,
+                        message="Invalid or expired OTP.",
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
             except User.DoesNotExist:
-                return standard_response(success=False, message="User not found.", status_code=status.HTTP_404_NOT_FOUND)
-        return standard_response(success=False, message="Invalid data.", errors=serializer.errors, status_code=status.HTTP_400_BAD_REQUEST)
+                return standard_response(
+                    success=False,
+                    message="User not found.",
+                    status_code=status.HTTP_404_NOT_FOUND
+                )
+        return standard_response(
+            success=False,
+            message="Invalid data.",
+            errors=serializer.errors,
+            status_code=status.HTTP_400_BAD_REQUEST
+        )
 
 
 class PasswordResetConfirmView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     """
-    API endpoint to confirm password reset with OTP
+    API endpoint to confirm password reset.
+    Enforces that the user has verified the OTP (password_reset_verified=True).
     
     POST /api/users/password-reset-confirm/
     
@@ -683,9 +758,18 @@ class PasswordResetConfirmView(APIView):
             try:
                 user = User.objects.get(email=email)
                 
-                # Set new password
+                # Security check: verify that user actually verified OTP
+                if not user.password_reset_verified:
+                    return standard_response(
+                        success=False,
+                        message="Password reset not authorized. Please verify your OTP first.",
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Set new password and reset verification flag
                 user.set_password(new_password)
-                user.save()
+                user.password_reset_verified = False
+                user.save(update_fields=['password', 'password_reset_verified'])
                 
                 return standard_response(
                     success=True,

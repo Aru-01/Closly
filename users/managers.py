@@ -93,37 +93,69 @@ class UserManager(BaseUserManager):
     
     def create_firebase_user(self, email, name, firebase_uid, auth_provider='google', **extra_fields):
         """
-        Create user from Firebase authentication (Google, Apple, etc.)
+        Create or retrieve user from Firebase authentication (Google, Apple, etc.)
+        Prevents duplicate accounts by checking firebase_uid first, then linking
+        existing accounts with the same email.
         
         Args:
-            email (str): User's email from Firebase
-            name (str): User's name from Firebase
+            email (str): User's email from Firebase or client payload
+            name (str): User's name from Firebase or client payload
             firebase_uid (str): Firebase UID
-            auth_provider (str): Authentication provider (google, apple)
+            auth_provider (str): Authentication provider ('google', 'apple')
             **extra_fields: Additional fields
             
         Returns:
-            User: Created or existing user instance
+            User: Created or existing linked user instance
         """
-        # Check if user already exists with this email
+        # 1. First, check if user already exists with this Firebase UID
+        if firebase_uid:
+            user = self.filter(firebase_uid=firebase_uid).first()
+            if user:
+                # Update name if previously placeholder and better name is provided
+                if name and (not user.name or user.name.startswith('user_')):
+                    user.name = name
+                    user.save(update_fields=['name'])
+                return user
+        
+        # 2. If not found by firebase_uid, check if account exists with this email
+        if email:
+            normalized_email = self.normalize_email(email)
+            user = self.filter(email__iexact=normalized_email).first()
+            if user:
+                # Link existing email-registered user with Firebase UID to prevent duplicate accounts
+                update_fields = []
+                if not user.firebase_uid and firebase_uid:
+                    user.firebase_uid = firebase_uid
+                    update_fields.append('firebase_uid')
+                if not user.is_email_verified:
+                    user.is_email_verified = True
+                    update_fields.append('is_email_verified')
+                if name and not user.name:
+                    user.name = name
+                    update_fields.append('name')
+                if update_fields:
+                    user.save(update_fields=update_fields)
+                return user
+        
+        # 3. If neither exists, create a new user
+        if not email:
+            raise ValueError(_("An email address is required to create an account."))
+        
+        if not name:
+            name = email.split('@')[0] if email else f"user_{firebase_uid[:8] if firebase_uid else 'closly'}"
+        
+        extra_fields.setdefault('firebase_uid', firebase_uid)
+        extra_fields.setdefault('auth_provider', auth_provider)
+        extra_fields.setdefault('is_email_verified', True)
+        extra_fields.setdefault('is_active', True)
+        
+        new_user = self.create_user(email, name, password=None, **extra_fields)
+        
+        # Send welcome email for newly created social user
         try:
-            user = self.get(email=email)
+            from .utils import send_welcome_email
+            send_welcome_email(new_user)
+        except Exception:
+            pass
             
-            # Update Firebase UID if not set
-            if not user.firebase_uid:
-                user.firebase_uid = firebase_uid
-                user.auth_provider = auth_provider
-                user.is_email_verified = True  # Firebase emails are pre-verified
-                user.save()
-            
-            return user
-            
-        except self.model.DoesNotExist:
-            # Create new user
-            extra_fields.setdefault('firebase_uid', firebase_uid)
-            extra_fields.setdefault('auth_provider', auth_provider)
-            extra_fields.setdefault('is_email_verified', True)
-            extra_fields.setdefault('is_active', True)
-            
-            # No password needed for Firebase users
-            return self.create_user(email, name, password=None, **extra_fields)
+        return new_user

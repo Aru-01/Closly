@@ -56,14 +56,19 @@ class FirebaseAuthentication(authentication.BaseAuthentication):
             try:
                 user = User.objects.get(firebase_uid=firebase_uid)
             except User.DoesNotExist:
-                # If user doesn't exist, try to find by email
-                try:
-                    user = User.objects.get(email=email)
-                    # Link Firebase UID to existing user
-                    user.firebase_uid = firebase_uid
-                    user.is_email_verified = True
-                    user.save(update_fields=['firebase_uid', 'is_email_verified'])
-                except User.DoesNotExist:
+                # If user doesn't exist, try to find by email if provided
+                user = None
+                if email:
+                    try:
+                        user = User.objects.get(email__iexact=email)
+                        # Link Firebase UID to existing user
+                        user.firebase_uid = firebase_uid
+                        user.is_email_verified = True
+                        user.save(update_fields=['firebase_uid', 'is_email_verified'])
+                    except User.DoesNotExist:
+                        pass
+                
+                if not user:
                     # User doesn't exist at all - they need to use the firebase-auth endpoint first
                     raise exceptions.AuthenticationFailed(
                         'User not found. Please complete registration first.'

@@ -161,6 +161,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     # OTP fields
     otp = models.CharField(max_length=4, null=True, blank=True)
     otp_created_at = models.DateTimeField(null=True, blank=True)
+    password_reset_verified = models.BooleanField(
+        _('password reset verified'),
+        default=False,
+        help_text=_("Designates whether user has verified OTP for password reset")
+    )
 
     # journal_pin = models.CharField(max_length=128, null=True, blank=True)
 
@@ -200,12 +205,13 @@ class User(AbstractBaseUser, PermissionsMixin):
         """Return user's first name"""
         return self.name.split()[0] if self.name else self.email
 
-    def is_otp_valid(self, expiry_minutes=10):
+    def is_otp_valid(self, expiry_minutes=10, auto_clear=True):
         """
-        Check if OTP is still valid
+        Check if OTP is still valid. If expired, automatically clears it from the DB.
         
         Args:
             expiry_minutes (int): Number of minutes before OTP expires
+            auto_clear (bool): If True, clear expired OTP from the DB immediately
             
         Returns:
             bool: True if OTP is valid, False otherwise
@@ -214,10 +220,14 @@ class User(AbstractBaseUser, PermissionsMixin):
             return False
         
         expiry_time = self.otp_created_at + timezone.timedelta(minutes=expiry_minutes)
-        return timezone.now() < expiry_time
+        if timezone.now() >= expiry_time:
+            if auto_clear and (self.otp or self.otp_created_at):
+                self.clear_otp()
+            return False
+        return True
 
     def clear_otp(self):
-        """Clear OTP after successful verification"""
+        """Clear OTP after successful verification or expiration"""
         self.otp = None
         self.otp_created_at = None
         self.save(update_fields=['otp', 'otp_created_at'])

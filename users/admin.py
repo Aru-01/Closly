@@ -1,10 +1,44 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
-from .models import User, UserLoginHistory, AccountDeletionRequest, ProfileDataDeletionRequest
+from .models import (
+    User,
+    UserLoginHistory,
+    AccountDeletionRequest,
+    ProfileDataDeletionRequest,
+    UserPreference,
+)
 from django.core.mail import send_mail
 from django.urls import reverse
 from django.utils.html import format_html
+
+@admin.register(UserPreference)
+class UserPreferenceAdmin(admin.ModelAdmin):
+    list_display = [
+        'user',
+        'body_type',
+        'body_size',
+        'color_palette',
+        'onboarding_completed',
+        'created_at',
+        'updated_at',
+    ]
+    list_filter = [
+        'onboarding_completed',
+        'body_type',
+        'body_size',
+        'color_palette',
+        'created_at',
+    ]
+    search_fields = [
+        'user__email',
+        'user__name',
+    ]
+    readonly_fields = [
+        'created_at',
+        'updated_at',
+    ]
+    ordering = ['-created_at']
 
 @admin.register(ProfileDataDeletionRequest)
 class ProfileDataDeletionRequestAdmin(admin.ModelAdmin):
@@ -88,6 +122,7 @@ class UserAdmin(BaseUserAdmin):
             'fields': (
                 'otp',
                 'otp_created_at',
+                'password_reset_verified',
             ),
             'classes': ('collapse',),  # Collapsible section
         }),
