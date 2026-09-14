@@ -30,6 +30,7 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
     Serializer for TodayOutfit creation and feed listing
     """
     user = UserSimpleSerializer(read_only=True)
+    image = serializers.ImageField(max_length=500, required=True)
     likes_count = serializers.ReadOnlyField()
     is_liked = serializers.SerializerMethodField()
     tagged_items_details = ClosetItemSerializer(source='tagged_items', many=True, read_only=True)

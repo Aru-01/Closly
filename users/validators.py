@@ -196,6 +196,13 @@ def validate_image_file(image, max_mb=30):
                 _('Only JPG, JPEG, PNG, GIF, WebP, and HEIC images are allowed.'),
                 code='invalid_image_format'
             )
+
+    # Sanitize and shorten filename if it is too long (prevents OS and storage length issues)
+    if hasattr(image, 'name') and image.name and len(image.name) > 80:
+        import os
+        base, ext = os.path.splitext(image.name)
+        image.name = f"{base[:40]}_{abs(hash(base)) % 1000000}{ext}"
+
     return image
 
 

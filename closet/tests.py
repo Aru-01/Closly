@@ -102,3 +102,29 @@ class ClosetApiTests(TestCase):
             validate_image_file(MockLargeFile(), max_mb=30)
         self.assertIn("exceeds the 30MB limit", str(ctx.exception))
 
+    def test_long_filename_upload_accepted(self):
+        import io
+        from PIL import Image
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        file_obj = io.BytesIO()
+        img = Image.new('RGB', (10, 10), color='red')
+        img.save(file_obj, format='JPEG')
+        file_obj.seek(0)
+
+        long_filename = "A" * 153 + ".jpg"
+        dummy_file = SimpleUploadedFile(long_filename, file_obj.read(), content_type="image/jpeg")
+
+        url = '/api/closet/items/'
+        data = {
+            'name': 'Long Filename Item',
+            'category': 'top',
+            'price': '45.00',
+            'image': dummy_file
+        }
+        response = self.client.post(url, data, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data['success'])
+
+
+

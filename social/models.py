@@ -1,9 +1,17 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
+import uuid
+import os
 from closet.models import ClosetItem
 
 User = get_user_model()
+
+
+def today_outfit_upload_path(instance, filename):
+    ext = os.path.splitext(filename)[1].lower() or '.jpg'
+    return f"today_outfits/{uuid.uuid4().hex}{ext}"
+
 
 class TodayOutfit(models.Model):
     VISIBILITY_CHOICES = [
@@ -17,7 +25,7 @@ class TodayOutfit(models.Model):
         related_name='today_outfits',
         verbose_name=_('user')
     )
-    image = models.ImageField(_('outfit picture'), upload_to='today_outfits/')
+    image = models.ImageField(_('outfit picture'), upload_to=today_outfit_upload_path, max_length=500)
     caption = models.TextField(_('caption'), blank=True, default='')
     visibility = models.CharField(_('visibility'), max_length=10, choices=VISIBILITY_CHOICES, default='public')
     tagged_items = models.ManyToManyField(ClosetItem, blank=True, related_name='tagged_in_outfits')

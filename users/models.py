@@ -7,6 +7,12 @@ import uuid
 from django.contrib.auth.hashers import make_password, check_password
 
 
+def profile_picture_upload_path(instance, filename):
+    import os
+    ext = os.path.splitext(filename)[1].lower() or '.jpg'
+    return f"profile_pictures/{uuid.uuid4().hex}{ext}"
+
+
 class User(AbstractBaseUser, PermissionsMixin):
     """
     Custom User Model
@@ -133,7 +139,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     # Profile picture
     profile_picture = models.ImageField(
         _('profile picture'),
-        upload_to='profile_pictures/',
+        upload_to=profile_picture_upload_path,
+        max_length=500,
         null=True,
         blank=True,
         help_text=_("User's profile picture")

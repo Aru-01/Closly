@@ -3,8 +3,16 @@ from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
 from django.core.validators import MinValueValidator
 import decimal
+import uuid
+import os
 
 User = get_user_model()
+
+
+def closet_item_upload_path(instance, filename):
+    ext = os.path.splitext(filename)[1].lower() or '.jpg'
+    return f"closet_items/{uuid.uuid4().hex}{ext}"
+
 
 class ClosetItem(models.Model):
     CATEGORY_CHOICES = [
@@ -34,7 +42,13 @@ class ClosetItem(models.Model):
         default=0.00,
         validators=[MinValueValidator(decimal.Decimal('0.00'))]
     )
-    image = models.ImageField(_('cloth picture'), upload_to='closet_items/', blank=True, null=True)
+    image = models.ImageField(
+        _('cloth picture'),
+        upload_to=closet_item_upload_path,
+        max_length=500,
+        blank=True,
+        null=True
+    )
     times_worn = models.PositiveIntegerField(_('times worn'), default=0)
     last_worn_at = models.DateTimeField(_('last worn at'), blank=True, null=True)
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)

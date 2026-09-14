@@ -6,6 +6,7 @@ class ClosetItemSerializer(serializers.ModelSerializer):
     """
     Serializer for ClosetItem read, create, and update
     """
+    image = serializers.ImageField(max_length=500, required=False, allow_null=True)
     per_wear_cost = serializers.ReadOnlyField()
 
     class Meta:
