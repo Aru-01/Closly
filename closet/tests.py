@@ -47,8 +47,28 @@ class ClosetApiTests(TestCase):
         url = '/api/closet/audit/'
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data['data']['total_items'], 2)
-        self.assertEqual(len(response.data['data']['ghost_pieces']), 1)
+        data = response.data['data']
+        self.assertEqual(data['total_pieces'], 2)
+        self.assertEqual(data['active_pieces'], 1)
+        self.assertEqual(data['ghost_pieces'], 1)
+        self.assertEqual(len(data['list_of_most_worn']), 1)
+        self.assertEqual(len(data['list_of_ghost_pieces']), 1)
+        self.assertIn('environmental_and_space_impact', data)
+        self.assertIn('wasted_carbon_kg', data['environmental_and_space_impact'])
+        self.assertIn('wardrobe_status', data)
+        self.assertIn('badge', data['wardrobe_status'])
+
+    def test_closet_score_dashboard(self):
+        url = '/api/closet/score/'
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.data['data']
+        self.assertIn('closet_score', data)
+        self.assertIn('category', data)
+        self.assertIn('cost_wear', data)
+        self.assertIn('closet_points', data)
+        self.assertIn('achieve_rank', data)
+        self.assertIn('style_dna', data)
 
     def test_negative_price_rejected(self):
         url = '/api/closet/items/'
