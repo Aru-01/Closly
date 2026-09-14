@@ -49,3 +49,36 @@ class ClosetApiTests(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['data']['total_items'], 2)
         self.assertEqual(len(response.data['data']['ghost_pieces']), 1)
+
+    def test_negative_price_rejected(self):
+        url = '/api/closet/items/'
+        data = {
+            'name': 'Negative Price Jacket',
+            'category': 'top',
+            'price': '-25.00'
+        }
+        response = self.client.post(url, data)
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('price', response.data['errors'])
+
+    def test_image_size_and_format_validation(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.core.exceptions import ValidationError
+        from users.validators import validate_image_file
+
+        # Test invalid extension
+        bad_format_file = SimpleUploadedFile("test.exe", b"fake binary data", content_type="application/octet-stream")
+        with self.assertRaises(ValidationError) as ctx:
+            validate_image_file(bad_format_file, max_mb=30)
+        self.assertIn("Only JPG, JPEG, PNG, GIF, WebP, and HEIC", str(ctx.exception))
+
+        # Test oversized file (> 30MB)
+        # Mock size attribute to avoid allocating 31MB in memory
+        class MockLargeFile:
+            name = "large.jpg"
+            size = 31 * 1024 * 1024
+
+        with self.assertRaises(ValidationError) as ctx:
+            validate_image_file(MockLargeFile(), max_mb=30)
+        self.assertIn("exceeds the 30MB limit", str(ctx.exception))
+

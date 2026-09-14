@@ -1,9 +1,12 @@
+import logging
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.core.mail import send_mail
 from django.urls import reverse
-from django.contrib.auth import get_user_model # Move get_user_model here
+from django.contrib.auth import get_user_model
+
+logger = logging.getLogger(__name__)
 
 # Create your views here.
 """
@@ -71,13 +74,17 @@ class ProfileDataDeletionAPIView(APIView):
                 reverse('users:verify_profile_data_deletion', kwargs={'token': str(deletion_request.verification_token)})
             )
             
-            send_mail(
-                'Verify Profile Data Deletion Request',
-                f'Click the following link to delete your profile data: {verification_link}',
-                'from@example.com',
-                [email],
-                fail_silently=False,
-            )
+            try:
+                from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@closly.com')
+                send_mail(
+                    'Verify Profile Data Deletion Request',
+                    f'Click the following link to delete your profile data: {verification_link}',
+                    from_email,
+                    [email],
+                    fail_silently=False,
+                )
+            except Exception as e:
+                logger.error(f"Error sending profile data deletion email to {email}: {str(e)}")
         return render(request, 'users/delete_profile_data_submitted.html')
 
 class VerifyProfileDataDeletionView(APIView):
@@ -137,13 +144,17 @@ class AccountDeletionAPIView(APIView):
             )
 
             # Send email to the user
-            send_mail(
-                'Verify Account Deletion Request',
-                f'Click the following link to delete your account: {verification_link}',
-                'from@example.com',  # Replace with your sending email
-                [email],
-                fail_silently=False,
-            )
+            try:
+                from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@closly.com')
+                send_mail(
+                    'Verify Account Deletion Request',
+                    f'Click the following link to delete your account: {verification_link}',
+                    from_email,
+                    [email],
+                    fail_silently=False,
+                )
+            except Exception as e:
+                logger.error(f"Error sending account deletion email to {email}: {str(e)}")
         return render(request, 'users/deletion_request_submitted.html')
 
 

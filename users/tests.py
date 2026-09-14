@@ -59,3 +59,74 @@ class UserPreferenceAndLoginTestCase(TestCase):
         self.assertEqual(login_res.status_code, status.HTTP_200_OK)
         self.assertEqual(login_res.data['data']['user']['onboarding_completed'], True)
 
+    def test_unverified_user_reregistration_flow(self):
+        signup_url = reverse('users:signup')
+        signup_data = {
+            'name': 'New Unverified',
+            'email': 'unverified@example.com',
+            'date_of_birth': '1995-05-15',
+            'gender': 'female',
+            'password': 'InitialPassword123!',
+            'confirm_password': 'InitialPassword123!'
+        }
+
+        # 1. First signup attempt
+        res1 = self.client.post(signup_url, signup_data, format='json')
+        self.assertEqual(res1.status_code, status.HTTP_201_CREATED)
+        user = User.objects.get(email='unverified@example.com')
+        self.assertFalse(user.is_email_verified)
+        initial_otp = user.otp
+
+        # 2. Second signup attempt while still unverified (UX fix)
+        signup_data['name'] = 'Updated Name'
+        signup_data['password'] = 'NewPassword123!'
+        signup_data['confirm_password'] = 'NewPassword123!'
+        res2 = self.client.post(signup_url, signup_data, format='json')
+        self.assertEqual(res2.status_code, status.HTTP_201_CREATED)
+
+        user.refresh_from_db()
+        self.assertEqual(user.name, 'Updated Name')
+        self.assertTrue(user.check_password('NewPassword123!'))
+
+        # 3. Verify user and ensure subsequent signup fails
+        user.is_email_verified = True
+        user.save()
+        res3 = self.client.post(signup_url, signup_data, format='json')
+        self.assertEqual(res3.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("verified", str(res3.data['errors']['email']))
+
+    def test_email_sending_failure_does_not_crash(self):
+        from unittest.mock import patch
+
+        with patch('users.views.send_mail', side_effect=Exception("SMTP Connection Refused")):
+            # Profile data deletion
+            req_url1 = reverse('users:delete-profile-data-request')
+            res1 = self.client.post(req_url1, {'email': 'testuser@example.com'})
+            self.assertEqual(res1.status_code, status.HTTP_200_OK)
+
+            # Account deletion
+            req_url2 = reverse('users:delete-account-request')
+            res2 = self.client.post(req_url2, {'name': 'Test User', 'email': 'testuser@example.com'})
+            self.assertEqual(res2.status_code, status.HTTP_200_OK)
+
+    def test_translation_middleware_filters(self):
+        from users.middleware import TranslationMiddleware
+
+        middleware = TranslationMiddleware(get_response=lambda r: None)
+
+        # Technical values that should be skipped
+        self.assertTrue(middleware._should_skip_string('#FFFFFF'))
+        self.assertTrue(middleware._should_skip_string('#fff'))
+        self.assertTrue(middleware._should_skip_string('https://example.com/pic.jpg'))
+        self.assertTrue(middleware._should_skip_string('/media/closet/pic.jpg'))
+        self.assertTrue(middleware._should_skip_string('12345'))
+        self.assertTrue(middleware._should_skip_string('-49.99'))
+        self.assertTrue(middleware._should_skip_string('a63b2f8a-9e12-4c56-8a4b-22ef901b0051'))
+        self.assertTrue(middleware._should_skip_string('2026-09-14T12:00:00Z'))
+        self.assertTrue(middleware._should_skip_string('user@closly.com'))
+
+        # Normal text should not be skipped
+        self.assertFalse(middleware._should_skip_string('Welcome to your closet'))
+        self.assertFalse(middleware._should_skip_string('Casual Friday outfit with a white tee'))
+
+

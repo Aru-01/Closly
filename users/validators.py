@@ -172,32 +172,38 @@ def validate_date_of_birth(dob):
         )
 
 
-def validate_profile_picture(image):
+def validate_image_file(image, max_mb=30):
     """
-    Validate profile picture upload
-    
-    Args:
-        image: Uploaded image file
-        
-    Raises:
-        ValidationError: If image is invalid
+    Validate uploaded image file size and format.
+    Default maximum size is 30MB.
     """
-    # Check file size (max 5MB)
-    max_size = 5 * 1024 * 1024  # 5MB in bytes
+    if not image:
+        return image
+
+    max_size = max_mb * 1024 * 1024
     if image.size > max_size:
         raise ValidationError(
-            _('Image file size cannot exceed 5MB.'),
+            _(f'Image file size exceeds the {max_mb}MB limit. Please upload a smaller image.'),
             code='image_too_large'
         )
-    
-    # Check file extension
-    valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
-    ext = image.name.lower().split('.')[-1]
-    if f'.{ext}' not in valid_extensions:
-        raise ValidationError(
-            _('Only JPG, JPEG, PNG, GIF, and WebP images are allowed.'),
-            code='invalid_image_format'
-        )
+
+    valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif']
+    file_name = getattr(image, 'name', '')
+    if '.' in file_name:
+        ext = '.' + file_name.lower().split('.')[-1]
+        if ext not in valid_extensions:
+            raise ValidationError(
+                _('Only JPG, JPEG, PNG, GIF, WebP, and HEIC images are allowed.'),
+                code='invalid_image_format'
+            )
+    return image
+
+
+def validate_profile_picture(image):
+    """
+    Validate profile picture upload (max 30MB)
+    """
+    return validate_image_file(image, max_mb=30)
 
 
 def validate_password_match(password, confirm_password):

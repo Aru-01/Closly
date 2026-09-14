@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth import get_user_model
 from django.utils.translation import gettext_lazy as _
+from django.core.validators import MinValueValidator
 import decimal
 
 User = get_user_model()
@@ -26,7 +27,13 @@ class ClosetItem(models.Model):
     color = models.CharField(_('color'), max_length=50, blank=True, default='')
     brand = models.CharField(_('brand'), max_length=100, blank=True, default='')
     size = models.CharField(_('size'), max_length=20, blank=True, default='')
-    price = models.DecimalField(_('price'), max_digits=10, decimal_places=2, default=0.00)
+    price = models.DecimalField(
+        _('price'),
+        max_digits=10,
+        decimal_places=2,
+        default=0.00,
+        validators=[MinValueValidator(decimal.Decimal('0.00'))]
+    )
     image = models.ImageField(_('cloth picture'), upload_to='closet_items/', blank=True, null=True)
     times_worn = models.PositiveIntegerField(_('times worn'), default=0)
     last_worn_at = models.DateTimeField(_('last worn at'), blank=True, null=True)

@@ -59,7 +59,7 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         fields = ['name', 'email', 'date_of_birth', 'gender', 'password', 'confirm_password']
         extra_kwargs = {
             'name': {'required': True},
-            'email': {'required': True},
+            'email': {'required': True, 'validators': []},
             'date_of_birth': {'required': True},
         }
     
@@ -72,18 +72,23 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(str(e))
     
     def validate_email(self, value):
-        """Validate email format and check if it already exists"""
+        """Validate email format and check if it already exists and is verified"""
         # Validate email format
         try:
             validate_email_format(value)
         except DjangoValidationError as e:
             raise serializers.ValidationError(str(e))
         
-        # Check if email already exists
-        if User.objects.filter(email=value.lower()).exists():
-            raise serializers.ValidationError("An account with this email already exists.")
+        email = value.lower()
+        existing_user = User.objects.filter(email=email).first()
+        if existing_user:
+            if existing_user.is_email_verified:
+                raise serializers.ValidationError("An account with this email already exists and is verified. Please log in.")
+            else:
+                # Store unverified user in context so create() can refresh account & OTP
+                self.context['unverified_existing_user'] = existing_user
         
-        return value.lower()
+        return email
     
     def validate_date_of_birth(self, value):
         """Validate date of birth"""
@@ -123,16 +128,30 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return attrs
     
     def create(self, validated_data):
-        """Create new user and send OTP"""
+        """Create new user or update unverified user and send OTP"""
         validated_data.pop('confirm_password')
-        user = User.objects.create_user(
-            email=validated_data['email'],
-            name=validated_data['name'],
-            password=validated_data['password'],
-            date_of_birth=validated_data.get('date_of_birth'),
-            gender=validated_data.get('gender'),
-            is_active=False  # User is inactive until OTP verification
-        )
+        unverified_user = self.context.get('unverified_existing_user')
+        
+        if unverified_user:
+            user = unverified_user
+            user.name = validated_data['name']
+            user.set_password(validated_data['password'])
+            if 'date_of_birth' in validated_data:
+                user.date_of_birth = validated_data.get('date_of_birth')
+            if 'gender' in validated_data:
+                user.gender = validated_data.get('gender')
+            user.is_active = False
+            user.is_email_verified = False
+            user.save()
+        else:
+            user = User.objects.create_user(
+                email=validated_data['email'],
+                name=validated_data['name'],
+                password=validated_data['password'],
+                date_of_birth=validated_data.get('date_of_birth'),
+                gender=validated_data.get('gender'),
+                is_active=False  # User is inactive until OTP verification
+            )
         
         # Generate and send OTP
         from .utils import generate_otp, send_otp_email

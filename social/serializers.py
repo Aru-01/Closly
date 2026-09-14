@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from users.validators import validate_image_file
 from .models import TodayOutfit, OutfitLike, UserFollow, DirectMessage
 from closet.serializers import ClosetItemSerializer
 
@@ -49,6 +50,12 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
             'updated_at',
         ]
         read_only_fields = ['id', 'user', 'likes_count', 'is_liked', 'created_at', 'updated_at']
+
+    def validate_image(self, value):
+        """Validate outfit image format and max 30MB size"""
+        if value:
+            return validate_image_file(value, max_mb=30)
+        return value
 
     def get_is_liked(self, obj):
         liked_outfit_ids = self.context.get('liked_outfit_ids')
