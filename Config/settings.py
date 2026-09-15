@@ -234,7 +234,7 @@ USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True
 
 # Media & Base URL Configuration
-BACKEND_URL = config('BACKEND_URL', default='https://politically-unenshrined-jerry.ngrok-free.dev')
+BACKEND_URL = config('BACKEND_URL', default='')
 FORCE_HTTPS_MEDIA_URL = config('FORCE_HTTPS_MEDIA_URL', default=True, cast=bool)
 
 # AI Vision Configuration (Optional Google Gemini Vision API Key)
