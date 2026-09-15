@@ -178,7 +178,8 @@ def get_wardrobe_analytics(user, items):
 
     # Environmental & Space Waste Impact of Ghost Pieces
     wasted_carbon_kg = round(ghost_count * 12.5, 2)
-    wasted_investment = float(sum(it.price for it in ghost_items_qs))
+    agg_res = ghost_items_qs.aggregate(total_cost=models.Sum('price'))
+    wasted_investment = float(agg_res.get('total_cost') or 0.0)
     space_waste_pct = round((ghost_count / total_items * 100), 1) if total_items > 0 else 0.0
     co2_saved = round(sum(max(0, it.times_worn - 1) for it in items) * 0.85, 2)
 
@@ -415,20 +416,64 @@ class ClosetAIScanView(APIView):
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         # Check for auto_save
-        auto_save = request.query_params.get('auto_save', '').lower() in ('true', '1', 'yes')
+        auto_save_param = request.query_params.get('auto_save', '').lower()
+        save_all_param = request.query_params.get('save_all', '').lower() in ('true', '1', 'yes')
+        is_save_all = (auto_save_param == 'all') or save_all_param
+        auto_save = auto_save_param in ('true', '1', 'yes', 'all') or save_all_param
+
         if auto_save:
+            from rewards.services import award_points
+
+            if is_save_all and scanned_data.get('is_full_outfit') and scanned_data.get('detected_items'):
+                # Save all detected outfit pieces into closet
+                created_items = []
+                for piece in scanned_data['detected_items']:
+                    piece_item = ClosetItem.objects.create(
+                        user=request.user,
+                        name=piece.get('name', 'Wardrobe Essential'),
+                        category=piece.get('category', 'top'),
+                        color=piece.get('color', 'Neutral'),
+                        brand=piece.get('brand', 'N/A'),
+                        price=float(piece.get('price', 35.00)),
+                        image=scanned_data.get('saved_image_path', '')
+                    )
+                    try:
+                        award_points(
+                            user=request.user,
+                            action_type='add_closet_item',
+                            description=f"Auto-scanned & added '{piece_item.name}' to closet",
+                            reference_id=str(piece_item.id)
+                        )
+                    except Exception:
+                        pass
+                    created_items.append(piece_item)
+
+                serializer = ClosetItemSerializer(created_items, many=True, context={'request': request})
+                return Response({
+                    'success': True,
+                    'message': f"Full outfit look scanned and all {len(created_items)} pieces saved to closet.",
+                    'data': {
+                        'saved_pieces_count': len(created_items),
+                        'items': serializer.data,
+                        'ai_metadata': {
+                            'is_full_outfit': True,
+                            'style_vibe': scanned_data.get('style_vibe'),
+                            'confidence': scanned_data.get('confidence'),
+                        }
+                    }
+                }, status=status.HTTP_201_CREATED)
+
+            # Single item auto-save
             item = ClosetItem.objects.create(
                 user=request.user,
                 name=scanned_data.get('name', 'Wardrobe Essential'),
                 category=scanned_data.get('category', 'top'),
                 color=scanned_data.get('color', 'Neutral'),
-                brand=scanned_data.get('brand', 'Zara'),
+                brand=scanned_data.get('brand', 'N/A'),
                 price=float(scanned_data.get('price', 35.00)),
                 image=scanned_data.get('saved_image_path', '')
             )
-            # Award closet points
             try:
-                from rewards.services import award_points
                 award_points(
                     user=request.user,
                     action_type='add_closet_item',
@@ -445,6 +490,7 @@ class ClosetAIScanView(APIView):
                 'data': {
                     'item': serializer.data,
                     'ai_metadata': {
+                        'is_full_outfit': scanned_data.get('is_full_outfit', False),
                         'style_vibe': scanned_data.get('style_vibe'),
                         'confidence': scanned_data.get('confidence'),
                     }
