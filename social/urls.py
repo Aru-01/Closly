@@ -4,6 +4,8 @@ from .views import (
     MyOutfitsListView,
     PublicNewsfeedView,
     FollowingNewsfeedView,
+    ExploreNewsfeedView,
+    YourDayOutfitView,
     OutfitLikeToggleView,
     UserFollowToggleView,
     UserFollowersListView,
@@ -28,6 +30,8 @@ urlpatterns = [
     path('outfits/calendar/', OutfitCalendarView.as_view(), name='outfits-calendar'),
     path('feed/', PublicNewsfeedView.as_view(), name='public-feed'),
     path('feed/following/', FollowingNewsfeedView.as_view(), name='following-feed'),
+    path('explore/', ExploreNewsfeedView.as_view(), name='explore-feed'),
+    path('your-day/', YourDayOutfitView.as_view(), name='your-day'),
     path('outfits/<int:pk>/like/', OutfitLikeToggleView.as_view(), name='outfit-like'),
 
     # Self profile direct following & followers
