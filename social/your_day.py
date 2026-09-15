@@ -124,14 +124,14 @@ def suggest_daily_outfit(user, weather, request=None):
     wind_str = weather.get("wind", "12 km/h")
     condition = weather.get("condition", "Partly Cloudy")
 
-    user_items = ClosetItem.objects.filter(user=user)
+    user_items = list(ClosetItem.objects.filter(user=user))
 
-    # Segregate by categories
-    tops = list(user_items.filter(category='top'))
-    bottoms = list(user_items.filter(category='bottom'))
-    outerwears = list(user_items.filter(category='dresses_outerwear'))
-    shoes = list(user_items.filter(category='shoes'))
-    accessories = list(user_items.filter(category='accessories'))
+    # Segregate by categories in-memory (1 query instead of 5 separate queries)
+    tops = [it for it in user_items if it.category == 'top']
+    bottoms = [it for it in user_items if it.category == 'bottom']
+    outerwears = [it for it in user_items if it.category == 'dresses_outerwear']
+    shoes = [it for it in user_items if it.category == 'shoes']
+    accessories = [it for it in user_items if it.category == 'accessories']
 
     selected_top = tops[0] if tops else None
     selected_bottom = bottoms[0] if bottoms else None

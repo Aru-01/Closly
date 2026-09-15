@@ -295,7 +295,9 @@ class UserFollowersListView(generics.ListAPIView):
         if not user_id or str(user_id) == 'me':
             user_id = self.request.user.id
 
-        qs = UserFollow.objects.filter(following_id=user_id).select_related('follower', 'following')
+        qs = UserFollow.objects.filter(following_id=user_id).select_related(
+            'follower', 'following', 'follower__preferences', 'following__preferences'
+        )
         tab = self.request.query_params.get('tab', 'all').lower()
 
         if tab == 'new_followers':
@@ -349,7 +351,9 @@ class UserFollowingListView(generics.ListAPIView):
         if not user_id or str(user_id) == 'me':
             user_id = self.request.user.id
 
-        qs = UserFollow.objects.filter(follower_id=user_id).select_related('follower', 'following')
+        qs = UserFollow.objects.filter(follower_id=user_id).select_related(
+            'follower', 'following', 'follower__preferences', 'following__preferences'
+        )
         tab = self.request.query_params.get('tab', 'all').lower()
 
         if tab == 'new_followers':
@@ -410,7 +414,10 @@ class OtherUserProfileView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def get(self, request, user_id):
-        target_user = get_object_or_404(User, pk=user_id)
+        target_user = get_object_or_404(
+            User.objects.select_related('preferences', 'reward_profile'),
+            pk=user_id
+        )
         is_following = UserFollow.objects.filter(follower=request.user, following=target_user).exists()
         is_self = (request.user.id == target_user.id)
 
