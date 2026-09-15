@@ -141,18 +141,18 @@ def classify_garment_geometry(width, height, color_name, tone):
 
     # 4. Standard / Boxy silhouette (0.85 <= AR < 1.35) -> Top / Outerwear
     else:
-        if tone == "dark" and aspect_ratio > 1.15:
-            category = "dresses_outerwear"
-            name = f"Oversized {color_name} Casual Jacket"
-            price = 90.00
-            vibe = "Urban Outerwear"
-            brand = "Zara"
-        elif "Denim" in color_name:
+        if "Denim" in color_name:
             category = "dresses_outerwear"
             name = f"Classic {color_name} Trucker Jacket"
             price = 75.00
             vibe = "Heritage Casual"
             brand = "Levi's"
+        elif tone == "dark" and aspect_ratio > 1.25:
+            category = "dresses_outerwear"
+            name = f"Oversized {color_name} Casual Jacket"
+            price = 90.00
+            vibe = "Urban Outerwear"
+            brand = "Zara"
         else:
             category = "top"
             if tone == "light":
@@ -161,10 +161,10 @@ def classify_garment_geometry(width, height, color_name, tone):
                 vibe = "Casual Minimalist"
                 brand = "Uniqlo"
             else:
-                name = f"Essential {color_name} Crewneck T-Shirt"
-                price = 28.00
-                vibe = "Everyday Essential"
-                brand = "H&M"
+                name = f"Classic {color_name} Button-Down Shirt"
+                price = 45.00
+                vibe = "Smart Casual"
+                brand = "Zara"
 
     return {
         "name": name,
