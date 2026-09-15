@@ -866,8 +866,8 @@ class UserProfileView(APIView):
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
-        """Get user profile"""
-        user = request.user
+        """Get user profile with preloaded preferences and reward profile"""
+        user = User.objects.select_related('preferences', 'reward_profile').get(pk=request.user.pk)
         serializer = UserProfileSerializer(user, context={'request': request})
         
         return standard_response(
