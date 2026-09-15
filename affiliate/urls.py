@@ -5,11 +5,15 @@ from .views import (
     ProductClickView,
     AffiliateBrandsListView,
     AffiliateCategoriesListView,
+    AffiliateProductForYouView,
 )
 
 app_name = 'affiliate'
 
 urlpatterns = [
+    # Personalized 'For You' product feed based on user Style DNA
+    path('products/for-you/', AffiliateProductForYouView.as_view(), name='products-for-you'),
+
     # Newsfeed — paginated product list with filters
     path('products/', AffiliateProductNewsfeedView.as_view(), name='products-feed'),
 

@@ -104,3 +104,35 @@ class AffiliateAPITests(APITestCase):
         self.assertIn('Womenswear > Dresses', category_names)
         self.assertIn('Menswear > Shirts', category_names)
         self.assertNotIn('Footwear > Sneakers', category_names)
+
+    def test_for_you_products_personalized(self):
+        """Test personalized For You feed prioritizing user taste profile."""
+        from django.contrib.auth import get_user_model
+        from users.models import UserPreference
+
+        User = get_user_model()
+        user = User.objects.create_user(
+            email='foryouuser@example.com',
+            password='Password123!',
+            name='For You User'
+        )
+        UserPreference.objects.create(
+            user=user,
+            preferred_brands=['Zara'],
+            color_palette='neutral_minimalist',
+            style_match=['minimalist']
+        )
+        self.client.force_authenticate(user=user)
+
+        url = reverse('affiliate:products-for-you')
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['success'])
+        self.assertIn('user_taste_profile', response.data)
+        self.assertEqual(response.data['user_taste_profile']['preferred_brands'], ['Zara'])
+        results = response.data['data']['results']
+        self.assertGreaterEqual(len(results), 1)
+        # Zara product should rank top because user prefers Zara
+        self.assertEqual(results[0]['brand'], 'Zara')
+

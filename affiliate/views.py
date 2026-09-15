@@ -1,9 +1,10 @@
 from rest_framework import generics, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from django.db.models import Q, Count
+from django.db.models import Q, Count, Case, When, Value, IntegerField
 from django.conf import settings
 from urllib.parse import quote
 from .models import AffiliateProduct, ProductClick
@@ -356,3 +357,95 @@ class AffiliateCategoriesListView(APIView):
                 'categories': list(categories)
             }
         }, status=status.HTTP_200_OK)
+
+
+class AffiliateProductForYouView(generics.ListAPIView):
+    """
+    GET /api/affiliate/products/for-you/
+
+    Returns personalized affiliate products recommended specifically for the current user
+    based on their UserPreference (style match, color palette, preferred brands, and categories).
+    If the user is not authenticated or has no preferences, returns curated popular products.
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = AffiliateProductListSerializer
+    pagination_class = NewsfeedPagination
+
+    def get_queryset(self):
+        qs = AffiliateProduct.objects.filter(is_active=True)
+        user = self.request.user
+
+        if not user or not user.is_authenticated or not hasattr(user, 'preferences'):
+            return qs.order_by('-created_at')
+
+        prefs = user.preferences
+        preferred_brands = prefs.preferred_brands or []
+        palette = prefs.color_palette or ''
+        styles = prefs.style_match or []
+        clothing_cats = prefs.clothing_categories or {}
+
+        # Color keywords mapping from user palette
+        palette_color_map = {
+            'neutral_minimalist': ['black', 'white', 'grey', 'gray', 'beige', 'navy', 'cream', 'charcoal', 'off-white'],
+            'bold_rich': ['red', 'blue', 'green', 'yellow', 'purple', 'burgundy', 'orange', 'emerald', 'crimson'],
+            'soft_romantic': ['pink', 'pastel', 'lavender', 'rose', 'peach', 'mint', 'cream', 'blush'],
+            'earthy_warm': ['brown', 'tan', 'olive', 'khaki', 'terracotta', 'rust', 'camel', 'espresso'],
+        }
+        color_keywords = palette_color_map.get(palette, [])
+
+        # Build Q filters with relevance scoring
+        brand_q = Q()
+        for b in preferred_brands:
+            if b:
+                brand_q |= Q(brand__icontains=b.strip())
+
+        color_q = Q()
+        for c in color_keywords:
+            color_q |= Q(colour__icontains=c) | Q(name__icontains=c)
+
+        style_q = Q()
+        for s in styles:
+            style_q |= Q(name__icontains=s) | Q(description__icontains=s)
+
+        category_keywords = []
+        if isinstance(clothing_cats, dict):
+            for cat_list in clothing_cats.values():
+                if isinstance(cat_list, list):
+                    category_keywords.extend(cat_list)
+        cat_q = Q()
+        for ck in category_keywords[:10]:
+            cat_q |= Q(category__icontains=ck) | Q(name__icontains=ck)
+
+        cases = []
+        if bool(brand_q):
+            cases.append(When(brand_q, then=Value(35)))
+        if bool(color_q):
+            cases.append(When(color_q, then=Value(25)))
+        if bool(cat_q):
+            cases.append(When(cat_q, then=Value(20)))
+        if bool(style_q):
+            cases.append(When(style_q, then=Value(20)))
+
+        if cases:
+            score_expression = Case(*cases, default=Value(0), output_field=IntegerField())
+            return qs.annotate(relevance_score=score_expression).order_by('-relevance_score', '-created_at')
+
+        return qs.order_by('-created_at')
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        user = request.user
+        prefs_summary = None
+        if user and user.is_authenticated and hasattr(user, 'preferences'):
+            prefs = user.preferences
+            prefs_summary = {
+                'palette': prefs.color_palette or 'neutral_minimalist',
+                'styles': prefs.style_match or ['minimalist'],
+                'preferred_brands': prefs.preferred_brands or []
+            }
+        
+        response.data['user_taste_profile'] = prefs_summary
+        response.data['message'] = "Personalized 'For You' products curated based on your Style DNA."
+        return response
+
