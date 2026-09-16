@@ -3,23 +3,16 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
-from django.db.models import Q, Count
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+from collections import defaultdict
 
-from social.models import TodayOutfit, OutfitLike, UserFollow, DirectMessage, Story, StoryView, StoryLike
-from affiliate.models import AffiliateProduct
+from social.models import UserFollow, DirectMessage, Story, StoryView, StoryLike
 from social.serializers import (
-    TodayOutfitSerializer,
-    UserFollowSerializer,
     DirectMessageSerializer,
     UserSimpleSerializer,
-    ConversationSummarySerializer,
     StorySerializer,
-    UserStoryGroupSerializer,
     StoryViewerSerializer,
 )
 
@@ -250,13 +243,12 @@ class StoryLikeToggleView(APIView):
                 'message': 'This story has expired.'
             }, status=status.HTTP_410_GONE)
 
-        like_qs = StoryLike.objects.filter(story=story, user=request.user)
-        if like_qs.exists():
-            like_qs.delete()
+        like_obj, created = StoryLike.objects.get_or_create(story=story, user=request.user)
+        if not created:
+            like_obj.delete()
             is_loved = False
             msg = 'Story unloved.'
         else:
-            StoryLike.objects.create(story=story, user=request.user)
             StoryView.objects.get_or_create(story=story, viewer=request.user)
             is_loved = True
             msg = 'Story loved.'

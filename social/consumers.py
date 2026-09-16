@@ -70,6 +70,10 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"type": "error", "message": "recipient_id is required."})
             return
 
+        if str(recipient_id) == str(self.user.id):
+            await self.send_json({"type": "error", "message": "Cannot send message to yourself."})
+            return
+
         if not text_content and not product_id and not outfit_id and not story_id:
             await self.send_json({"type": "error", "message": "Message content or shared item is required."})
             return

@@ -9,9 +9,7 @@ Provides:
 import requests
 import logging
 from django.utils import timezone
-from django.conf import settings
 from closet.models import ClosetItem
-from closet.serializers import ClosetItemSerializer
 from users.utils import build_absolute_media_url
 
 logger = logging.getLogger(__name__)

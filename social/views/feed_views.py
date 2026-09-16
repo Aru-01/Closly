@@ -3,25 +3,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework.pagination import PageNumberPagination
-from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.db.models import Q, Count
-from django.utils import timezone
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
-from social.models import TodayOutfit, OutfitLike, UserFollow, DirectMessage, Story, StoryView, StoryLike
-from affiliate.models import AffiliateProduct
-from social.serializers import (
-    TodayOutfitSerializer,
-    UserFollowSerializer,
-    DirectMessageSerializer,
-    UserSimpleSerializer,
-    ConversationSummarySerializer,
-    StorySerializer,
-    UserStoryGroupSerializer,
-    StoryViewerSerializer,
-)
+from social.models import TodayOutfit, OutfitLike, UserFollow
+from social.serializers import TodayOutfitSerializer
 
 User = get_user_model()
 from social.your_day import get_live_weather, suggest_daily_outfit

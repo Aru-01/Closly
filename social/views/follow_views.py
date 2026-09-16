@@ -3,29 +3,17 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
-from django.db.models import Q, Count
+from django.core.exceptions import ValidationError
+from django.db.models import Q
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
-from social.models import TodayOutfit, OutfitLike, UserFollow, DirectMessage, Story, StoryView, StoryLike
-from affiliate.models import AffiliateProduct
-from social.serializers import (
-    TodayOutfitSerializer,
-    UserFollowSerializer,
-    DirectMessageSerializer,
-    UserSimpleSerializer,
-    ConversationSummarySerializer,
-    StorySerializer,
-    UserStoryGroupSerializer,
-    StoryViewerSerializer,
-)
+from social.models import UserFollow, TodayOutfit
+from social.serializers import UserFollowSerializer
 
 User = get_user_model()
 from social.dna import calculate_dna_match
-from .outfit_views import StandardSocialPagination
 
 class UserFollowToggleView(APIView):
     """
@@ -43,7 +31,14 @@ class UserFollowToggleView(APIView):
                 'message': 'You cannot follow yourself.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        target_user = get_object_or_404(User, pk=user_id)
+        try:
+            target_user = get_object_or_404(User, pk=user_id)
+        except (ValidationError, ValueError):
+            return Response({
+                'success': False,
+                'message': 'Invalid user ID format.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         follow, created = UserFollow.objects.get_or_create(follower=request.user, following=target_user)
 
         if not created:

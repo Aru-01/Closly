@@ -4,7 +4,6 @@ from users.validators import validate_image_file
 from users.fields import AbsoluteImageField
 from users.utils import build_absolute_media_url
 from .models import TodayOutfit, OutfitLike, UserFollow, DirectMessage, Story, StoryView, StoryLike
-from affiliate.models import AffiliateProduct
 from closet.serializers import ClosetItemSerializer
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field

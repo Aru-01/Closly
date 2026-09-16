@@ -3,24 +3,16 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.db.models import Q, Count
-from django.utils import timezone
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 
-from social.models import TodayOutfit, OutfitLike, UserFollow, DirectMessage, Story, StoryView, StoryLike
+from social.models import TodayOutfit, DirectMessage, Story
 from affiliate.models import AffiliateProduct
 from social.serializers import (
-    TodayOutfitSerializer,
-    UserFollowSerializer,
     DirectMessageSerializer,
-    UserSimpleSerializer,
     ConversationSummarySerializer,
-    StorySerializer,
-    UserStoryGroupSerializer,
-    StoryViewerSerializer,
 )
 
 User = get_user_model()
@@ -60,7 +52,19 @@ class DirectMessageSendView(APIView):
                 'message': 'recipient_id is required.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        recipient = get_object_or_404(User, pk=recipient_id)
+        if str(recipient_id) == str(request.user.id):
+            return Response({
+                'success': False,
+                'message': 'You cannot send a direct message to yourself.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            recipient = get_object_or_404(User, pk=recipient_id)
+        except (ValidationError, ValueError):
+            return Response({
+                'success': False,
+                'message': 'Invalid user ID format.'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         shared_product = None
         if product_id:
