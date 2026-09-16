@@ -46,3 +46,9 @@ tzdata==2025.2
 urllib3==2.5.0
 django-cors-headers
 deep-translator
+psycopg2-binary>=2.9.9
+daphne>=4.1.0
+channels>=4.0.0
+channels-redis>=4.2.0
+celery>=5.3.6
+redis>=5.0.0
