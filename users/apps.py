@@ -26,5 +26,8 @@ class UsersConfig(AppConfig):
             print(f"Warning: Failed to initialize Firebase: {str(e)}")
             print("Firebase authentication will not be available.")
         
-        # Import signals if you have any
-        # import users.signals
+        # Import drf-spectacular schema extensions
+        try:
+            from . import schema
+        except ImportError:
+            pass
