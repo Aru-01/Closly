@@ -17,19 +17,30 @@ SECRET_KEY = 'django-insecure-ah+qh6%9#=jnm-vw(y9=u3wf5#(30$w%=7#g8xz*r^m&+&l^4z
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+raw_allowed_hosts = config('ALLOWED_HOSTS', default='*')
 ALLOWED_HOSTS = [
-    'nonlyric-elliot-bridally.ngrok-free.dev',
+    h.strip().replace('https://', '').replace('http://', '').split('/')[0]
+    for h in raw_allowed_hosts.split(',') if h.strip()
+]
+for host in [
+    'charissa-intuitable-corroboratorily.ngrok-free.dev',
     '.ngrok-free.dev',
     '.ngrok.io',
     'localhost',
     '127.0.0.1',
+    '10.0.2.2',
     '*',
-]
+]:
+    if host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(host)
 
 CSRF_TRUSTED_ORIGINS = [
-    'https://nonlyric-elliot-bridally.ngrok-free.dev',
+    'https://charissa-intuitable-corroboratorily.ngrok-free.dev',
     'https://*.ngrok-free.dev',
     'https://*.ngrok.io',
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+    'http://10.0.2.2:8000',
 ]
 
 
@@ -82,10 +93,14 @@ MIDDLEWARE = [
 ]
 
 # CORS Configuration
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_ALL_ORIGINS = config('CORS_ALLOW_ALL_ORIGINS', default=True, cast=bool)
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
-    'https://nonlyric-elliot-bridally.ngrok-free.dev',
+    'https://charissa-intuitable-corroboratorily.ngrok-free.dev',
+    'http://localhost:3000',
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+    'http://10.0.2.2:8000',
 ]
 CORS_ALLOW_HEADERS = [
     'accept',
@@ -265,7 +280,7 @@ REDIS_HOST = config('REDIS_HOST', default='127.0.0.1')
 REDIS_PORT = config('REDIS_PORT', default='6379')
 
 # Channels Redis Layer (with InMemory fallback for testing / offline dev)
-USE_IN_MEMORY_CHANNELS = config('USE_IN_MEMORY_CHANNELS', default=(REDIS_HOST in ('127.0.0.1', 'localhost')), cast=bool)
+USE_IN_MEMORY_CHANNELS = config('USE_IN_MEMORY_CHANNELS', default=False, cast=bool)
 
 if USE_IN_MEMORY_CHANNELS:
     CHANNEL_LAYERS = {
@@ -296,6 +311,10 @@ CELERY_BEAT_SCHEDULE = {
     'expire-24h-stories-hourly': {
         'task': 'social.tasks.expire_old_stories_task',
         'schedule': 3600.0,  # runs every hour
+    },
+    'system-heartbeat-self-ping-every-5-min': {
+        'task': 'social.tasks.heartbeat_self_ping_task',
+        'schedule': 300.0,  # runs every 5 minutes (300s) to keep DB/Redis/Web active
     },
 }
 
