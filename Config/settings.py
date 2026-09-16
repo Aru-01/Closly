@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     # third party apps
     'channels',
     'rest_framework',
+    'drf_spectacular',
     'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     # custom apps
@@ -59,6 +60,7 @@ INSTALLED_APPS = [
 ]
 
 REST_FRAMEWORK = {
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
         'users.authentication.FirebaseAuthentication',
@@ -296,3 +298,25 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 3600.0,  # runs every hour
     },
 }
+
+# Swagger / OpenAPI 3.0 Documentation (drf-spectacular)
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Closly Backend API',
+    'DESCRIPTION': 'Official production REST & WebSocket API documentation for Closly fashion & digital closet ecosystem.',
+    'VERSION': '2.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'persistAuthorization': True,
+        'displayOperationId': False,
+        'defaultModelsExpandDepth': -1,
+        'defaultModelExpandDepth': 1,
+        'docExpansion': 'none',
+        'filter': True,
+    },
+    'REDOC_UI_SETTINGS': {
+        'expandResponses': '200,201',
+    },
+}
+
