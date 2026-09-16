@@ -6,10 +6,10 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
-from django.db.models import Count
+from django.db.models import Count, Q
 from django.utils import timezone
 
-from social.models import TodayOutfit, OutfitLike
+from social.models import TodayOutfit, OutfitLike, UserFollow
 from social.serializers import TodayOutfitSerializer
 
 User = get_user_model()
@@ -176,13 +176,20 @@ class LikedOutfitsListView(generics.ListAPIView):
             .order_by('-likes__created_at')
         )
 
-    def get_serializer_context(self):
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            # In LikedOutfitsListView, all outfits on the page were liked by request.user
+            context = super().get_serializer_context()
+            context['liked_outfit_ids'] = {o.id for o in page}
+            serializer = self.get_serializer(page, many=True, context=context)
+            return self.get_paginated_response(serializer.data)
+
         context = super().get_serializer_context()
-        if self.request.user.is_authenticated:
-            context['liked_outfit_ids'] = set(
-                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
-            )
-        return context
+        context['liked_outfit_ids'] = {o.id for o in queryset}
+        serializer = self.get_serializer(queryset, many=True, context=context)
+        return Response(serializer.data)
 
 
 class OutfitCalendarView(APIView):
@@ -249,6 +256,93 @@ class OutfitCalendarView(APIView):
                 'total_outfits': outfits.count(),
                 'days': days_map
             }
+        }, status=status.HTTP_200_OK)
+
+
+class OutfitDetailView(generics.RetrieveDestroyAPIView):
+    """
+    API endpoint to retrieve single outfit post details or delete own outfit post.
+    
+    GET /api/social/outfits/<id>/
+    DELETE /api/social/outfits/<id>/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = TodayOutfitSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        return (
+            TodayOutfit.objects.filter(
+                Q(visibility='public') | Q(user=user)
+            )
+            .select_related('user')
+            .prefetch_related('tagged_items')
+            .annotate(_likes_count=Count('likes', distinct=True))
+        )
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if self.request.user.is_authenticated:
+            context['liked_outfit_ids'] = set(
+                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
+            )
+        return context
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response({
+            'success': True,
+            'message': 'Outfit details retrieved successfully.',
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.user != request.user:
+            return Response({
+                'success': False,
+                'message': 'You can only delete your own outfits.'
+            }, status=status.HTTP_403_FORBIDDEN)
+        instance.delete()
+        return Response({
+            'success': True,
+            'message': 'Outfit post deleted successfully.'
+        }, status=status.HTTP_200_OK)
+
+
+class OutfitLikersListView(APIView):
+    """
+    API endpoint to view users who liked a specific outfit post.
+    
+    GET /api/social/outfits/<id>/likes/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request, pk):
+        outfit = get_object_or_404(TodayOutfit, pk=pk)
+        likers = User.objects.filter(outfit_likes__outfit=outfit).select_related('reward_profile')
+        
+        likers_data = []
+        for u in likers:
+            pic_url = u.profile_picture.url if u.profile_picture else None
+            if pic_url and not pic_url.startswith(('http://', 'https://')):
+                pic_url = request.build_absolute_uri(pic_url)
+            is_following = UserFollow.objects.filter(follower=request.user, following=u).exists()
+            likers_data.append({
+                'id': str(u.id),
+                'name': u.name,
+                'email': u.email,
+                'profile_picture': pic_url,
+                'is_following': is_following,
+            })
+
+        return Response({
+            'success': True,
+            'message': f"Users who liked outfit {pk} retrieved successfully.",
+            'data': likers_data
         }, status=status.HTTP_200_OK)
 
 

@@ -34,13 +34,29 @@ class PublicNewsfeedView(generics.ListAPIView):
             .order_by('-created_at')
         )
 
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        if self.request.user.is_authenticated:
-            context['liked_outfit_ids'] = set(
-                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            page_ids = [o.id for o in page]
+            liked_ids = set(
+                OutfitLike.objects.filter(
+                    user=request.user,
+                    outfit_id__in=page_ids
+                ).values_list('outfit_id', flat=True)
             )
-        return context
+            context = super().get_serializer_context()
+            context['liked_outfit_ids'] = liked_ids
+            serializer = self.get_serializer(page, many=True, context=context)
+            return self.get_paginated_response(serializer.data)
+
+        context = super().get_serializer_context()
+        if request.user.is_authenticated:
+            context['liked_outfit_ids'] = set(
+                OutfitLike.objects.filter(user=request.user, outfit_id__in=[o.id for o in queryset]).values_list('outfit_id', flat=True)
+            )
+        serializer = self.get_serializer(queryset, many=True, context=context)
+        return Response(serializer.data)
 
 
 class FollowingNewsfeedView(generics.ListAPIView):
@@ -55,24 +71,39 @@ class FollowingNewsfeedView(generics.ListAPIView):
     pagination_class = StandardSocialPagination
 
     def get_queryset(self):
-        # Get IDs of users current user is following
-        following_user_ids = UserFollow.objects.filter(follower=self.request.user).values_list('following_id', flat=True)
-        # Filter public posts from followed users with optimized prefetching
+        # Filter public posts from followed users via subquery for single-query efficiency
+        following_subquery = UserFollow.objects.filter(follower=self.request.user).values('following_id')
         return (
-            TodayOutfit.objects.filter(user_id__in=following_user_ids, visibility='public')
+            TodayOutfit.objects.filter(user_id__in=following_subquery, visibility='public')
             .select_related('user')
             .prefetch_related('tagged_items')
             .annotate(_likes_count=Count('likes', distinct=True))
             .order_by('-created_at')
         )
 
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        if self.request.user.is_authenticated:
-            context['liked_outfit_ids'] = set(
-                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            page_ids = [o.id for o in page]
+            liked_ids = set(
+                OutfitLike.objects.filter(
+                    user=request.user,
+                    outfit_id__in=page_ids
+                ).values_list('outfit_id', flat=True)
             )
-        return context
+            context = super().get_serializer_context()
+            context['liked_outfit_ids'] = liked_ids
+            serializer = self.get_serializer(page, many=True, context=context)
+            return self.get_paginated_response(serializer.data)
+
+        context = super().get_serializer_context()
+        if request.user.is_authenticated:
+            context['liked_outfit_ids'] = set(
+                OutfitLike.objects.filter(user=request.user, outfit_id__in=[o.id for o in queryset]).values_list('outfit_id', flat=True)
+            )
+        serializer = self.get_serializer(queryset, many=True, context=context)
+        return Response(serializer.data)
 
 
 
@@ -149,14 +180,12 @@ class ExploreNewsfeedView(generics.ListAPIView):
         category = self.request.query_params.get('category', 'trending').lower().strip()
 
         # Exclude self and users the current user already follows
-        following_ids = list(
-            UserFollow.objects.filter(follower=user).values_list('following_id', flat=True)
-        )
-        following_ids.append(user.id)
+        following_subquery = UserFollow.objects.filter(follower=user).values('following_id')
 
         qs = (
             TodayOutfit.objects.filter(visibility='public')
-            .exclude(user_id__in=following_ids)
+            .exclude(user_id__in=following_subquery)
+            .exclude(user=user)
             .select_related('user')
             .prefetch_related('tagged_items')
             .annotate(_likes_count=Count('likes', distinct=True))
@@ -181,16 +210,25 @@ class ExploreNewsfeedView(generics.ListAPIView):
 
         return qs.order_by('-_likes_count', '-created_at')
 
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        if self.request.user.is_authenticated:
-            context['liked_outfit_ids'] = set(
-                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
-            )
-        return context
-
     def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            page_ids = [o.id for o in page]
+            liked_ids = set(
+                OutfitLike.objects.filter(
+                    user=request.user,
+                    outfit_id__in=page_ids
+                ).values_list('outfit_id', flat=True)
+            )
+            context = super().get_serializer_context()
+            context['liked_outfit_ids'] = liked_ids
+            serializer = self.get_serializer(page, many=True, context=context)
+            response = self.get_paginated_response(serializer.data)
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            response = Response(serializer.data)
+
         response.data['available_categories'] = [
             {"id": "trending", "label": "Trending Looks"},
             {"id": "adjacent", "label": "Style DNA Match"},

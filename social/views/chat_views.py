@@ -68,17 +68,32 @@ class DirectMessageSendView(APIView):
 
         shared_product = None
         if product_id:
-            shared_product = get_object_or_404(AffiliateProduct, pk=product_id)
+            try:
+                shared_product = AffiliateProduct.objects.filter(pk=product_id).first()
+            except (ValueError, TypeError, ValidationError):
+                shared_product = None
+            if not shared_product:
+                return Response({'success': False, 'message': 'Shared product not found.'}, status=status.HTTP_404_NOT_FOUND)
             message_type = 'product'
 
         shared_outfit = None
         if outfit_id:
-            shared_outfit = get_object_or_404(TodayOutfit, pk=outfit_id)
+            try:
+                shared_outfit = TodayOutfit.objects.filter(pk=outfit_id).first()
+            except (ValueError, TypeError, ValidationError):
+                shared_outfit = None
+            if not shared_outfit:
+                return Response({'success': False, 'message': 'Shared outfit not found.'}, status=status.HTTP_404_NOT_FOUND)
             message_type = 'outfit'
 
         story_ref = None
         if story_id:
-            story_ref = get_object_or_404(Story, pk=story_id)
+            try:
+                story_ref = Story.objects.filter(pk=story_id).first()
+            except (ValueError, TypeError, ValidationError):
+                story_ref = None
+            if not story_ref:
+                return Response({'success': False, 'message': 'Referenced story not found.'}, status=status.HTTP_404_NOT_FOUND)
             message_type = 'story_reply'
 
         if image_file:

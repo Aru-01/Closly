@@ -6,11 +6,12 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db.models import Q
+from django.db.models import Q, Count
 from django.utils import timezone
 
-from social.models import UserFollow, TodayOutfit
-from social.serializers import UserFollowSerializer
+from social.models import UserFollow, TodayOutfit, OutfitLike
+from social.serializers import UserFollowSerializer, TodayOutfitSerializer
+from .outfit_views import StandardSocialPagination
 
 User = get_user_model()
 from social.dna import calculate_dna_match
@@ -259,5 +260,45 @@ class OtherUserProfileView(APIView):
                 'dna_match': dna,
             }
         }, status=status.HTTP_200_OK)
+
+
+class UserOutfitsListView(generics.ListAPIView):
+    """
+    API endpoint to view another user's public outfits grid (e.g. from their profile).
+    
+    GET /api/social/users/<user_id>/outfits/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = TodayOutfitSerializer
+    pagination_class = StandardSocialPagination
+
+    def get_queryset(self):
+        user_id = self.kwargs.get('user_id')
+        try:
+            target_user = get_object_or_404(User, pk=user_id)
+        except (ValidationError, ValueError):
+            return TodayOutfit.objects.none()
+
+        # If viewing own profile, show all; if viewing others, show public only
+        if self.request.user.id == target_user.id:
+            qs = TodayOutfit.objects.filter(user=target_user)
+        else:
+            qs = TodayOutfit.objects.filter(user=target_user, visibility='public')
+
+        return (
+            qs.select_related('user')
+            .prefetch_related('tagged_items')
+            .annotate(_likes_count=Count('likes', distinct=True))
+            .order_by('-created_at')
+        )
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        if self.request.user.is_authenticated:
+            context['liked_outfit_ids'] = set(
+                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
+            )
+        return context
 
 

@@ -7,7 +7,9 @@ from .outfit_views import (
     StandardSocialPagination,
     TodayOutfitCreateView,
     MyOutfitsListView,
+    OutfitDetailView,
     OutfitLikeToggleView,
+    OutfitLikersListView,
     LikedOutfitsListView,
     OutfitCalendarView,
 )
@@ -24,6 +26,7 @@ from .follow_views import (
     MyFollowingListView,
     MyFollowersListView,
     OtherUserProfileView,
+    UserOutfitsListView,
 )
 from .chat_views import (
     DirectMessageSendView,
@@ -46,7 +49,9 @@ __all__ = [
     'StandardSocialPagination',
     'TodayOutfitCreateView',
     'MyOutfitsListView',
+    'OutfitDetailView',
     'OutfitLikeToggleView',
+    'OutfitLikersListView',
     'LikedOutfitsListView',
     'OutfitCalendarView',
     'PublicNewsfeedView',
@@ -59,6 +64,7 @@ __all__ = [
     'MyFollowingListView',
     'MyFollowersListView',
     'OtherUserProfileView',
+    'UserOutfitsListView',
     'DirectMessageSendView',
     'DirectMessageConversationView',
     'ConversationListView',
