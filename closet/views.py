@@ -5,8 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.db import models
 from django.utils import timezone
-from datetime import datetime, timedelta
-import calendar
+from datetime import timedelta
 
 from .models import ClosetItem
 from .serializers import ClosetItemSerializer
@@ -428,13 +427,22 @@ class ClosetAIScanView(APIView):
                 # Save all detected outfit pieces into closet
                 created_items = []
                 for piece in scanned_data['detected_items']:
+                    piece_price = piece.get('price', 35.00)
+                    try:
+                        if isinstance(piece_price, str):
+                            piece_price = float(piece_price.replace('$', '').replace('€', '').replace('£', '').replace(',', '').strip())
+                        else:
+                            piece_price = float(piece_price)
+                    except (ValueError, TypeError):
+                        piece_price = 35.00
+
                     piece_item = ClosetItem.objects.create(
                         user=request.user,
                         name=piece.get('name', 'Wardrobe Essential'),
                         category=piece.get('category', 'top'),
                         color=piece.get('color', 'Neutral'),
                         brand=piece.get('brand', 'N/A'),
-                        price=float(piece.get('price', 35.00)),
+                        price=piece_price,
                         image=scanned_data.get('saved_image_path', '')
                     )
                     try:
@@ -464,13 +472,22 @@ class ClosetAIScanView(APIView):
                 }, status=status.HTTP_201_CREATED)
 
             # Single item auto-save
+            item_price = scanned_data.get('price', 35.00)
+            try:
+                if isinstance(item_price, str):
+                    item_price = float(item_price.replace('$', '').replace('€', '').replace('£', '').replace(',', '').strip())
+                else:
+                    item_price = float(item_price)
+            except (ValueError, TypeError):
+                item_price = 35.00
+
             item = ClosetItem.objects.create(
                 user=request.user,
                 name=scanned_data.get('name', 'Wardrobe Essential'),
                 category=scanned_data.get('category', 'top'),
                 color=scanned_data.get('color', 'Neutral'),
                 brand=scanned_data.get('brand', 'N/A'),
-                price=float(scanned_data.get('price', 35.00)),
+                price=item_price,
                 image=scanned_data.get('saved_image_path', '')
             )
             try:
