@@ -60,6 +60,8 @@ class AffiliateProductListSerializer(serializers.ModelSerializer):
     """
     discount_percent = serializers.ReadOnlyField()
     image_url        = serializers.SerializerMethodField()
+    is_loved         = serializers.SerializerMethodField()
+    favorites_count  = serializers.SerializerMethodField()
 
     class Meta:
         model = AffiliateProduct
@@ -77,6 +79,8 @@ class AffiliateProductListSerializer(serializers.ModelSerializer):
             'image_url',
             'advertiser_name',
             'source',
+            'is_loved',
+            'favorites_count',
             'is_active',
             'created_at',
         ]
@@ -84,6 +88,20 @@ class AffiliateProductListSerializer(serializers.ModelSerializer):
 
     def get_image_url(self, obj):
         return fix_image_url(obj.image_url)
+
+    def get_is_loved(self, obj):
+        favorite_ids = self.context.get('favorite_product_ids')
+        if favorite_ids is not None:
+            return obj.id in favorite_ids
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated:
+            return obj.favorites.filter(user=request.user).exists()
+        return False
+
+    def get_favorites_count(self, obj):
+        if hasattr(obj, '_favorites_count'):
+            return obj._favorites_count
+        return obj.favorites.count()
 
 
 class AffiliateProductDetailSerializer(serializers.ModelSerializer):
@@ -96,6 +114,8 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
     discount_percent = serializers.ReadOnlyField()
     affiliate_url    = serializers.SerializerMethodField()
     image_url        = serializers.SerializerMethodField()
+    is_loved         = serializers.SerializerMethodField()
+    favorites_count  = serializers.SerializerMethodField()
 
     class Meta:
         model = AffiliateProduct
@@ -116,6 +136,8 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
             'merchant_deep_link',    # direct brand URL (no tracking, fallback)
             'advertiser_name',
             'source',
+            'is_loved',
+            'favorites_count',
             'is_active',
             'created_at',
             'updated_at',
@@ -128,3 +150,14 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
     def get_affiliate_url(self, obj):
         from .views import build_affiliate_url
         return build_affiliate_url(obj)
+
+    def get_is_loved(self, obj):
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated:
+            return obj.favorites.filter(user=request.user).exists()
+        return False
+
+    def get_favorites_count(self, obj):
+        if hasattr(obj, '_favorites_count'):
+            return obj._favorites_count
+        return obj.favorites.count()

@@ -136,3 +136,43 @@ class AffiliateAPITests(APITestCase):
         # Zara product should rank top because user prefers Zara
         self.assertEqual(results[0]['brand'], 'Zara')
 
+    def test_product_favorite_toggle_and_saved_list(self):
+        """Test user can love/save product and retrieve it in their saved wishlist."""
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        user = User.objects.create_user(
+            email='shopper@example.com',
+            password='Password123!',
+            name='Shopper User'
+        )
+        self.client.force_authenticate(user=user)
+
+        # 1. Love the Zara product
+        love_url = reverse('affiliate:product-love', kwargs={'pk': self.product1.pk})
+        res = self.client.post(love_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data['success'])
+        self.assertEqual(res.data['data']['status'], 'loved')
+        self.assertTrue(res.data['data']['is_loved'])
+        self.assertEqual(res.data['data']['favorites_count'], 1)
+
+        # 2. Check saved products list
+        saved_url = reverse('affiliate:products-saved')
+        res_saved = self.client.get(saved_url)
+        self.assertEqual(res_saved.status_code, status.HTTP_200_OK)
+        saved_items = res_saved.data['data']['results']
+        self.assertEqual(len(saved_items), 1)
+        self.assertEqual(saved_items[0]['id'], self.product1.id)
+        self.assertTrue(saved_items[0]['is_loved'])
+        self.assertEqual(saved_items[0]['favorites_count'], 1)
+
+        # 3. Unlove the product
+        res_unlove = self.client.post(love_url)
+        self.assertEqual(res_unlove.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_unlove.data['data']['status'], 'unloved')
+        self.assertFalse(res_unlove.data['data']['is_loved'])
+
+        # 4. Check saved products list is now empty
+        res_saved2 = self.client.get(saved_url)
+        self.assertEqual(len(res_saved2.data['data']['results']), 0)
+

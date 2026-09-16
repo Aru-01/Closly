@@ -146,3 +146,29 @@ class ProductClick(models.Model):
 
     def __str__(self):
         return f"Click on {self.product.name} at {self.clicked_at}"
+
+
+class ProductFavorite(models.Model):
+    """
+    Tracks products saved / loved / wishlisted by users.
+    """
+    product = models.ForeignKey(
+        AffiliateProduct,
+        on_delete=models.CASCADE,
+        related_name='favorites',
+    )
+    user = models.ForeignKey(
+        'users.User',
+        on_delete=models.CASCADE,
+        related_name='favorite_products',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _('product favorite')
+        verbose_name_plural = _('product favorites')
+        ordering = ['-created_at']
+        unique_together = ('product', 'user')
+
+    def __str__(self):
+        return f"{self.user} loves {self.product.name}"

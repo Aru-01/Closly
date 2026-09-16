@@ -1,5 +1,5 @@
 from rest_framework import generics, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from django.db.models import Q, Count, Case, When, Value, IntegerField
 from django.conf import settings
 from urllib.parse import quote
-from .models import AffiliateProduct, ProductClick
+from .models import AffiliateProduct, ProductClick, ProductFavorite
 from .serializers import AffiliateProductListSerializer, AffiliateProductDetailSerializer
 
 
@@ -138,7 +138,7 @@ class AffiliateProductNewsfeedView(generics.ListAPIView):
         page_size   — results per page (default 20, max 100)
     """
     permission_classes = [AllowAny]
-    authentication_classes = []
+    authentication_classes = [JWTAuthentication]
     serializer_class = AffiliateProductListSerializer
     pagination_class = NewsfeedPagination
 
@@ -195,6 +195,39 @@ class AffiliateProductNewsfeedView(generics.ListAPIView):
 
         return qs
 
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            page_ids = [p.id for p in page]
+            fav_counts = dict(
+                ProductFavorite.objects.filter(product_id__in=page_ids)
+                .values('product_id')
+                .annotate(c=Count('id'))
+                .values_list('product_id', 'c')
+            )
+            for p in page:
+                p._favorites_count = fav_counts.get(p.id, 0)
+
+            user_fav_ids = set()
+            if request.user and request.user.is_authenticated:
+                user_fav_ids = set(
+                    ProductFavorite.objects.filter(
+                        user=request.user,
+                        product_id__in=page_ids
+                    ).values_list('product_id', flat=True)
+                )
+
+            serializer = self.get_serializer(
+                page,
+                many=True,
+                context={'request': request, 'favorite_product_ids': user_fav_ids}
+            )
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
 
 # ------------------------------------------------------------------ #
 # Product detail
@@ -209,9 +242,9 @@ class AffiliateProductDetailView(generics.RetrieveAPIView):
     the user taps 'Buy'.
     """
     permission_classes = [AllowAny]
-    authentication_classes = []
+    authentication_classes = [JWTAuthentication]
     serializer_class = AffiliateProductDetailSerializer
-    queryset = AffiliateProduct.objects.filter(is_active=True)
+    queryset = AffiliateProduct.objects.filter(is_active=True).annotate(_favorites_count=Count('favorites', distinct=True))
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -245,7 +278,7 @@ class ProductClickView(APIView):
     Authentication is optional — works for both logged-in and guest users.
     """
     permission_classes = [AllowAny]
-    authentication_classes = []
+    authentication_classes = [JWTAuthentication]
 
     def post(self, request, pk):
         try:
@@ -434,7 +467,38 @@ class AffiliateProductForYouView(generics.ListAPIView):
         return qs.order_by('-created_at', '?')
 
     def list(self, request, *args, **kwargs):
-        response = super().list(request, *args, **kwargs)
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            page_ids = [p.id for p in page]
+            fav_counts = dict(
+                ProductFavorite.objects.filter(product_id__in=page_ids)
+                .values('product_id')
+                .annotate(c=Count('id'))
+                .values_list('product_id', 'c')
+            )
+            for p in page:
+                p._favorites_count = fav_counts.get(p.id, 0)
+
+            user_fav_ids = set()
+            if request.user and request.user.is_authenticated:
+                user_fav_ids = set(
+                    ProductFavorite.objects.filter(
+                        user=request.user,
+                        product_id__in=page_ids
+                    ).values_list('product_id', flat=True)
+                )
+
+            serializer = self.get_serializer(
+                page,
+                many=True,
+                context={'request': request, 'favorite_product_ids': user_fav_ids}
+            )
+            response = self.get_paginated_response(serializer.data)
+        else:
+            serializer = self.get_serializer(queryset, many=True)
+            response = Response(serializer.data)
+
         user = request.user
         prefs_summary = None
         if user and user.is_authenticated and hasattr(user, 'preferences'):
@@ -448,4 +512,104 @@ class AffiliateProductForYouView(generics.ListAPIView):
         response.data['user_taste_profile'] = prefs_summary
         response.data['message'] = "Personalized 'For You' products curated based on your Style DNA."
         return response
+
+
+# ------------------------------------------------------------------ #
+# Product Love / Save / Wishlist System
+# ------------------------------------------------------------------ #
+
+class ProductFavoriteToggleView(APIView):
+    """
+    POST /api/affiliate/products/<id>/love/
+    POST /api/affiliate/products/<id>/favorite/
+    POST /api/affiliate/products/<id>/save/
+
+    Toggles favorite / love status on a product for the authenticated user.
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request, pk):
+        try:
+            product = AffiliateProduct.objects.only('id').get(pk=pk, is_active=True)
+        except AffiliateProduct.DoesNotExist:
+            return Response({
+                'success': False,
+                'message': 'Product not found or inactive',
+                'data': None
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        deleted_count, _ = ProductFavorite.objects.filter(product_id=pk, user=request.user).delete()
+        if deleted_count > 0:
+            is_loved = False
+            status_str = 'unloved'
+            message = 'Product removed from your saved wishlist'
+        else:
+            ProductFavorite.objects.create(product_id=pk, user=request.user)
+            is_loved = True
+            status_str = 'loved'
+            message = 'Product saved to your wishlist!'
+
+        favorites_count = ProductFavorite.objects.filter(product_id=pk).count()
+
+        return Response({
+            'success': True,
+            'message': message,
+            'data': {
+                'status': status_str,
+                'is_loved': is_loved,
+                'favorites_count': favorites_count,
+                'product_id': pk,
+            }
+        }, status=status.HTTP_200_OK)
+
+
+class SavedProductsListView(generics.ListAPIView):
+    """
+    GET /api/affiliate/products/saved/
+    GET /api/affiliate/products/favorites/
+
+    Returns all products loved / saved by the authenticated user with O(1) query complexity.
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = AffiliateProductListSerializer
+    pagination_class = NewsfeedPagination
+
+    def get_queryset(self):
+        return (
+            AffiliateProduct.objects.filter(
+                favorites__user=self.request.user,
+                is_active=True
+            )
+            .order_by('-favorites__created_at')
+        )
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            page_ids = [p.id for p in page]
+            fav_counts = dict(
+                ProductFavorite.objects.filter(product_id__in=page_ids)
+                .values('product_id')
+                .annotate(c=Count('id'))
+                .values_list('product_id', 'c')
+            )
+            for p in page:
+                p._favorites_count = fav_counts.get(p.id, 0)
+
+            # In this view, all items on the page are favorited by request.user
+            user_fav_ids = set(page_ids)
+
+            serializer = self.get_serializer(
+                page,
+                many=True,
+                context={'request': request, 'favorite_product_ids': user_fav_ids}
+            )
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
 
