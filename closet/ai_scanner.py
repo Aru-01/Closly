@@ -540,15 +540,23 @@ def scan_clothing_image(image_file, request=None):
     saved_path = default_storage.save(file_name, ContentFile(image_bytes))
     absolute_image_url = build_absolute_media_url(saved_path, request=request)
 
-    # 1. Try Gemini Vision if API key is present in settings
-    gemini_key = getattr(settings, 'GEMINI_API_KEY', None)
+    # 1. Try OpenAI GPT-4o Vision (Official engine from dress-analyzer-ai team)
+    mime = 'image/jpeg' if ext in ('.jpg', '.jpeg') else ('image/png' if ext == '.png' else 'image/webp')
     garment_data = None
 
-    if gemini_key:
-        mime = 'image/jpeg' if ext in ('.jpg', '.jpeg') else ('image/png' if ext == '.png' else 'image/webp')
-        garment_data = call_gemini_vision_api(image_bytes, mime, gemini_key)
+    try:
+        from .openai_analyzer import analyze_dress_with_openai
+        garment_data = analyze_dress_with_openai(image_bytes, mime_type=mime)
+    except Exception as e:
+        logger.warning(f"Error invoking OpenAI dress analyzer: {e}")
 
-    # 2. Fallback to Built-in Computer Vision & Fashion Heuristics Engine
+    # 2. Try Gemini Vision if OpenAI did not return data
+    if not garment_data:
+        gemini_key = getattr(settings, 'GEMINI_API_KEY', None)
+        if gemini_key:
+            garment_data = call_gemini_vision_api(image_bytes, mime, gemini_key)
+
+    # 3. Fallback to Built-in Computer Vision & Fashion Heuristics Engine
     if not garment_data:
         try:
             pil_img = Image.open(io.BytesIO(image_bytes))
