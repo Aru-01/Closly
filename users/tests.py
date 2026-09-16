@@ -1,3 +1,4 @@
+
 from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
@@ -223,5 +224,55 @@ class UserPreferenceAndLoginTestCase(TestCase):
         self.assertContains(landing_res, self.user.name)
         self.assertContains(landing_res, self.user.referral_code)
 
+    def test_password_reset_flow(self):
+        # 1. Request Password Reset OTP
+        reset_req_url = reverse('users:password-reset')
+        res = self.client.post(reset_req_url, {'email': self.user.email}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data['success'])
 
+        # Reload user from DB to get generated OTP
+        self.user.refresh_from_db()
+        self.assertIsNotNone(self.user.otp)
+        self.assertIsNotNone(self.user.otp_created_at)
 
+        # 2. Verify OTP
+        verify_otp_url = reverse('users:password-reset-otp-verify')
+        verify_res = self.client.post(verify_otp_url, {'email': self.user.email, 'otp': self.user.otp}, format='json')
+        self.assertEqual(verify_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(verify_res.data['success'])
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.password_reset_verified)
+
+        # 3. Confirm New Password
+        confirm_url = reverse('users:password-reset-confirm')
+        confirm_res = self.client.post(confirm_url, {
+            'email': self.user.email,
+            'password': 'BrandNewSecurePass123!',
+            'confirm_password': 'BrandNewSecurePass123!'
+        }, format='json')
+        self.assertEqual(confirm_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(confirm_res.data['success'])
+
+        # 4. Verify login works with new password
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password('BrandNewSecurePass123!'))
+
+    def test_token_refresh_flow_and_deleted_user_handled_cleanly(self):
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        # 1. Valid token refresh
+        refresh = RefreshToken.for_user(self.user)
+        refresh_url = reverse('users:token-refresh')
+        res = self.client.post(refresh_url, {'refresh': str(refresh)}, format='json')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data['success'])
+        self.assertIn('access', res.data['data'])
+
+        # 2. Token with deleted / non-existent user ID should return 401 Unauthorized, never 500
+        fake_refresh = RefreshToken()
+        fake_refresh['user_id'] = 999999
+        res_fake = self.client.post(refresh_url, {'refresh': str(fake_refresh)}, format='json')
+        self.assertEqual(res_fake.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertFalse(res_fake.data['success'])

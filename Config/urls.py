@@ -42,9 +42,10 @@ urlpatterns = [
     path('api/social/', include('social.urls')),
     path('api/notifications/', include('notifications.urls')),
     path('api/rewards/', include('rewards.urls')),
-    path('u/<uuid:user_id>/', PublicProfileWebView.as_view(), name='public-profile-short'),
+    path('u/<str:user_id>/', PublicProfileWebView.as_view(), name='public-profile-short'),
 ]
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 

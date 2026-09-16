@@ -51,11 +51,14 @@ urlpatterns = [
     path('password-reset-otp-verify/', PasswordResetOTPVerifyView.as_view(), name='password-reset-otp-verify'),
     path('password-reset-confirm/', PasswordResetConfirmView.as_view(), name='password-reset-confirm'),
     path('password-change/', PasswordChangeView.as_view(), name='password-change'),
+    path('change-password/', PasswordChangeView.as_view(), name='change-password'),
     
     # Profile management
     path('profile/', UserProfileView.as_view(), name='profile'),
     path('account-delete/', AccountDeleteView.as_view(), name='account-delete'),
     path('set-language/', SetLanguageView.as_view(), name='set-language'),
+    path('language/', SetLanguageView.as_view(), name='set-language-alias'),
+    path('share-link/', ShareProfileAPIView.as_view(), name='share-link-alias'),
 
     # Account Deletion
     path('delete-account/', account_deletion_request_view, name='delete-account-form'),
@@ -79,5 +82,5 @@ urlpatterns = [
 
     # Profile Sharing
     path('profile/share/', ShareProfileAPIView.as_view(), name='profile-share'),
-    path('profile/public/<uuid:user_id>/', PublicProfileWebView.as_view(), name='public-profile'),
+    path('profile/public/<str:user_id>/', PublicProfileWebView.as_view(), name='public-profile'),
 ]

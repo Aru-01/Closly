@@ -230,7 +230,14 @@ class PublicProfileWebView(APIView):
     authentication_classes = []
 
     def get(self, request, user_id):
-        profile_user = get_object_or_404(User, pk=user_id)
+        try:
+            profile_user = User.objects.filter(pk=user_id).first()
+        except (ValueError, TypeError):
+            profile_user = None
+
+        if not profile_user:
+            from django.http import Http404
+            raise Http404("User profile not found.")
         
         reward_profile = getattr(profile_user, 'reward_profile', None)
         tier = reward_profile.current_tier if reward_profile else 'Bronze'

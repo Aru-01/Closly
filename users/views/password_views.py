@@ -1,5 +1,6 @@
 import logging
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -11,7 +12,7 @@ from users.serializers import (
     PasswordResetConfirmSerializer,
     PasswordChangeSerializer,
 )
-from users.utils import send_password_reset_email
+from users.utils import send_password_reset_email, generate_otp
 from .base import standard_response
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,6 @@ class PasswordResetRequestView(APIView):
                         )
                 
                 # Generate and send password reset OTP
-                from users.utils import generate_otp, send_password_reset_email
                 otp = generate_otp()
                 user.otp = otp
                 user.otp_created_at = timezone.now()

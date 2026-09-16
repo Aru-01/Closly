@@ -463,17 +463,25 @@ class CustomTokenRefreshView(TokenRefreshView):
                 status_code=status.HTTP_200_OK
             )
         
-        except TokenError as e:
+        except (TokenError, InvalidToken) as e:
             return standard_response(
                 success=False,
                 message="Token refresh failed",
                 errors={'detail': str(e)},
                 status_code=status.HTTP_401_UNAUTHORIZED
             )
-        except InvalidToken as e:
+        except User.DoesNotExist:
             return standard_response(
                 success=False,
-                message="Invalid token",
+                message="User account associated with this token was not found or has been deleted. Please log in again.",
+                errors={'detail': "User not found. Please log in again."},
+                status_code=status.HTTP_401_UNAUTHORIZED
+            )
+        except Exception as e:
+            logger.warning(f"Token refresh failed: {e}")
+            return standard_response(
+                success=False,
+                message="Token refresh failed. Please log in again.",
                 errors={'detail': str(e)},
                 status_code=status.HTTP_401_UNAUTHORIZED
             )

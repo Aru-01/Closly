@@ -72,6 +72,7 @@ INSTALLED_APPS = [
 
 REST_FRAMEWORK = {
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'EXCEPTION_HANDLER': 'Config.exceptions.custom_exception_handler',
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
         'users.authentication.FirebaseAuthentication',
@@ -83,6 +84,7 @@ AUTH_USER_MODEL = 'users.User'
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
+    'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -196,7 +198,9 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+STATICFILES_STORAGE = 'whitenoise.storage.CompressedStaticFilesStorage'
 
 # Media files (Uploaded images)
 MEDIA_URL = '/media/'
@@ -210,10 +214,10 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # Simple JWT Configuration
 SIMPLE_JWT = {
     # Token lifetime
-    'ACCESS_TOKEN_LIFETIME': timedelta(hours=12),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=7),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=30),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': True,
+    'BLACKLIST_AFTER_ROTATION': False,
     'UPDATE_LAST_LOGIN': True,
     
     # Token claims
@@ -338,4 +342,10 @@ SPECTACULAR_SETTINGS = {
         'expandResponses': '200,201',
     },
 }
+
+# OpenAI & AI Dress Analyzer Configuration (AI Team Integration)
+LLM_API_KEY = config('LLM_API_KEY', default='')
+LLM_BASE_URL = config('LLM_BASE_URL', default=None)
+LLM_MODEL = config('LLM_MODEL', default='gpt-4o')
+MAX_IMAGE_SIZE_MB = config('MAX_IMAGE_SIZE_MB', default=5, cast=int)
 
