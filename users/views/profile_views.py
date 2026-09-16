@@ -1,8 +1,7 @@
 import logging
 from django.shortcuts import render, get_object_or_404
-from django.conf import settings
 from django.contrib.auth import get_user_model
-from rest_framework import status, generics
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -14,7 +13,6 @@ from users.serializers import (
     UserProfileUpdateSerializer,
     LanguagePreferenceSerializer,
 )
-from users.utils import build_absolute_media_url
 from .base import standard_response
 
 logger = logging.getLogger(__name__)
@@ -189,13 +187,6 @@ class UserPreferenceView(APIView):
     def patch(self, request):
         """Partial update onboarding preferences"""
         return self.post(request)
-
-
-from rewards.views import (
-    RewardPointsSummaryView as UserPointsSummaryView,
-    RewardPointsHistoryView as UserPointsHistoryView,
-    ClaimPurchaseRewardView as ClaimPurchasePointsView,
-)
 
 
 class ShareProfileAPIView(APIView):

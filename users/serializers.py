@@ -16,14 +16,8 @@ from .validators import (
     validate_password_match,
     validate_profile_picture
 )
-from .exceptions import (
-    InvalidCredentialsException,
-    EmailNotVerifiedException,
-    PasswordMismatchException,
-    EmailAlreadyExistsException,
-)
+from .exceptions import InvalidCredentialsException
 from .utils import validate_age, build_absolute_media_url
-from rewards.models import UserRewardProfile, RewardPointTransaction
 
 User = get_user_model()
 

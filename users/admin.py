@@ -8,9 +8,6 @@ from .models import (
     ProfileDataDeletionRequest,
     UserPreference,
 )
-from django.core.mail import send_mail
-from django.urls import reverse
-from django.utils.html import format_html
 
 @admin.register(UserPreference)
 class UserPreferenceAdmin(admin.ModelAdmin):

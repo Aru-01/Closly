@@ -1,5 +1,5 @@
 import logging
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.utils.decorators import method_decorator
 from django.core.mail import send_mail
@@ -8,11 +8,9 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from users.authentication import FirebaseAuthentication
 from users.models import AccountDeletionRequest, ProfileDataDeletionRequest
 from users.serializers import AccountDeleteSerializer
 from users.utils import send_account_deletion_email

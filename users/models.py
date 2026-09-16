@@ -4,7 +4,6 @@ from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 from .managers import UserManager
 import uuid
-from django.contrib.auth.hashers import make_password, check_password
 
 
 def profile_picture_upload_path(instance, filename):
