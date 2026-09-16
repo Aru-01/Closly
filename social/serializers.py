@@ -7,6 +7,8 @@ from .models import TodayOutfit, OutfitLike, UserFollow, DirectMessage, Story, S
 from affiliate.models import AffiliateProduct
 from closet.serializers import ClosetItemSerializer
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema_field
+
 
 User = get_user_model()
 
@@ -59,6 +61,7 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
             return validate_image_file(value, max_mb=30)
         return value
 
+    @extend_schema_field(serializers.BooleanField)
     def get_is_liked(self, obj):
         liked_outfit_ids = self.context.get('liked_outfit_ids')
         if liked_outfit_ids is not None:
@@ -217,6 +220,7 @@ class StoryViewerSerializer(serializers.ModelSerializer):
         model = StoryView
         fields = ['viewer', 'viewed_at', 'has_loved']
 
+    @extend_schema_field(serializers.BooleanField)
     def get_has_loved(self, obj):
         loved_user_ids = self.context.get('loved_user_ids')
         if loved_user_ids is not None:

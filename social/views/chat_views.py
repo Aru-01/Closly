@@ -1,0 +1,214 @@
+from rest_framework import generics, status
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.pagination import PageNumberPagination
+from django.shortcuts import get_object_or_404
+from django.contrib.auth import get_user_model
+from django.db.models import Q, Count
+from django.utils import timezone
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+
+from social.models import TodayOutfit, OutfitLike, UserFollow, DirectMessage, Story, StoryView, StoryLike
+from affiliate.models import AffiliateProduct
+from social.serializers import (
+    TodayOutfitSerializer,
+    UserFollowSerializer,
+    DirectMessageSerializer,
+    UserSimpleSerializer,
+    ConversationSummarySerializer,
+    StorySerializer,
+    UserStoryGroupSerializer,
+    StoryViewerSerializer,
+)
+
+User = get_user_model()
+from .outfit_views import StandardSocialPagination
+from .story_views import get_active_stories_for_user
+
+class DirectMessageSendView(APIView):
+    """
+    API endpoint to send a direct message to a user.
+    Supports text, image attachments, shared products, shared outfits, and story replies.
+    
+    POST /api/social/messages/
+    Body (multipart/form-data or JSON):
+    - recipient_id: UUID (required)
+    - message_type: 'text' | 'image' | 'product' | 'outfit' | 'story_reply' (optional)
+    - content: string (optional if attachment/shared item is provided)
+    - image: file (optional, image attachment)
+    - product_id: int (optional, shared AffiliateProduct)
+    - outfit_id: int (optional, shared TodayOutfit)
+    - story_id: int (optional, replied Story)
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        recipient_id = request.data.get('recipient_id')
+        message_type = request.data.get('message_type', 'text')
+        content = request.data.get('content', '')
+        image_file = request.FILES.get('image')
+        product_id = request.data.get('product_id')
+        outfit_id = request.data.get('outfit_id')
+        story_id = request.data.get('story_id')
+
+        if not recipient_id:
+            return Response({
+                'success': False,
+                'message': 'recipient_id is required.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        recipient = get_object_or_404(User, pk=recipient_id)
+
+        shared_product = None
+        if product_id:
+            shared_product = get_object_or_404(AffiliateProduct, pk=product_id)
+            message_type = 'product'
+
+        shared_outfit = None
+        if outfit_id:
+            shared_outfit = get_object_or_404(TodayOutfit, pk=outfit_id)
+            message_type = 'outfit'
+
+        story_ref = None
+        if story_id:
+            story_ref = get_object_or_404(Story, pk=story_id)
+            message_type = 'story_reply'
+
+        if image_file:
+            message_type = 'image'
+
+        if not content and not image_file and not shared_product and not shared_outfit and not story_ref:
+            return Response({
+                'success': False,
+                'message': 'Message must contain text content, an image, or a shared item.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        message = DirectMessage.objects.create(
+            sender=request.user,
+            recipient=recipient,
+            message_type=message_type,
+            content=content or '',
+            image=image_file,
+            shared_product=shared_product,
+            shared_outfit=shared_outfit,
+            story_reference=story_ref,
+        )
+
+        if recipient != request.user:
+            try:
+                from notifications.services import create_notification
+                preview_text = content[:60] if content else f"Shared a {message_type}"
+                create_notification(
+                    recipient=recipient,
+                    sender=request.user,
+                    notification_type='direct_message',
+                    title='New Message',
+                    message=f"{request.user.name or 'A user'}: {preview_text}",
+                    data={'sender_id': str(request.user.id), 'deep_link': f"closly://chat/{request.user.id}"}
+                )
+            except Exception:
+                pass
+
+        serializer = DirectMessageSerializer(message, context={'request': request})
+        return Response({
+            'success': True,
+            'message': 'Message sent successfully.',
+            'data': serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+
+class DirectMessageConversationView(generics.ListAPIView):
+    """
+    API endpoint to retrieve full conversation messages between current user and a target user.
+    
+    GET /api/social/messages/<user_id>/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = DirectMessageSerializer
+    pagination_class = StandardSocialPagination
+
+    def get_queryset(self):
+        other_user_id = self.kwargs.get('user_id')
+        current_user = self.request.user
+        
+        # Mark received messages from this user as read
+        DirectMessage.objects.filter(sender_id=other_user_id, recipient=current_user, is_read=False).update(is_read=True)
+
+        return (
+            DirectMessage.objects.filter(
+                (Q(sender=current_user) & Q(recipient_id=other_user_id)) |
+                (Q(sender_id=other_user_id) & Q(recipient=current_user))
+            )
+            .select_related('sender', 'recipient', 'shared_product', 'shared_outfit', 'shared_outfit__user', 'story_reference', 'story_reference__user')
+        )
+
+
+class ConversationListView(APIView):
+    """
+    API endpoint to list user's conversation threads (Inbox) + Active Stories Tray.
+    Returns all conversations grouped by partner user, ordered by latest message time,
+    along with active stories of followed users for the top story bar.
+
+    GET /api/social/conversations/
+    GET /api/social/messages/inbox/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        user = request.user
+
+        # 1. Fetch unread counts grouped by sender in 1 query
+        unread_counts_qs = (
+            DirectMessage.objects.filter(recipient=user, is_read=False)
+            .values('sender_id')
+            .annotate(count=Count('id'))
+        )
+        unread_map = {item['sender_id']: item['count'] for item in unread_counts_qs}
+
+        # 2. Fetch all messages involving user, ordered newest first with related users
+        messages = (
+            DirectMessage.objects.filter(Q(sender=user) | Q(recipient=user))
+            .select_related('sender', 'recipient')
+            .order_by('-created_at', '-id')
+        )
+
+        # 3. Deduplicate by conversation partner while preserving latest message
+        conversations = {}
+        for msg in messages:
+            partner = msg.recipient if msg.sender_id == user.id else msg.sender
+            if partner.id not in conversations:
+                conversations[partner.id] = {
+                    'other_user': partner,
+                    'last_message': {
+                        'id': msg.id,
+                        'message_type': msg.message_type,
+                        'content': msg.content,
+                        'sender_id': str(msg.sender_id),
+                        'created_at': msg.created_at,
+                        'is_read': msg.is_read,
+                    },
+                    'unread_count': unread_map.get(partner.id, 0),
+                }
+
+        serializer = ConversationSummarySerializer(
+            list(conversations.values()),
+            many=True,
+            context={'request': request}
+        )
+
+        # Fetch active stories for the top horizontal story bar
+        stories_data = get_active_stories_for_user(user, request=request)
+
+        return Response({
+            'success': True,
+            'message': 'Conversations and stories retrieved successfully.',
+            'data': serializer.data,
+            'stories': stories_data,
+        }, status=status.HTTP_200_OK)
+
+
