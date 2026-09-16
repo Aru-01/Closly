@@ -9,14 +9,103 @@ from django.contrib.auth import get_user_model
 from django.db.models import Q, Count
 from django.utils import timezone
 
-from .models import TodayOutfit, OutfitLike, UserFollow, DirectMessage
+from .models import TodayOutfit, OutfitLike, UserFollow, DirectMessage, Story, StoryView, StoryLike
+from affiliate.models import AffiliateProduct
 from .serializers import (
     TodayOutfitSerializer,
     UserFollowSerializer,
     DirectMessageSerializer,
     UserSimpleSerializer,
     ConversationSummarySerializer,
+    StorySerializer,
+    UserStoryGroupSerializer,
+    StoryViewerSerializer,
 )
+
+
+def get_active_stories_for_user(request_user, request=None):
+    """
+    Fetch active stories within 24 hours for followed users and self,
+    grouped by user for the story tray.
+    """
+    now = timezone.now()
+    followed_user_ids = list(
+        UserFollow.objects.filter(follower=request_user).values_list('following_id', flat=True)
+    )
+    relevant_user_ids = [request_user.id] + followed_user_ids
+
+    active_stories = (
+        Story.objects.filter(
+            user_id__in=relevant_user_ids,
+            is_active=True,
+            expires_at__gt=now
+        )
+        .select_related('user')
+        .prefetch_related('views', 'likes')
+        .order_by('-created_at')
+    )
+
+    # Collect viewed story IDs for this user to avoid N+1 queries
+    viewed_story_ids = set(
+        StoryView.objects.filter(
+            viewer=request_user,
+            story__in=active_stories
+        ).values_list('story_id', flat=True)
+    )
+    loved_story_ids = set(
+        StoryLike.objects.filter(
+            user=request_user,
+            story__in=active_stories
+        ).values_list('story_id', flat=True)
+    )
+
+    # Group stories by author
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for story in active_stories:
+        grouped[story.user_id].append(story)
+
+    serializer_context = {
+        'request': request,
+        'viewed_story_ids': viewed_story_ids,
+        'loved_story_ids': loved_story_ids,
+    }
+
+    groups = []
+    # 1. User's own stories (always first if present)
+    if request_user.id in grouped:
+        user_stories = grouped[request_user.id]
+        serialized_stories = StorySerializer(user_stories, many=True, context=serializer_context).data
+        has_unseen = any(s.id not in viewed_story_ids for s in user_stories)
+        groups.append({
+            'user': UserSimpleSerializer(request_user, context={'request': request}).data,
+            'has_unseen_story': has_unseen,
+            'total_stories': len(user_stories),
+            'stories': serialized_stories,
+        })
+
+    # 2. Followed users' stories
+    followed_groups = []
+    for uid in followed_user_ids:
+        if uid in grouped:
+            u_stories = grouped[uid]
+            author = u_stories[0].user
+            serialized_stories = StorySerializer(u_stories, many=True, context=serializer_context).data
+            has_unseen = any(s.id not in viewed_story_ids for s in u_stories)
+            followed_groups.append({
+                'user': UserSimpleSerializer(author, context={'request': request}).data,
+                'has_unseen_story': has_unseen,
+                'total_stories': len(u_stories),
+                'stories': serialized_stories,
+            })
+
+    # Sort followed groups: unseen first, then by latest story date
+    followed_groups.sort(
+        key=lambda g: (not g['has_unseen_story'], -(g['stories'][0]['id'] if g['stories'] else 0))
+    )
+    groups.extend(followed_groups)
+
+    return groups
 
 User = get_user_model()
 
@@ -462,45 +551,89 @@ class OtherUserProfileView(APIView):
 class DirectMessageSendView(APIView):
     """
     API endpoint to send a direct message to a user.
+    Supports text, image attachments, shared products, shared outfits, and story replies.
     
     POST /api/social/messages/
-    Body: {"recipient_id": "uuid", "content": "Hello!"}
+    Body (multipart/form-data or JSON):
+    - recipient_id: UUID (required)
+    - message_type: 'text' | 'image' | 'product' | 'outfit' | 'story_reply' (optional)
+    - content: string (optional if attachment/shared item is provided)
+    - image: file (optional, image attachment)
+    - product_id: int (optional, shared AffiliateProduct)
+    - outfit_id: int (optional, shared TodayOutfit)
+    - story_id: int (optional, replied Story)
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
     def post(self, request):
         recipient_id = request.data.get('recipient_id')
-        content = request.data.get('content')
+        message_type = request.data.get('message_type', 'text')
+        content = request.data.get('content', '')
+        image_file = request.FILES.get('image')
+        product_id = request.data.get('product_id')
+        outfit_id = request.data.get('outfit_id')
+        story_id = request.data.get('story_id')
 
-        if not recipient_id or not content:
+        if not recipient_id:
             return Response({
                 'success': False,
-                'message': 'recipient_id and content are required.'
+                'message': 'recipient_id is required.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
         recipient = get_object_or_404(User, pk=recipient_id)
+
+        shared_product = None
+        if product_id:
+            shared_product = get_object_or_404(AffiliateProduct, pk=product_id)
+            message_type = 'product'
+
+        shared_outfit = None
+        if outfit_id:
+            shared_outfit = get_object_or_404(TodayOutfit, pk=outfit_id)
+            message_type = 'outfit'
+
+        story_ref = None
+        if story_id:
+            story_ref = get_object_or_404(Story, pk=story_id)
+            message_type = 'story_reply'
+
+        if image_file:
+            message_type = 'image'
+
+        if not content and not image_file and not shared_product and not shared_outfit and not story_ref:
+            return Response({
+                'success': False,
+                'message': 'Message must contain text content, an image, or a shared item.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         message = DirectMessage.objects.create(
             sender=request.user,
             recipient=recipient,
-            content=content
+            message_type=message_type,
+            content=content or '',
+            image=image_file,
+            shared_product=shared_product,
+            shared_outfit=shared_outfit,
+            story_reference=story_ref,
         )
 
         if recipient != request.user:
             try:
                 from notifications.services import create_notification
+                preview_text = content[:60] if content else f"Shared a {message_type}"
                 create_notification(
                     recipient=recipient,
                     sender=request.user,
                     notification_type='direct_message',
                     title='New Message',
-                    message=f"{request.user.name or 'A user'}: {content[:60]}",
+                    message=f"{request.user.name or 'A user'}: {preview_text}",
                     data={'sender_id': str(request.user.id), 'deep_link': f"closly://chat/{request.user.id}"}
                 )
             except Exception:
                 pass
 
-        serializer = DirectMessageSerializer(message)
+        serializer = DirectMessageSerializer(message, context={'request': request})
         return Response({
             'success': True,
             'message': 'Message sent successfully.',
@@ -531,15 +664,15 @@ class DirectMessageConversationView(generics.ListAPIView):
                 (Q(sender=current_user) & Q(recipient_id=other_user_id)) |
                 (Q(sender_id=other_user_id) & Q(recipient=current_user))
             )
-            .select_related('sender', 'recipient')
+            .select_related('sender', 'recipient', 'shared_product', 'shared_outfit', 'shared_outfit__user', 'story_reference', 'story_reference__user')
         )
 
 
 class ConversationListView(APIView):
     """
-    API endpoint to list user's conversation threads (Inbox).
-    Returns all conversations grouped by partner user, ordered by latest message time.
-    Includes partner user details, latest message preview, and unread count.
+    API endpoint to list user's conversation threads (Inbox) + Active Stories Tray.
+    Returns all conversations grouped by partner user, ordered by latest message time,
+    along with active stories of followed users for the top story bar.
 
     GET /api/social/conversations/
     GET /api/social/messages/inbox/
@@ -574,6 +707,7 @@ class ConversationListView(APIView):
                     'other_user': partner,
                     'last_message': {
                         'id': msg.id,
+                        'message_type': msg.message_type,
                         'content': msg.content,
                         'sender_id': str(msg.sender_id),
                         'created_at': msg.created_at,
@@ -588,10 +722,14 @@ class ConversationListView(APIView):
             context={'request': request}
         )
 
+        # Fetch active stories for the top horizontal story bar
+        stories_data = get_active_stories_for_user(user, request=request)
+
         return Response({
             'success': True,
-            'message': 'Conversations retrieved successfully.',
-            'data': serializer.data
+            'message': 'Conversations and stories retrieved successfully.',
+            'data': serializer.data,
+            'stories': stories_data,
         }, status=status.HTTP_200_OK)
 
 
@@ -822,5 +960,257 @@ class ExploreNewsfeedView(generics.ListAPIView):
         return response
 
 
+class StoryCreateView(APIView):
+    """
+    API endpoint to upload/post a new story (24-hour expiration).
+    
+    POST /api/social/stories/
+    Body (multipart/form-data):
+    - image: file (required)
+    - caption: string (optional)
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        stories_data = get_active_stories_for_user(request.user, request=request)
+        return Response({
+            'success': True,
+            'message': 'Active stories retrieved successfully.',
+            'data': stories_data
+        }, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        serializer = StorySerializer(data=request.data, context={'request': request})
+        if serializer.is_valid():
+            story = serializer.save(user=request.user)
+            return Response({
+                'success': True,
+                'message': 'Story published successfully.',
+                'data': StorySerializer(story, context={'request': request}).data
+            }, status=status.HTTP_201_CREATED)
+        return Response({
+            'success': False,
+            'message': 'Validation failed.',
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
 
 
+class StoryFeedView(APIView):
+    """
+    API endpoint to retrieve active stories (24 hours) grouped by user
+    for the story tray (followed users + user's own stories).
+    
+    GET /api/social/stories/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        stories_data = get_active_stories_for_user(request.user, request=request)
+        return Response({
+            'success': True,
+            'message': 'Active stories retrieved successfully.',
+            'data': stories_data
+        }, status=status.HTTP_200_OK)
+
+
+class MyStoriesListView(APIView):
+    """
+    API endpoint to retrieve authenticated user's own active stories with viewer counts.
+    
+    GET /api/social/stories/my/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request):
+        now = timezone.now()
+        stories = (
+            Story.objects.filter(user=request.user, is_active=True, expires_at__gt=now)
+            .prefetch_related('views', 'likes')
+            .order_by('-created_at')
+        )
+        serializer = StorySerializer(stories, many=True, context={'request': request})
+        return Response({
+            'success': True,
+            'message': 'My active stories retrieved successfully.',
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
+
+
+class StoryViewRecordView(APIView):
+    """
+    API endpoint to record that the authenticated user has viewed a story.
+    
+    POST /api/social/stories/<pk>/view/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request, pk):
+        story = get_object_or_404(Story, pk=pk)
+        if story.is_expired or not story.is_active:
+            return Response({
+                'success': False,
+                'message': 'This story has expired.'
+            }, status=status.HTTP_410_GONE)
+
+        # Self-view should not count as external viewer
+        if story.user_id == request.user.id:
+            return Response({
+                'success': True,
+                'message': 'Self view acknowledged.',
+                'data': {
+                    'story_id': story.id,
+                    'views_count': story.views_count,
+                    'is_first_view': False,
+                }
+            }, status=status.HTTP_200_OK)
+
+        view_obj, created = StoryView.objects.get_or_create(story=story, viewer=request.user)
+        return Response({
+            'success': True,
+            'message': 'Story view recorded.',
+            'data': {
+                'story_id': story.id,
+                'views_count': story.views_count,
+                'is_first_view': created,
+            }
+        }, status=status.HTTP_200_OK)
+
+
+class StoryLikeToggleView(APIView):
+    """
+    API endpoint to love/heart or unlove a story.
+    
+    POST /api/social/stories/<pk>/like/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request, pk):
+        story = get_object_or_404(Story, pk=pk)
+        if story.is_expired or not story.is_active:
+            return Response({
+                'success': False,
+                'message': 'This story has expired.'
+            }, status=status.HTTP_410_GONE)
+
+        like_qs = StoryLike.objects.filter(story=story, user=request.user)
+        if like_qs.exists():
+            like_qs.delete()
+            is_loved = False
+            msg = 'Story unloved.'
+        else:
+            StoryLike.objects.create(story=story, user=request.user)
+            StoryView.objects.get_or_create(story=story, viewer=request.user)
+            is_loved = True
+            msg = 'Story loved.'
+
+        return Response({
+            'success': True,
+            'message': msg,
+            'data': {
+                'story_id': story.id,
+                'has_loved': is_loved,
+                'loves_count': story.loves_count,
+            }
+        }, status=status.HTTP_200_OK)
+
+
+class StoryReplyView(APIView):
+    """
+    API endpoint to reply to a story with a message.
+    Automatically creates a DirectMessage referencing the story, which appears
+    in the story author's Inbox with the story preview.
+    
+    POST /api/social/stories/<pk>/reply/
+    Body: {"content": "Looking amazing!"}
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request, pk):
+        story = get_object_or_404(Story, pk=pk)
+        if story.is_expired or not story.is_active:
+            return Response({
+                'success': False,
+                'message': 'This story has expired.'
+            }, status=status.HTTP_410_GONE)
+
+        if story.user_id == request.user.id:
+            return Response({
+                'success': False,
+                'message': 'You cannot reply to your own story.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        content = request.data.get('content', '').strip()
+
+        if not content:
+            return Response({
+                'success': False,
+                'message': 'content is required to reply to a story.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        message = DirectMessage.objects.create(
+            sender=request.user,
+            recipient=story.user,
+            message_type='story_reply',
+            content=content,
+            story_reference=story,
+        )
+
+        serializer = DirectMessageSerializer(message, context={'request': request})
+        return Response({
+            'success': True,
+            'message': 'Reply sent to inbox.',
+            'data': serializer.data
+        }, status=status.HTTP_201_CREATED)
+
+
+class StoryViewersListView(generics.ListAPIView):
+    """
+    API endpoint for the story owner to see who viewed their story and who loved it.
+    
+    GET /api/social/stories/<pk>/viewers/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = StoryViewerSerializer
+    pagination_class = StandardSocialPagination
+
+    def get_queryset(self):
+        story_id = self.kwargs.get('pk')
+        story = get_object_or_404(Story, pk=story_id)
+        if story.user_id != self.request.user.id:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("Only the story owner can view viewers.")
+        return StoryView.objects.filter(story=story).select_related('viewer')
+
+    def get_serializer_context(self):
+        context = super().get_serializer_context()
+        story_id = self.kwargs.get('pk')
+        context['loved_user_ids'] = set(
+            StoryLike.objects.filter(story_id=story_id).values_list('user_id', flat=True)
+        )
+        return context
+
+
+
+class StoryDeleteView(APIView):
+    """
+    API endpoint to delete authenticated user's own story.
+    
+    DELETE /api/social/stories/<pk>/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def delete(self, request, pk):
+        story = get_object_or_404(Story, pk=pk, user=request.user)
+        story.delete()
+        return Response({
+            'success': True,
+            'message': 'Story deleted successfully.'
+        }, status=status.HTTP_200_OK)

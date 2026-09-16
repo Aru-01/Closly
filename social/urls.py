@@ -18,6 +18,14 @@ from .views import (
     ConversationListView,
     LikedOutfitsListView,
     OutfitCalendarView,
+    StoryCreateView,
+    StoryFeedView,
+    MyStoriesListView,
+    StoryViewRecordView,
+    StoryLikeToggleView,
+    StoryReplyView,
+    StoryViewersListView,
+    StoryDeleteView,
 )
 
 app_name = 'social'
@@ -43,6 +51,16 @@ urlpatterns = [
     path('users/<uuid:user_id>/followers/', UserFollowersListView.as_view(), name='user-followers'),
     path('users/<uuid:user_id>/following/', UserFollowingListView.as_view(), name='user-following'),
     path('users/<uuid:user_id>/profile/', OtherUserProfileView.as_view(), name='user-social-profile'),
+
+    # Stories system (24 hours)
+    path('stories/', StoryCreateView.as_view(), name='story-create'),
+    path('stories/feed/', StoryFeedView.as_view(), name='story-feed'),
+    path('stories/my/', MyStoriesListView.as_view(), name='my-stories'),
+    path('stories/<int:pk>/view/', StoryViewRecordView.as_view(), name='story-view'),
+    path('stories/<int:pk>/like/', StoryLikeToggleView.as_view(), name='story-like'),
+    path('stories/<int:pk>/reply/', StoryReplyView.as_view(), name='story-reply'),
+    path('stories/<int:pk>/viewers/', StoryViewersListView.as_view(), name='story-viewers'),
+    path('stories/<int:pk>/', StoryDeleteView.as_view(), name='story-delete'),
 
     # Direct Messaging & Inbox
     path('messages/', DirectMessageSendView.as_view(), name='message-send'),
