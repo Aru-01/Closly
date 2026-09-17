@@ -197,14 +197,16 @@ class AffiliateProductNewsfeedView(generics.ListAPIView):
         if min_price:
             try:
                 qs = qs.filter(price__gte=float(min_price))
-            except ValueError:
-                pass
+            except ValueError as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Invalid min_price parameter: {min_price} - {e}")
 
         if max_price:
             try:
                 qs = qs.filter(price__lte=float(max_price))
-            except ValueError:
-                pass
+            except ValueError as e:
+                import logging
+                logging.getLogger(__name__).warning(f"Invalid max_price parameter: {max_price} - {e}")
 
         order_map = {
             'price_asc':  'price',

@@ -626,8 +626,8 @@ def scan_clothing_image(image_file, request=None):
                     "price": float(it.price),
                     "image": build_absolute_media_url(it.image, request=request)
                 })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error fetching similar items: {e}")
 
     # Clean, concise dictionary without internal debug clutter
     clean_result = {

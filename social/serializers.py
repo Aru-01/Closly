@@ -288,8 +288,10 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
                         try:
                             _extract_ids(json.loads(s))
                             return
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            import logging
+                            logger = logging.getLogger(__name__)
+                            logger.warning(f"Error parsing tagged items json: {e}")
                     for part in s.split(','):
                         part = part.strip()
                         if part.isdigit():

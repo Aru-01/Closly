@@ -23,11 +23,13 @@ class UsersConfig(AppConfig):
             from .utils import initialize_firebase
             initialize_firebase()
         except Exception as e:
-            print(f"Warning: Failed to initialize Firebase: {str(e)}")
-            print("Firebase authentication will not be available.")
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Warning: Failed to initialize Firebase: {str(e)}")
+            logger.warning("Firebase authentication will not be available.")
         
         # Import drf-spectacular schema extensions
         try:
             from . import schema
-        except ImportError:
-            pass
+        except ImportError as e:
+            logger.warning(f"drf-spectacular schema extensions not found: {str(e)}")

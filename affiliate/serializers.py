@@ -47,8 +47,9 @@ def fix_image_url(raw_url: str) -> str:
         if inner_decoded.startswith('https://') or inner_decoded.startswith('http://'):
             return inner_decoded
 
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to fix image url: {e}")
 
     return raw_url
 

@@ -10,7 +10,9 @@ from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth
+import logging
 
+logger = logging.getLogger(__name__)
 
 # Initialize Firebase Admin SDK
 def initialize_firebase():
@@ -21,12 +23,12 @@ def initialize_firebase():
     if not firebase_admin._apps:
         firebase_credentials_path = getattr(settings, 'FIREBASE_CREDENTIALS_PATH', None)
         if not firebase_credentials_path:
-            print("Warning: FIREBASE_CREDENTIALS_PATH is not set in settings. Firebase Admin SDK will not be initialized.")
+            logger.warning("Warning: FIREBASE_CREDENTIALS_PATH is not set in settings. Firebase Admin SDK will not be initialized.")
             return
 
         cred = credentials.Certificate(firebase_credentials_path)
         firebase_admin.initialize_app(cred)
-        print("Firebase Admin SDK initialized successfully")
+        logger.info("Firebase Admin SDK initialized successfully")
 
 
 def generate_otp(length=4):
@@ -57,7 +59,7 @@ def send_otp_email(user, otp):
         )
         return True
     except Exception as e:
-        print(f"Error sending OTP email: {str(e)}")
+        logger.error(f"Error sending OTP email: {str(e)}")
         return False
 
 
@@ -152,7 +154,7 @@ def send_password_reset_email(user, otp):
         return True
     
     except Exception as e:
-        print(f"Error sending password reset email: {str(e)}")
+        logger.error(f"Error sending password reset email: {str(e)}")
         return False
 
 
@@ -191,7 +193,7 @@ def send_welcome_email(user):
         return True
     
     except Exception as e:
-        print(f"Error sending welcome email: {str(e)}")
+        logger.error(f"Error sending welcome email: {str(e)}")
         return False
 
 
@@ -232,7 +234,7 @@ def send_account_deletion_email(user, summary=None):
         return True
     
     except Exception as e:
-        print(f"Error sending account deletion email: {str(e)}")
+        logger.error(f"Error sending account deletion email: {str(e)}")
         return False
 
 

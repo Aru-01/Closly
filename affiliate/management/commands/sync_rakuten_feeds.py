@@ -175,8 +175,9 @@ class Command(BaseCommand):
                         qs = urllib.parse.parse_qs(parsed.query)
                         if 'murl' in qs and qs['murl']:
                             real_merchant_url = qs['murl'][0]
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        import logging
+                        logging.getLogger(__name__).warning(f"Error parsing link_url for murl: {e}")
                 merchant_deep_link = real_merchant_url or t('clickurl') or t('buyurl') or link_url
                 colour = t('color') or t('colour') or ''
 

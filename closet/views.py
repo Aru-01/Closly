@@ -52,8 +52,8 @@ class ClosetItemListCreateView(generics.ListCreateAPIView):
                 description=f"Added '{item.name}' to closet",
                 reference_id=str(item.id)
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Error awarding points for adding closet item: {e}")
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
@@ -475,8 +475,8 @@ class ClosetAIScanView(APIView):
                             description=f"Auto-scanned & added '{piece_item.name}' to closet",
                             reference_id=str(piece_item.id)
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.warning(f"Error awarding points for auto-scanned outfit item: {e}")
                     created_items.append(piece_item)
 
                 serializer = ClosetItemSerializer(created_items, many=True, context={'request': request})
@@ -517,8 +517,8 @@ class ClosetAIScanView(APIView):
                     description=f"Auto-scanned & added '{item.name}' to closet",
                     reference_id=str(item.id)
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Error awarding points for auto-scanned single item: {e}")
 
             serializer = ClosetItemSerializer(item, context={'request': request})
             return Response({
