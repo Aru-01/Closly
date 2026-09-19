@@ -154,14 +154,29 @@ class ClosetApiTests(TestCase):
         self.assertIn('brand', data)
         self.assertIn('price', data)
         self.assertIn('style_vibe', data)
-        self.assertIn('confidence', data)
         self.assertIn('visual_match_score', data)
-        self.assertIn('match_display', data)
-        self.assertIn('match_breakdown', data)
-        self.assertIn('similar_wardrobe_items', data)
         self.assertIn('image_url', data)
         self.assertTrue(data['image_url'].startswith('https://') or data['image_url'].startswith('http://'))
-        self.assertIn('available_categories', data)
+
+    def test_ai_scan_non_garment_returns_clean_notice(self):
+        from unittest.mock import patch
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        mock_non_garment = {
+            'is_garment': False,
+            'message': 'The uploaded image does not appear to be a clothing item. Please capture or upload a clear photo of a garment.',
+            'notes': 'The image appears to be a graphic design rather than an actual garment.'
+        }
+
+        uploaded_file = SimpleUploadedFile("graphic_design.png", b"fake", content_type="image/png")
+        with patch('closet.views.scan_clothing_image', return_value=mock_non_garment):
+            url = '/api/closet/ai-scan/'
+            response = self.client.post(url, {'image': uploaded_file}, format='multipart')
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertFalse(response.data['success'])
+            self.assertFalse(response.data['is_garment'])
+            self.assertIn('not appear to be a clothing item', response.data['message'])
+            self.assertIn('graphic design', response.data['notes'])
 
     def test_ai_scan_with_auto_save(self):
         import io

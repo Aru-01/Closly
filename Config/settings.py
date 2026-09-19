@@ -348,5 +348,8 @@ LLM_API_KEY = config('LLM_API_KEY', default='')
 LLM_BASE_URL = config('LLM_BASE_URL', default=None)
 LLM_MODEL = config('LLM_MODEL', default='gpt-4o')
 MAX_IMAGE_SIZE_MB = config('MAX_IMAGE_SIZE_MB', default=5, cast=int)
+APIFY_API_TOKEN = config('APIFY_API_TOKEN', default='')
+APIFY_GOOGLE_ACTOR = config('APIFY_GOOGLE_ACTOR', default='apify/google-search-scraper')
+DRESS_ANALYZER_DIR = BASE_DIR / 'dress-analyzer-ai'
 
 

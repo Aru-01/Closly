@@ -1,7 +1,8 @@
-from rest_framework import generics, status
+from rest_framework import generics, status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.db import models
 from django.utils import timezone
@@ -387,7 +388,7 @@ class ClosetAIScanView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def post(self, request):
-        image_file = request.FILES.get('image')
+        image_file = request.FILES.get('image') or request.FILES.get('file')
         if not image_file:
             return Response({
                 'success': False,
@@ -413,6 +414,15 @@ class ClosetAIScanView(APIView):
                 'success': False,
                 'message': f"Failed to scan garment image: {str(e)}"
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Check if the uploaded image contains an actual wearable clothing item
+        if not scanned_data.get('is_garment', True):
+            return Response({
+                'success': False,
+                'is_garment': False,
+                'message': scanned_data.get('message') or "The uploaded image does not appear to be a clothing item. Please capture or upload a clear photo of a garment.",
+                'notes': scanned_data.get('notes', ''),
+            }, status=status.HTTP_200_OK)
 
         # Check for auto_save
         auto_save_param = request.query_params.get('auto_save', '').lower()
@@ -463,11 +473,8 @@ class ClosetAIScanView(APIView):
                     'data': {
                         'saved_pieces_count': len(created_items),
                         'items': serializer.data,
-                        'ai_metadata': {
-                            'is_full_outfit': True,
-                            'style_vibe': scanned_data.get('style_vibe'),
-                            'confidence': scanned_data.get('confidence'),
-                        }
+                        'style_vibe': scanned_data.get('style_vibe'),
+                        'visual_match_score': scanned_data.get('visual_match_score'),
                     }
                 }, status=status.HTTP_201_CREATED)
 
@@ -506,19 +513,18 @@ class ClosetAIScanView(APIView):
                 'message': f"Garment scanned and automatically saved to closet as '{item.name}'.",
                 'data': {
                     'item': serializer.data,
-                    'ai_metadata': {
-                        'is_full_outfit': scanned_data.get('is_full_outfit', False),
-                        'style_vibe': scanned_data.get('style_vibe'),
-                        'confidence': scanned_data.get('confidence'),
-                    }
+                    'style_vibe': scanned_data.get('style_vibe'),
+                    'visual_match_score': scanned_data.get('visual_match_score'),
                 }
             }, status=status.HTTP_201_CREATED)
 
-        # Standard Pre-Fill Response for mobile app form
+        # Standard Pre-Fill Response for mobile app form (clean client data)
+        client_data = {k: v for k, v in scanned_data.items() if k not in ('saved_image_path', 'is_garment')}
+
         return Response({
             'success': True,
             'message': 'Garment image scanned successfully. Pre-fill data generated.',
-            'data': scanned_data
+            'data': client_data
         }, status=status.HTTP_200_OK)
 
 

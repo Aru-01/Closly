@@ -550,6 +550,14 @@ def scan_clothing_image(image_file, request=None):
     except Exception as e:
         logger.warning(f"Error invoking OpenAI dress analyzer: {e}")
 
+    # If the image was inspected and is NOT a garment, return immediately
+    if garment_data and not garment_data.get('is_garment', True):
+        return {
+            "is_garment": False,
+            "message": garment_data.get("message") or "The uploaded image does not appear to be a clothing item. Please capture or upload a clear photo of a garment.",
+            "notes": garment_data.get("notes", ""),
+        }
+
     # 2. Try Gemini Vision if OpenAI did not return data
     if not garment_data:
         gemini_key = getattr(settings, 'GEMINI_API_KEY', None)
@@ -590,21 +598,13 @@ def scan_clothing_image(image_file, request=None):
     if not garment_data.get('brand') or garment_data.get('brand').lower() in ('unknown', 'none', 'generic', 'n/a', 'null'):
         garment_data['brand'] = "N/A"
 
-    # Attach Google Lens style visual match score & breakdown
+    # Attach visual match score
     confidence = float(garment_data.get('confidence', 0.92))
     visual_match_pct = int(round(confidence * 100))
     if visual_match_pct > 98:
         visual_match_pct = 98
     if visual_match_pct < 85:
         visual_match_pct = 88
-
-    garment_data["visual_match_score"] = visual_match_pct
-    garment_data["match_display"] = f"{visual_match_pct}% Visual Match"
-    garment_data["match_breakdown"] = {
-        "color_accuracy": f"{min(99, visual_match_pct + 3)}% ({garment_data.get('color')} Palette)",
-        "silhouette_accuracy": f"{min(98, visual_match_pct + 1)}% ({garment_data.get('category', 'top').replace('_', ' ').title()})",
-        "style_vibe_accuracy": f"{max(85, visual_match_pct - 2)}% ({garment_data.get('style_vibe', 'Casual')})"
-    }
 
     # Find similar items the user already owns in their wardrobe
     similar_wardrobe_items = []
@@ -626,19 +626,30 @@ def scan_clothing_image(image_file, request=None):
                 })
         except Exception:
             pass
-    garment_data["similar_wardrobe_items"] = similar_wardrobe_items
 
-    # Attach storage paths and absolute media URL
-    garment_data["saved_image_path"] = saved_path
-    garment_data["image_url"] = absolute_image_url
-    garment_data["available_categories"] = [
-        {"value": "top", "label": "Tops & Shirts"},
-        {"value": "bottom", "label": "Bottoms & Pants"},
-        {"value": "shoes", "label": "Shoes & Footwear"},
-        {"value": "dresses_outerwear", "label": "Dresses & Outerwear"},
-        {"value": "accessories", "label": "Accessories"},
-        {"value": "other", "label": "Other"},
-    ]
+    # Clean, concise dictionary without internal debug clutter
+    clean_result = {
+        "name": garment_data.get("name"),
+        "category": garment_data.get("category"),
+        "color": garment_data.get("color"),
+        "secondary_colors": garment_data.get("secondary_colors", []),
+        "pattern": garment_data.get("pattern"),
+        "gender": garment_data.get("gender"),
+        "brand": garment_data.get("brand"),
+        "brand_info": garment_data.get("brand_info"),
+        "price": garment_data.get("price"),
+        "estimated_price": garment_data.get("estimated_price"),
+        "style_vibe": garment_data.get("style_vibe"),
+        "visual_match_score": visual_match_pct,
+        "image_url": absolute_image_url,
+        "notes": garment_data.get("notes"),
+        "similar_wardrobe_items": similar_wardrobe_items,
+        "saved_image_path": saved_path,
+        "is_garment": True,
+        "is_full_outfit": bool(garment_data.get("is_full_outfit", False)),
+    }
+    if garment_data.get("is_full_outfit") and garment_data.get("detected_items"):
+        clean_result["detected_items"] = garment_data.get("detected_items")
 
-    return garment_data
+    return clean_result
 

@@ -1,33 +1,25 @@
-import base64
-import json
+import sys
 import logging
+from pathlib import Path
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-# Official prompt designed by Closly AI team (dress-analyzer-ai)
-ANALYSIS_PROMPT = """You are a fashion image analysis expert. Carefully examine this dress image and respond according to the JSON schema below. Return ONLY valid JSON — no extra text, explanation, or markdown code fences.
+# Ensure the dress-analyzer-ai directory is in sys.path
+DRESS_ANALYZER_DIR = Path(settings.BASE_DIR) / 'dress-analyzer-ai'
+if str(DRESS_ANALYZER_DIR) not in sys.path:
+    sys.path.insert(0, str(DRESS_ANALYZER_DIR))
 
-JSON schema:
-{
-  "garment_type": "tshirt | shirt | pant | plazoo | jeans | saree | kurti | dress | skirt | jacket | shoes | accessories | other",
-  "gender": "male | female | unisex",
-  "primary_color": "string",
-  "secondary_colors": ["string"],
-  "pattern": "solid | striped | checked | floral | printed | polka-dot | abstract | other",
-  "brand": {
-    "name": "string",
-    "detected_from_logo": true/false,
-    "confidence": "high | medium | low | assumed"
-  },
-  "notes": "string (mention here if any field is an assumption rather than a confident detection)"
-}
+# Directly import the exact AI team service and components from dress-analyzer-ai
+try:
+    import service as ai_service
+    from schemas import DressAnalysisResult
+    AI_TEAM_MODULE_AVAILABLE = True
+except Exception as e:
+    logger.warning(f"Could not import dress-analyzer-ai directly: {e}")
+    ai_service = None
+    AI_TEAM_MODULE_AVAILABLE = False
 
-Rules:
-- If you are not fully certain about any field, give your best guess but lower the confidence to "low" or "assumed".
-- For brand: NEVER return "Unknown", "N/A", or leave it empty. If a logo is clearly visible, give the correct brand name, set confidence to "high" or "medium", and set detected_from_logo to true. If no logo is visible or identifiable, infer the most plausible real-world brand based on the garment's style, cut, fabric, stitching pattern, and overall design — pick a well-known brand commonly associated with that style — set confidence to "assumed" and detected_from_logo to false. The brand.name field must never be blank or "Unknown".
-- Return only valid JSON, nothing else.
-"""
 
 # Map fine-grained garment types to Closly's core category taxonomy
 CATEGORY_MAPPING = {
@@ -83,77 +75,142 @@ CATEGORY_BASE_PRICES = {
 }
 
 
-def encode_image_to_base64(image_bytes: bytes) -> str:
-    """Encode raw image bytes to a base64 UTF-8 string."""
-    return base64.b64encode(image_bytes).decode('utf-8')
+def is_valid_garment(raw_json: dict) -> tuple[bool, str]:
+    """
+    Validates whether the scanned image contains an actual wearable clothing item.
+    Returns (is_garment: bool, explanation_note: str).
+    """
+    garment_type = str(raw_json.get("garment_type", "")).lower().strip()
+    notes = str(raw_json.get("notes", "")).strip()
+    notes_lower = notes.lower()
+
+    # Explicit non-garment cues detected by vision LLM
+    non_garment_markers = [
+        "not an actual garment",
+        "not a garment",
+        "not clothing",
+        "not apparel",
+        "graphic design",
+        "screenshot",
+        "illustration",
+        "drawing",
+        "artwork",
+        "logo design",
+        "not a piece of clothing",
+        "does not show clothing",
+        "no clothing item",
+        "not wearable",
+    ]
+
+    for marker in non_garment_markers:
+        if marker in notes_lower:
+            return False, notes or "The image appears to be a graphic design or non-clothing object rather than a garment."
+
+    if garment_type in ("other", "none", "unknown", ""):
+        clothing_keywords = [
+            "shirt", "pant", "trousers", "dress", "saree", "kurti", "skirt",
+            "jacket", "hoodie", "sweater", "shoes", "boots", "sneakers",
+            "hat", "cap", "bag", "cloth", "garment", "fabric", "wear", "apparel"
+        ]
+        if not any(kw in notes_lower for kw in clothing_keywords):
+            return False, notes or "Could not identify a wearable clothing item in this image. Please upload a clear photo of a garment."
+
+    return True, ""
 
 
-def validate_image_size(image_bytes: bytes, max_mb: int = 5):
-    """Raise ValueError if image size exceeds allowed threshold."""
-    size_mb = len(image_bytes) / (1024 * 1024)
-    if size_mb > max_mb:
-        raise ValueError(f"Image too large: {size_mb:.2f} MB (Limit: {max_mb} MB)")
+def run_direct_dress_analysis(file_or_bytes, mime_type: str = 'image/jpeg') -> dict:
+    """
+    Executes the dress-analyzer-ai vision pipeline with:
+    1. Direct LLM vision inference (~2s)
+    2. Non-garment early exit validation (no slow web search if not a garment)
+    3. Fast brand resolution (Apify Google Search only when logo text/symbol is present)
+    """
+    if not AI_TEAM_MODULE_AVAILABLE or ai_service is None:
+        raise RuntimeError("dress-analyzer-ai module is not available in sys.path.")
+
+    if hasattr(file_or_bytes, 'read'):
+        file_or_bytes.seek(0)
+        file_bytes = file_or_bytes.read()
+        file_or_bytes.seek(0)
+        content_type = getattr(file_or_bytes, 'content_type', None)
+        if content_type:
+            mime_type = content_type
+    else:
+        file_bytes = file_or_bytes
+
+    # 1. Image validation
+    ai_service.validate_image_size(file_bytes)
+
+    # 2. Base64 encoding
+    base64_image = ai_service.encode_image_to_base64(file_bytes)
+
+    # 3. Vision LLM call using AI team's prompt and schema (~2.4s)
+    raw_json = ai_service.call_llm_for_analysis(base64_image, mime_type)
+
+    # 4. Check if the image is actually a clothing item
+    is_garment, reason = is_valid_garment(raw_json)
+    if not is_garment:
+        return {
+            "is_garment": False,
+            "message": "The uploaded image does not appear to be a clothing item. Please capture or upload a clear photo of a garment.",
+            "notes": reason,
+        }
+
+    # 5. Smart Brand Resolution
+    brand_data = raw_json.get("brand", {}) or {}
+    has_logo = bool(brand_data.get("logo_text") or brand_data.get("logo_symbol"))
+    if has_logo:
+        try:
+            raw_json = ai_service.resolve_brand(raw_json)
+        except Exception as e:
+            logger.warning(f"Brand search skipped/timed out: {e}")
+    else:
+        # Fast path: no logo physically on garment, use LLM inferred brand without 20s cloud scraper
+        garment_type = raw_json.get("garment_type", "garment")
+        current_name = (brand_data.get("name") or "").strip()
+        if not current_name or current_name.lower() in ("unknown", "other", "n/a", "none", "null"):
+            brand_data["name"] = f"Generic {garment_type.capitalize()} Brand"
+        brand_data["detected_from_logo"] = False
+        brand_data["confidence"] = "assumed"
+        raw_json["brand"] = brand_data
+
+    # 6. Brand sanitization
+    raw_json = ai_service._sanitize_brand(raw_json)
+
+    # 7. Price estimation & sanitization
+    raw_json = ai_service._sanitize_price(raw_json)
+
+    # 8. Validate through AI team's Pydantic schema
+    validated_result = ai_service.DressAnalysisResult(**raw_json)
+    out_dict = validated_result.model_dump()
+    out_dict["is_garment"] = True
+    return out_dict
 
 
 def analyze_dress_with_openai(image_bytes: bytes, mime_type: str = 'image/jpeg') -> dict | None:
     """
-    Directly ports and executes the Closly AI team's OpenAI Vision model
-    from dress-analyzer-ai within the Django backend.
-    
-    Returns a unified metadata dictionary compatible with Closly ClosetItem,
-    or None if LLM is unavailable or encounters an error (enabling fallback).
+    Invokes dress-analyzer-ai and returns a clean, structured dictionary
+    tailored for Closly ClosetItem creation without redundant debug data.
     """
+    if not AI_TEAM_MODULE_AVAILABLE or ai_service is None:
+        logger.info("dress-analyzer-ai module is not available. Skipping AI team engine.")
+        return None
+
     api_key = getattr(settings, 'LLM_API_KEY', '') or ''
     if not api_key:
-        logger.info("LLM_API_KEY is not set. Skipping OpenAI Vision analysis.")
-        return None
-
-    model = getattr(settings, 'LLM_MODEL', 'gpt-4o') or 'gpt-4o'
-    base_url = getattr(settings, 'LLM_BASE_URL', None)
-    max_mb = getattr(settings, 'MAX_IMAGE_SIZE_MB', 5)
-
-    try:
-        validate_image_size(image_bytes, max_mb=max_mb)
-    except ValueError as val_err:
-        logger.warning(f"AI image validation error: {val_err}")
+        logger.info("LLM_API_KEY is not set. Skipping dress-analyzer-ai analysis.")
         return None
 
     try:
-        from openai import OpenAI
-        client = OpenAI(api_key=api_key, base_url=base_url if base_url else None, timeout=25.0)
+        data = run_direct_dress_analysis(image_bytes, mime_type=mime_type)
 
-        base64_image = encode_image_to_base64(image_bytes)
-
-        response = client.chat.completions.create(
-            model=model,
-            max_tokens=600,
-            temperature=0.2,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:{mime_type};base64,{base64_image}"
-                            }
-                        },
-                        {
-                            "type": "text",
-                            "text": ANALYSIS_PROMPT
-                        }
-                    ]
-                }
-            ]
-        )
-
-        raw_text = response.choices[0].message.content.strip()
-        if raw_text.startswith("```"):
-            raw_text = raw_text.strip("`")
-            if raw_text.startswith("json"):
-                raw_text = raw_text.replace("json", "", 1).strip()
-
-        data = json.loads(raw_text)
+        # Early exit if non-clothing item detected
+        if not data.get("is_garment", True):
+            return {
+                "is_garment": False,
+                "message": data.get("message") or "The uploaded image does not appear to be a clothing item.",
+                "notes": data.get("notes", ""),
+            }
 
         # Parse fields from the AI team's schema
         garment_type = str(data.get("garment_type", "other")).lower().strip()
@@ -166,6 +223,7 @@ def analyze_dress_with_openai(image_bytes: bytes, mime_type: str = 'image/jpeg')
         pattern = str(data.get("pattern", "solid")).lower().strip()
         notes = data.get("notes")
 
+        # Brand from dress-analyzer-ai
         brand_info = data.get("brand", {})
         if isinstance(brand_info, dict):
             brand_name = brand_info.get("name", "N/A").strip()
@@ -176,7 +234,7 @@ def analyze_dress_with_openai(image_bytes: bytes, mime_type: str = 'image/jpeg')
             detected_from_logo = False
             brand_confidence = "assumed"
 
-        # Determine numerical confidence score for Closly UI
+        # Numerical confidence score
         if brand_confidence == "high":
             confidence = 0.96
         elif brand_confidence == "medium":
@@ -184,7 +242,17 @@ def analyze_dress_with_openai(image_bytes: bytes, mime_type: str = 'image/jpeg')
         else:
             confidence = 0.85
 
-        # Format user-friendly name: e.g. "Navy Blue Striped Shirt"
+        # Estimated price from dress-analyzer-ai
+        estimated_price = data.get("estimated_price", {})
+        if isinstance(estimated_price, dict) and estimated_price.get("amount"):
+            try:
+                price = float(estimated_price["amount"])
+            except (ValueError, TypeError):
+                price = CATEGORY_BASE_PRICES.get(category, 35.00)
+        else:
+            price = CATEGORY_BASE_PRICES.get(category, 35.00)
+
+        # Format user-friendly display name: e.g. "Navy Blue Floral Dress"
         pattern_display = pattern.title() if pattern and pattern not in ('solid', 'other') else ''
         name_parts = [primary_color, pattern_display, garment_type.replace('_', ' ').title()]
         name = " ".join([p for p in name_parts if p]).strip()
@@ -201,8 +269,6 @@ def analyze_dress_with_openai(image_bytes: bytes, mime_type: str = 'image/jpeg')
         else:
             style_vibe = "Classic Minimalist"
 
-        price = CATEGORY_BASE_PRICES.get(category, 45.00)
-
         return {
             "name": name,
             "category": category,
@@ -214,28 +280,17 @@ def analyze_dress_with_openai(image_bytes: bytes, mime_type: str = 'image/jpeg')
                 "detected_from_logo": detected_from_logo,
                 "confidence": brand_confidence,
             },
+            "estimated_price": estimated_price,
             "gender": gender,
             "pattern": pattern,
             "notes": notes,
             "price": f"{price:.2f}",
             "style_vibe": style_vibe,
             "confidence": confidence,
+            "is_garment": True,
             "is_full_outfit": False,
-            "detected_items": [{
-                "slot": category,
-                "category": category,
-                "name": name,
-                "color": primary_color,
-                "brand": brand_name,
-                "price": f"{price:.2f}",
-                "style_vibe": style_vibe,
-                "confidence": confidence,
-            }],
-            "total_pieces_detected": 1,
-            "ai_engine": f"OpenAI GPT-4o Vision ({model})",
-            "ai_raw_analysis": data,
         }
 
     except Exception as exc:
-        logger.warning(f"OpenAI dress analyzer error: {exc}. Will fallback to heuristic engine.", exc_info=True)
+        logger.warning(f"dress-analyzer-ai execution error: {exc}. Falling back to internal engine.", exc_info=True)
         return None
