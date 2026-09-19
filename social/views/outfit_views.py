@@ -32,23 +32,104 @@ class StandardSocialPagination(PageNumberPagination):
         }, status=status.HTTP_200_OK)
 
 
+KNOWN_STYLES = ['minimalist', 'streetwear', 'casual', 'chic', 'classic', 'formal', 'bohemian', 'vintage', 'sporty', 'adjacent']
+KNOWN_WEATHER = ['warm', 'cool', 'chilly', 'cold', 'hot', 'rainy', 'mild', 'sunny']
+
+
+def infer_style_category(user, caption, explicit_style=None):
+    """
+    Determines the style category for an outfit:
+    1. Explicitly supplied by user/client
+    2. Inferred from hashtags/keywords in caption
+    3. Inferred from user's Style DNA onboarding preferences
+    4. Fallback default: 'casual'
+    """
+    if explicit_style and str(explicit_style).strip():
+        return str(explicit_style).strip().lower()
+
+    if caption:
+        caption_lower = caption.lower()
+        for style in KNOWN_STYLES:
+            if style in caption_lower:
+                return style
+
+    if hasattr(user, 'preferences') and user.preferences and user.preferences.style_match:
+        styles = user.preferences.style_match
+        if isinstance(styles, list) and len(styles) > 0:
+            return str(styles[0]).lower()
+        elif isinstance(styles, str) and styles.strip():
+            return styles.strip().lower()
+
+    return 'casual'
+
+
+def infer_weather_tag(user, caption, explicit_weather=None):
+    """
+    Determines the weather tag for an outfit:
+    1. Explicitly supplied by user/client
+    2. Inferred from keywords in caption
+    3. Inferred from live local weather for the user
+    4. Fallback default: 'mild'
+    """
+    if explicit_weather and str(explicit_weather).strip():
+        return str(explicit_weather).strip().lower()
+
+    if caption:
+        caption_lower = caption.lower()
+        for w in KNOWN_WEATHER:
+            if w in caption_lower:
+                return w
+
+    try:
+        from social.your_day import get_live_weather
+        weather = get_live_weather(user=user)
+        vibe = weather.get('weather_vibe')
+        if vibe and str(vibe).lower() in KNOWN_WEATHER:
+            return str(vibe).lower()
+        cond = weather.get('condition')
+        if cond:
+            cond_lower = str(cond).lower()
+            if 'rain' in cond_lower:
+                return 'rainy'
+            elif 'snow' in cond_lower or 'cold' in cond_lower:
+                return 'chilly'
+            elif 'sun' in cond_lower or 'clear' in cond_lower:
+                return 'warm'
+    except Exception:
+        pass
+
+    return 'mild'
+
+
 class TodayOutfitCreateView(generics.CreateAPIView):
     """
     API endpoint for uploading today's outfit.
     
     POST /api/social/outfits/
-    Body: multipart/form-data (image, caption, visibility ['public'|'private'])
+    Body: multipart/form-data (image, caption, visibility ['public'|'private'], style_category, weather_tag, tagged_items)
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
     serializer_class = TodayOutfitSerializer
 
     def perform_create(self, serializer):
-        outfit = serializer.save(user=self.request.user)
+        user = self.request.user
+        caption = serializer.validated_data.get('caption', '')
+        explicit_style = serializer.validated_data.get('style_category')
+        explicit_weather = serializer.validated_data.get('weather_tag')
+
+        style_cat = infer_style_category(user, caption, explicit_style)
+        weather_tag = infer_weather_tag(user, caption, explicit_weather)
+
+        outfit = serializer.save(
+            user=user,
+            style_category=style_cat,
+            weather_tag=weather_tag
+        )
         try:
             from rewards.services import award_points
             award_points(
-                user=self.request.user,
+                user=user,
                 action_type='share_look',
                 description="Shared a today outfit look",
                 reference_id=str(outfit.id)
@@ -168,7 +249,7 @@ class LikedOutfitsListView(generics.ListAPIView):
 
     def get_queryset(self):
         return (
-            TodayOutfit.objects.filter(likes__user=self.request.user)
+            TodayOutfit.objects.filter(likes__user=self.request.user, visibility='public')
             .exclude(user=self.request.user)
             .select_related('user')
             .prefetch_related('tagged_items')
@@ -259,12 +340,14 @@ class OutfitCalendarView(APIView):
         }, status=status.HTTP_200_OK)
 
 
-class OutfitDetailView(generics.RetrieveDestroyAPIView):
+class OutfitDetailView(generics.RetrieveUpdateDestroyAPIView):
     """
-    API endpoint to retrieve single outfit post details or delete own outfit post.
+    API endpoint to retrieve, update (PATCH/PUT), or delete an outfit post.
     
-    GET /api/social/outfits/<id>/
-    DELETE /api/social/outfits/<id>/
+    GET /api/social/outfits/<id>/ (Public post, or private if requested by author)
+    PATCH /api/social/outfits/<id>/ (Author only: partial update)
+    PUT /api/social/outfits/<id>/ (Author only: full update)
+    DELETE /api/social/outfits/<id>/ (Author only: delete)
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
@@ -297,6 +380,29 @@ class OutfitDetailView(generics.RetrieveDestroyAPIView):
             'message': 'Outfit details retrieved successfully.',
             'data': serializer.data
         }, status=status.HTTP_200_OK)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        if instance.user != request.user:
+            return Response({
+                'success': False,
+                'message': 'You can only edit your own outfits.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                'success': True,
+                'message': 'Outfit post updated successfully.',
+                'data': serializer.data
+            }, status=status.HTTP_200_OK)
+        return Response({
+            'success': False,
+            'message': 'Failed to update outfit post.',
+            'errors': serializer.errors
+        }, status=status.HTTP_400_BAD_REQUEST)
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()

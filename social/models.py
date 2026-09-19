@@ -28,6 +28,8 @@ class TodayOutfit(models.Model):
     image = models.ImageField(_('outfit picture'), upload_to=today_outfit_upload_path, max_length=500)
     caption = models.TextField(_('caption'), blank=True, default='')
     visibility = models.CharField(_('visibility'), max_length=10, choices=VISIBILITY_CHOICES, default='public')
+    style_category = models.CharField(_('style category'), max_length=50, blank=True, default='')
+    weather_tag = models.CharField(_('weather tag'), max_length=50, blank=True, default='')
     tagged_items = models.ManyToManyField(ClosetItem, blank=True, related_name='tagged_in_outfits')
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
     updated_at = models.DateTimeField(_('updated at'), auto_now=True)

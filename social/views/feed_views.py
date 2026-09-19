@@ -203,7 +203,11 @@ class ExploreNewsfeedView(generics.ListAPIView):
             return qs.order_by('-_likes_count', '-created_at')
 
         elif category in ('minimalist', 'streetwear', 'classic', 'chic', 'casual', 'formal', 'bohemian', 'sporty'):
-            cat_q = Q(caption__icontains=category) | Q(user__preferences__style_match__icontains=category)
+            cat_q = (
+                Q(style_category__iexact=category) |
+                Q(caption__icontains=category) |
+                Q(user__preferences__style_match__icontains=category)
+            )
             filtered = qs.filter(cat_q)
             if filtered.exists():
                 return filtered.order_by('-_likes_count', '-created_at')

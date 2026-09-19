@@ -29,13 +29,15 @@ class UserSimpleSerializer(serializers.ModelSerializer):
 
 class TodayOutfitSerializer(serializers.ModelSerializer):
     """
-    Serializer for TodayOutfit creation and feed listing
+    Serializer for TodayOutfit creation, feed listing, and updates.
     """
     user = UserSimpleSerializer(read_only=True)
-    image = AbsoluteImageField(max_length=500, required=True)
+    image = AbsoluteImageField(max_length=500, required=False)
     likes_count = serializers.ReadOnlyField()
     is_liked = serializers.SerializerMethodField()
     tagged_items_details = ClosetItemSerializer(source='tagged_items', many=True, read_only=True)
+    style_category = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
+    weather_tag = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
 
     class Meta:
         model = TodayOutfit
@@ -45,6 +47,8 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
             'image',
             'caption',
             'visibility',
+            'style_category',
+            'weather_tag',
             'tagged_items',
             'tagged_items_details',
             'likes_count',
@@ -59,6 +63,52 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
         if value:
             return validate_image_file(value, max_mb=30)
         return value
+
+    def validate(self, attrs):
+        # Image is mandatory on creation, but optional on PATCH/PUT updates
+        if self.instance is None and not attrs.get('image'):
+            raise serializers.ValidationError({'image': 'Outfit image is required.'})
+        return attrs
+
+    def to_internal_value(self, data):
+        # Handle QueryDict / multipart dict copying
+        if hasattr(data, 'copy'):
+            data = data.copy()
+        else:
+            data = dict(data)
+
+        # Support alias clothes_items -> tagged_items
+        if 'clothes_items' in data and 'tagged_items' not in data:
+            data['tagged_items'] = data['clothes_items']
+
+        # Support alias warm_tag -> weather_tag
+        if 'warm_tag' in data and 'weather_tag' not in data:
+            data['weather_tag'] = data['warm_tag']
+
+        # Support is_public boolean alias for visibility ('public'|'private')
+        if 'is_public' in data and 'visibility' not in data:
+            val = data['is_public']
+            if isinstance(val, str):
+                val = val.lower() in ('true', '1', 'yes')
+            data['visibility'] = 'public' if val else 'private'
+
+        # Support stringified JSON or comma-separated tagged_items in multipart form-data
+        if 'tagged_items' in data:
+            items_val = data['tagged_items']
+            if isinstance(items_val, str):
+                items_val = items_val.strip()
+                if items_val.startswith('[') and items_val.endswith(']'):
+                    import json
+                    try:
+                        data['tagged_items'] = json.loads(items_val)
+                    except Exception:
+                        pass
+                elif ',' in items_val:
+                    data['tagged_items'] = [int(x.strip()) for x in items_val.split(',') if x.strip().isdigit()]
+                elif items_val.isdigit():
+                    data['tagged_items'] = [int(items_val)]
+
+        return super().to_internal_value(data)
 
     @extend_schema_field(serializers.BooleanField)
     def get_is_liked(self, obj):

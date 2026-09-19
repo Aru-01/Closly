@@ -349,3 +349,4 @@ LLM_BASE_URL = config('LLM_BASE_URL', default=None)
 LLM_MODEL = config('LLM_MODEL', default='gpt-4o')
 MAX_IMAGE_SIZE_MB = config('MAX_IMAGE_SIZE_MB', default=5, cast=int)
 
+

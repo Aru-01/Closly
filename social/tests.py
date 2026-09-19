@@ -301,6 +301,90 @@ class SocialApiTests(TestCase):
 
         self.assertIn('available_categories', response.data)
 
+    def test_outfit_visibility_private_vs_public(self):
+        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
+        dummy_img = SimpleUploadedFile("priv.gif", tiny_gif, content_type="image/gif")
+        res = self.client.post('/api/social/outfits/', {
+            'image': dummy_img,
+            'caption': 'My private outfit look #secret',
+            'visibility': 'private'
+        }, format='multipart')
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        outfit_id = res.data['data']['id']
+        self.assertEqual(res.data['data']['visibility'], 'private')
 
+        # Author can view private outfit details
+        res_author = self.client.get(f'/api/social/outfits/{outfit_id}/')
+        self.assertEqual(res_author.status_code, status.HTTP_200_OK)
 
+        # Author sees it in my-outfits
+        res_my = self.client.get('/api/social/my-outfits/')
+        self.assertEqual(res_my.status_code, status.HTTP_200_OK)
+        my_ids = [o['id'] for o in res_my.data['data']['results']]
+        self.assertIn(outfit_id, my_ids)
 
+        # Other user (user2) cannot view private outfit (404)
+        client2 = APIClient()
+        client2.force_authenticate(user=self.user2)
+        res_other = client2.get(f'/api/social/outfits/{outfit_id}/')
+        self.assertEqual(res_other.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Other user cannot see in public feed
+        feed_res = client2.get('/api/social/feed/')
+        feed_ids = [o['id'] for o in feed_res.data['data']['results']]
+        self.assertNotIn(outfit_id, feed_ids)
+
+        # Other user viewing user1's profile outfits does NOT see private outfit
+        user1_outfits_res = client2.get(f'/api/social/users/{self.user1.id}/outfits/')
+        user1_outfits_ids = [o['id'] for o in user1_outfits_res.data['data']['results']]
+        self.assertNotIn(outfit_id, user1_outfits_ids)
+
+    def test_outfit_style_and_weather_inference(self):
+        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
+        dummy_img = SimpleUploadedFile("street.gif", tiny_gif, content_type="image/gif")
+        # Do not provide style_category or weather_tag explicitly
+        res = self.client.post('/api/social/outfits/', {
+            'image': dummy_img,
+            'caption': 'Chilly morning streetwear look #ootd',
+            'visibility': 'public'
+        }, format='multipart')
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        data = res.data['data']
+        # style_category inferred from caption 'streetwear'
+        self.assertEqual(data['style_category'], 'streetwear')
+        # weather_tag inferred from caption 'chilly'
+        self.assertEqual(data['weather_tag'], 'chilly')
+
+    def test_outfit_patch_author_only(self):
+        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
+        dummy_img = SimpleUploadedFile("test_patch.gif", tiny_gif, content_type="image/gif")
+        res = self.client.post('/api/social/outfits/', {
+            'image': dummy_img,
+            'caption': 'Initial look',
+            'visibility': 'public'
+        }, format='multipart')
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        outfit_id = res.data['data']['id']
+
+        # Non-author attempting to PATCH public outfit gets 403 Forbidden
+        client2 = APIClient()
+        client2.force_authenticate(user=self.user2)
+        hacked_res = client2.patch(f'/api/social/outfits/{outfit_id}/', {
+            'caption': 'Hacked caption'
+        }, format='json')
+        self.assertEqual(hacked_res.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Author can PATCH caption and visibility without re-uploading image
+        patch_res = self.client.patch(f'/api/social/outfits/{outfit_id}/', {
+            'caption': 'Updated caption',
+            'visibility': 'private'
+        }, format='json')
+        self.assertEqual(patch_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(patch_res.data['data']['caption'], 'Updated caption')
+        self.assertEqual(patch_res.data['data']['visibility'], 'private')
+
+        # Non-author attempting to PATCH private outfit gets 404 (hidden)
+        hacked_priv_res = client2.patch(f'/api/social/outfits/{outfit_id}/', {
+            'caption': 'Hacked private caption'
+        }, format='json')
+        self.assertEqual(hacked_priv_res.status_code, status.HTTP_404_NOT_FOUND)
