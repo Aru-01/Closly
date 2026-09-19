@@ -168,18 +168,30 @@ class MyOutfitsListView(generics.ListAPIView):
         return (
             TodayOutfit.objects.filter(user=self.request.user)
             .select_related('user')
-            .prefetch_related('tagged_items')
+            .prefetch_related('tagged_items', 'images')
             .annotate(_likes_count=Count('likes', distinct=True))
             .order_by('-created_at')
         )
 
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        if self.request.user.is_authenticated:
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            page_ids = [o.id for o in page]
+            context = super().get_serializer_context()
             context['liked_outfit_ids'] = set(
-                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
+                OutfitLike.objects.filter(user=request.user, outfit_id__in=page_ids).values_list('outfit_id', flat=True)
             )
-        return context
+            serializer = self.get_serializer(page, many=True, context=context)
+            return self.get_paginated_response(serializer.data)
+
+        context = super().get_serializer_context()
+        if request.user.is_authenticated:
+            context['liked_outfit_ids'] = set(
+                OutfitLike.objects.filter(user=request.user, outfit_id__in=[o.id for o in queryset]).values_list('outfit_id', flat=True)
+            )
+        serializer = self.get_serializer(queryset, many=True, context=context)
+        return Response(serializer.data)
 
 
 
@@ -252,7 +264,7 @@ class LikedOutfitsListView(generics.ListAPIView):
             TodayOutfit.objects.filter(likes__user=self.request.user, visibility='public')
             .exclude(user=self.request.user)
             .select_related('user')
-            .prefetch_related('tagged_items')
+            .prefetch_related('tagged_items', 'images')
             .annotate(_likes_count=Count('likes', distinct=True))
             .order_by('-likes__created_at')
         )
@@ -303,7 +315,7 @@ class OutfitCalendarView(APIView):
                 created_at__month=month
             )
             .select_related('user')
-            .prefetch_related('tagged_items')
+            .prefetch_related('tagged_items', 'images')
             .annotate(_likes_count=Count('likes', distinct=True))
             .order_by('created_at')
         )
@@ -360,7 +372,7 @@ class OutfitDetailView(generics.RetrieveUpdateDestroyAPIView):
                 Q(visibility='public') | Q(user=user)
             )
             .select_related('user')
-            .prefetch_related('tagged_items')
+            .prefetch_related('tagged_items', 'images')
             .annotate(_likes_count=Count('likes', distinct=True))
         )
 
@@ -429,20 +441,24 @@ class OutfitLikersListView(APIView):
 
     def get(self, request, pk):
         outfit = get_object_or_404(TodayOutfit, pk=pk)
-        likers = User.objects.filter(outfit_likes__outfit=outfit).select_related('reward_profile')
+        likers = list(User.objects.filter(outfit_likes__outfit=outfit).select_related('reward_profile'))
         
+        # Batch following check in a single query (eliminates N+1 query)
+        following_user_ids = set(
+            UserFollow.objects.filter(follower=request.user, following__in=likers).values_list('following_id', flat=True)
+        )
+
         likers_data = []
         for u in likers:
             pic_url = u.profile_picture.url if u.profile_picture else None
             if pic_url and not pic_url.startswith(('http://', 'https://')):
                 pic_url = request.build_absolute_uri(pic_url)
-            is_following = UserFollow.objects.filter(follower=request.user, following=u).exists()
             likers_data.append({
                 'id': str(u.id),
                 'name': u.name,
                 'email': u.email,
                 'profile_picture': pic_url,
-                'is_following': is_following,
+                'is_following': (u.id in following_user_ids),
             })
 
         return Response({

@@ -388,3 +388,50 @@ class SocialApiTests(TestCase):
             'caption': 'Hacked private caption'
         }, format='json')
         self.assertEqual(hacked_priv_res.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_outfit_multiple_images_upload_up_to_4(self):
+        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
+        img1 = SimpleUploadedFile("img1.gif", tiny_gif, content_type="image/gif")
+        img2 = SimpleUploadedFile("img2.gif", tiny_gif, content_type="image/gif")
+        img3 = SimpleUploadedFile("img3.gif", tiny_gif, content_type="image/gif")
+
+        res = self.client.post('/api/social/outfits/', {
+            'images': [img1, img2, img3],
+            'caption': 'Triple look outfit post',
+            'visibility': 'public'
+        }, format='multipart')
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        data = res.data['data']
+        self.assertIsNotNone(data['image'])
+        self.assertEqual(len(data['images']), 3)
+        self.assertEqual(len(data['images_details']), 3)
+        self.assertEqual(data['images_details'][0]['order'], 0)
+        self.assertEqual(data['images_details'][1]['order'], 1)
+        self.assertEqual(data['images_details'][2]['order'], 2)
+
+        # Verify OutfitImage DB records
+        outfit_id = data['id']
+        from social.models import OutfitImage
+        db_images = OutfitImage.objects.filter(outfit_id=outfit_id).order_by('order')
+        self.assertEqual(db_images.count(), 3)
+
+    def test_outfit_exceeds_max_4_images_validation(self):
+        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
+        images = [
+            SimpleUploadedFile(f"img{i}.gif", tiny_gif, content_type="image/gif")
+            for i in range(5)
+        ]
+
+        res = self.client.post('/api/social/outfits/', {
+            'images': images,
+            'caption': 'Too many images post',
+            'visibility': 'public'
+        }, format='multipart')
+
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(res.data['success'])
+        self.assertIn('images', res.data['errors'])
+        error_msg = str(res.data['errors']['images'][0])
+        self.assertIn("Maximum 4 images are allowed", error_msg)
+        self.assertIn("5", error_msg)

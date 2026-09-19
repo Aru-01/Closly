@@ -38,6 +38,11 @@ class TodayOutfit(models.Model):
         verbose_name = _('today outfit')
         verbose_name_plural = _('today outfits')
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['visibility', '-created_at']),
+            models.Index(fields=['user', 'visibility', '-created_at']),
+            models.Index(fields=['style_category', 'visibility', '-created_at']),
+        ]
 
     def __str__(self):
         return f"{self.user.email}'s outfit on {self.created_at.strftime('%Y-%m-%d')}"
@@ -51,6 +56,33 @@ class TodayOutfit(models.Model):
         if 'likes' in getattr(self, '_prefetched_objects_cache', {}):
             return len(self.likes.all())
         return self.likes.count()
+
+
+class OutfitImage(models.Model):
+    """
+    Multiple images support for TodayOutfit (up to 4 images per outfit).
+    Preserves carousel order and full high-resolution image uploads.
+    """
+    outfit = models.ForeignKey(
+        TodayOutfit,
+        on_delete=models.CASCADE,
+        related_name='images',
+        verbose_name=_('outfit')
+    )
+    image = models.ImageField(_('outfit picture'), upload_to=today_outfit_upload_path, max_length=500)
+    order = models.PositiveSmallIntegerField(_('display order'), default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _('outfit image')
+        verbose_name_plural = _('outfit images')
+        ordering = ['order', 'created_at']
+        indexes = [
+            models.Index(fields=['outfit', 'order']),
+        ]
+
+    def __str__(self):
+        return f"Image {self.id} for outfit {self.outfit_id} (order={self.order})"
 
 
 class OutfitLike(models.Model):

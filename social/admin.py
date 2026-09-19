@@ -1,5 +1,10 @@
 from django.contrib import admin
-from .models import TodayOutfit, OutfitLike, UserFollow, DirectMessage
+from .models import TodayOutfit, OutfitImage, OutfitLike, UserFollow, DirectMessage
+
+class OutfitImageInline(admin.TabularInline):
+    model = OutfitImage
+    extra = 1
+    max_num = 4
 
 @admin.register(TodayOutfit)
 class TodayOutfitAdmin(admin.ModelAdmin):
@@ -7,6 +12,7 @@ class TodayOutfitAdmin(admin.ModelAdmin):
     list_filter = ('visibility', 'created_at')
     search_fields = ('user__email', 'caption')
     readonly_fields = ('created_at', 'updated_at')
+    inlines = [OutfitImageInline]
 
 @admin.register(OutfitLike)
 class OutfitLikeAdmin(admin.ModelAdmin):

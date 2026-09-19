@@ -16,6 +16,7 @@ from social.serializers import (
 )
 
 User = get_user_model()
+from users.validators import validate_image_file
 from .outfit_views import StandardSocialPagination
 from .story_views import get_active_stories_for_user
 
@@ -97,6 +98,14 @@ class DirectMessageSendView(APIView):
             message_type = 'story_reply'
 
         if image_file:
+            try:
+                validate_image_file(image_file, max_mb=30)
+            except ValidationError as e:
+                return Response({
+                    'success': False,
+                    'message': 'Invalid image attachment.',
+                    'errors': {'image': list(e.messages) if hasattr(e, 'messages') else [str(e)]}
+                }, status=status.HTTP_400_BAD_REQUEST)
             message_type = 'image'
 
         if not content and not image_file and not shared_product and not shared_outfit and not story_ref:

@@ -29,7 +29,7 @@ class PublicNewsfeedView(generics.ListAPIView):
         return (
             TodayOutfit.objects.filter(visibility='public')
             .select_related('user')
-            .prefetch_related('tagged_items')
+            .prefetch_related('tagged_items', 'images')
             .annotate(_likes_count=Count('likes', distinct=True))
             .order_by('-created_at')
         )
@@ -76,7 +76,7 @@ class FollowingNewsfeedView(generics.ListAPIView):
         return (
             TodayOutfit.objects.filter(user_id__in=following_subquery, visibility='public')
             .select_related('user')
-            .prefetch_related('tagged_items')
+            .prefetch_related('tagged_items', 'images')
             .annotate(_likes_count=Count('likes', distinct=True))
             .order_by('-created_at')
         )
@@ -187,7 +187,7 @@ class ExploreNewsfeedView(generics.ListAPIView):
             .exclude(user_id__in=following_subquery)
             .exclude(user=user)
             .select_related('user')
-            .prefetch_related('tagged_items')
+            .prefetch_related('tagged_items', 'images')
             .annotate(_likes_count=Count('likes', distinct=True))
         )
 

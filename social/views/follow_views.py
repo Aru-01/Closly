@@ -288,17 +288,29 @@ class UserOutfitsListView(generics.ListAPIView):
 
         return (
             qs.select_related('user')
-            .prefetch_related('tagged_items')
+            .prefetch_related('tagged_items', 'images')
             .annotate(_likes_count=Count('likes', distinct=True))
             .order_by('-created_at')
         )
 
-    def get_serializer_context(self):
-        context = super().get_serializer_context()
-        if self.request.user.is_authenticated:
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            page_ids = [o.id for o in page]
+            context = super().get_serializer_context()
             context['liked_outfit_ids'] = set(
-                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
+                OutfitLike.objects.filter(user=request.user, outfit_id__in=page_ids).values_list('outfit_id', flat=True)
             )
-        return context
+            serializer = self.get_serializer(page, many=True, context=context)
+            return self.get_paginated_response(serializer.data)
+
+        context = super().get_serializer_context()
+        if request.user.is_authenticated:
+            context['liked_outfit_ids'] = set(
+                OutfitLike.objects.filter(user=request.user, outfit_id__in=[o.id for o in queryset]).values_list('outfit_id', flat=True)
+            )
+        serializer = self.get_serializer(queryset, many=True, context=context)
+        return Response(serializer.data)
 
 
