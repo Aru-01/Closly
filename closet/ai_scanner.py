@@ -547,6 +547,8 @@ def scan_clothing_image(image_file, request=None):
     try:
         from .openai_analyzer import analyze_dress_with_openai
         garment_data = analyze_dress_with_openai(image_bytes, mime_type=mime)
+    except TimeoutError:
+        raise
     except Exception as e:
         logger.warning(f"Error invoking OpenAI dress analyzer: {e}")
 

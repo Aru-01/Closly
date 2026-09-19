@@ -213,6 +213,43 @@ class ClosetApiTests(TestCase):
         self.assertTrue(url.startswith('https://'))
         self.assertIn('/media/closet_items/test.jpg', url)
 
+    def test_ai_scan_queue_timeout_returns_503(self):
+        from unittest.mock import patch
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        uploaded_file = SimpleUploadedFile("overload.png", b"fake", content_type="image/png")
+        with patch('closet.views.scan_clothing_image', side_effect=TimeoutError("AI scanning service is currently experiencing very high demand.")):
+            url = '/api/closet/ai-scan/'
+            response = self.client.post(url, {'image': uploaded_file}, format='multipart')
+            self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
+            self.assertFalse(response.data['success'])
+            self.assertEqual(response.headers.get('Retry-After'), '5')
+            self.assertIn('very high demand', response.data['message'])
+
+    def test_ai_scan_sha256_cache_hit(self):
+        from unittest.mock import patch
+        from django.core.cache import cache
+        from closet.openai_analyzer import run_direct_dress_analysis
+        import hashlib
+
+        dummy_bytes = b"unique_test_garment_bytes_for_cache"
+        img_hash = hashlib.sha256(dummy_bytes).hexdigest()
+        cache_key = f"closly_ai_scan_{img_hash}"
+
+        cached_mock = {
+            "name": "Cached Red Silk Dress",
+            "category": "dresses_outerwear",
+            "primary_color": "Red",
+            "is_garment": True
+        }
+        cache.set(cache_key, cached_mock, timeout=60)
+
+        # run_direct_dress_analysis should return cached data immediately without calling LLM
+        with patch('closet.openai_analyzer.ai_service.call_llm_for_analysis') as mock_llm:
+            res = run_direct_dress_analysis(dummy_bytes)
+            self.assertEqual(res['name'], 'Cached Red Silk Dress')
+            mock_llm.assert_not_called()
+
 
 
 

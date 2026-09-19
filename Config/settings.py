@@ -352,4 +352,9 @@ APIFY_API_TOKEN = config('APIFY_API_TOKEN', default='')
 APIFY_GOOGLE_ACTOR = config('APIFY_GOOGLE_ACTOR', default='apify/google-search-scraper')
 DRESS_ANALYZER_DIR = BASE_DIR / 'dress-analyzer-ai'
 
+# AI Scan Concurrency Gate & Performance Caching
+AI_SCAN_CONCURRENCY_LIMIT = config('AI_SCAN_CONCURRENCY_LIMIT', default=15, cast=int)
+AI_SCAN_QUEUE_TIMEOUT = config('AI_SCAN_QUEUE_TIMEOUT', default=35, cast=int)
+AI_SCAN_CACHE_TTL = config('AI_SCAN_CACHE_TTL', default=600, cast=int)
+
 

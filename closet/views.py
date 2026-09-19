@@ -1,3 +1,4 @@
+import logging
 from rest_framework import generics, status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -7,6 +8,8 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
+
+logger = logging.getLogger(__name__)
 
 from .models import ClosetItem
 from .serializers import ClosetItemSerializer
@@ -406,9 +409,16 @@ class ClosetAIScanView(APIView):
                 'errors': {'image': [str(e)]}
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Run AI Scanner
+        # Run AI Scanner (protected by concurrency semaphore and cache)
         try:
             scanned_data = scan_clothing_image(image_file, request=request)
+        except TimeoutError as e:
+            logger.error(f"AI Scan 503 TimeoutError under high traffic: {e}")
+            return Response({
+                'success': False,
+                'message': str(e),
+                'errors': {'server': ['AI scanning service is currently experiencing very high demand. Please try again in a few moments.']}
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE, headers={'Retry-After': '5'})
         except Exception as e:
             return Response({
                 'success': False,
