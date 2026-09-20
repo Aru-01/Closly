@@ -30,8 +30,17 @@ class Command(BaseCommand):
             default=None,
             help='Limit number of products to import (useful for testing)',
         )
+        parser.add_argument(
+            '--purge-stale',
+            action='store_true',
+            help='Permanently delete products that have been inactive (is_active=False) for >30 days',
+        )
 
     def handle(self, *args, **options):
+        if options.get('purge_stale'):
+            self._purge_stale_inactive_products()
+            return
+
         self.stdout.write(self.style.WARNING('Starting Awin affiliate products sync...'))
 
         if options['mock']:
@@ -134,17 +143,48 @@ class Command(BaseCommand):
         skip_count = 0
         error_count = 0
 
-        # Process in chunks of 500 rows per DB transaction for performance
-        BATCH_SIZE = 500
+        BATCH_SIZE = 1000
         batch = []
 
         def flush_batch(rows):
-            with transaction.atomic():
-                for defaults in rows:
-                    AffiliateProduct.objects.update_or_create(
-                        aw_product_id=defaults.pop('aw_product_id'),
-                        defaults=defaults,
-                    )
+            if not rows:
+                return
+            # Deduplicate by aw_product_id within batch to prevent PostgreSQL CardinalityViolation
+            deduped = {}
+            for r in rows:
+                deduped[r['aw_product_id']] = r
+
+            instances = [
+                AffiliateProduct(
+                    aw_product_id=r['aw_product_id'],
+                    source=AffiliateProduct.SOURCE_AWIN,
+                    name=r['name'],
+                    brand=r['brand'],
+                    description=r['description'],
+                    price=r['price'],
+                    rrp_price=r['rrp_price'],
+                    currency=r['currency'],
+                    image_url=r['image_url'],
+                    aw_deep_link=r['aw_deep_link'],
+                    merchant_deep_link=r['merchant_deep_link'],
+                    category=r['category'],
+                    advertiser_name=r['advertiser_name'],
+                    colour=r['colour'],
+                    is_active=r['is_active'],
+                )
+                for r in deduped.values()
+            ]
+            AffiliateProduct.objects.bulk_create(
+                instances,
+                update_conflicts=True,
+                unique_fields=['aw_product_id'],
+                update_fields=[
+                    'source', 'name', 'brand', 'description', 'price',
+                    'rrp_price', 'currency', 'image_url', 'aw_deep_link',
+                    'merchant_deep_link', 'category', 'advertiser_name',
+                    'colour', 'is_active', 'updated_at',
+                ],
+            )
 
         for row in reader:
             if limit and success_count >= limit:
@@ -225,19 +265,36 @@ class Command(BaseCommand):
         # Deactivate products NOT seen in this sync using the timestamp.
         # This avoids the SQLite 999-variable limit entirely.
         deactivated = 0
-        if not limit:  # Only deactivate on full sync, not limited test runs
+        purged = 0
+        if not limit:  # Only deactivate & purge on full sync, not limited test runs
             deactivated = AffiliateProduct.objects.filter(
+                source=AffiliateProduct.SOURCE_AWIN,
                 is_active=True,
                 updated_at__lt=sync_time,
             ).update(is_active=False)
 
+            # Auto-purge inactive products older than 30 days
+            purged = self._purge_stale_inactive_products(source=AffiliateProduct.SOURCE_AWIN)
+
         self.stdout.write(self.style.SUCCESS(
             f'\nSync complete!\n'
-            f'  Imported/Updated : {success_count}\n'
+            f'  Imported/Updated  : {success_count}\n'
             f'  Skipped (bad data): {skip_count}\n'
-            f'  Errors            : {error_count}\n'
-            f'  Deactivated (gone): {deactivated}'
+            f'  Errors             : {error_count}\n'
+            f'  Deactivated (gone) : {deactivated}\n'
+            f'  Purged (>30d dead) : {purged}'
         ))
+
+    def _purge_stale_inactive_products(self, source=None):
+        from django.utils import timezone
+        from datetime import timedelta
+        cutoff = timezone.now() - timedelta(days=30)
+        qs = AffiliateProduct.objects.filter(is_active=False, updated_at__lt=cutoff)
+        if source:
+            qs = qs.filter(source=source)
+        count, _ = qs.delete()
+        self.stdout.write(self.style.NOTICE(f'Purged {count} inactive products older than 30 days.'))
+        return count
 
     # ------------------------------------------------------------------
     # Mock data generator for local testing without Awin
@@ -271,35 +328,44 @@ class Command(BaseCommand):
             'Clothing & Accessories > Bags & Accessories': 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=800&fit=crop',
         }
 
-        count = 0
-        with transaction.atomic():
-            for i in range(1, 101):
-                category = random.choice(categories)
-                brand = random.choice(brands)
-                item = random.choice(items[category])
-                name = f'{brand} {item}'
-                price = decimal.Decimal(f'{random.uniform(19.99, 249.99):.2f}')
-                rrp   = price + decimal.Decimal(f'{random.uniform(5, 50):.2f}')
-                brand_slug = brand.lower().replace("'", '').replace(' ', '')
+        mock_instances = []
+        for i in range(1, 101):
+            category = random.choice(categories)
+            brand = random.choice(brands)
+            item = random.choice(items[category])
+            name = f'{brand} {item}'
+            price = decimal.Decimal(f'{random.uniform(19.99, 249.99):.2f}')
+            rrp   = price + decimal.Decimal(f'{random.uniform(5, 50):.2f}')
+            brand_slug = brand.lower().replace("'", '').replace(' ', '')
 
-                AffiliateProduct.objects.update_or_create(
-                    aw_product_id=f'mock_{i:06d}',
-                    defaults={
-                        'name':            name,
-                        'brand':           brand,
-                        'description':     f'Discover the {name}. A perfect blend of style and comfort, ideal for any occasion.',
-                        'price':           price,
-                        'rrp_price':       rrp,
-                        'currency':        'GBP',
-                        'image_url':       images[category],
-                        'aw_deep_link':    f'https://www.awin1.com/cread.php?awinmid=99999&awinaffid=2612792&ued=https://www.{brand_slug}.com/product/{i}',
-                        'merchant_deep_link': f'https://www.{brand_slug}.com/product/{i}',
-                        'category':        category,
-                        'advertiser_name': f'{brand} Official',
-                        'colour':          random.choice(['Black', 'White', 'Navy', 'Beige', 'Red', 'Green']),
-                        'is_active':       True,
-                    }
-                )
-                count += 1
+            mock_instances.append(AffiliateProduct(
+                aw_product_id=f'mock_{i:06d}',
+                source=AffiliateProduct.SOURCE_AWIN,
+                name=name,
+                brand=brand,
+                description=f'Discover the {name}. A perfect blend of style and comfort, ideal for any occasion.',
+                price=price,
+                rrp_price=rrp,
+                currency='GBP',
+                image_url=images[category],
+                aw_deep_link=f'https://www.awin1.com/cread.php?awinmid=99999&awinaffid=2612792&ued=https://www.{brand_slug}.com/product/{i}',
+                merchant_deep_link=f'https://www.{brand_slug}.com/product/{i}',
+                category=category,
+                advertiser_name=f'{brand} Official',
+                colour=random.choice(['Black', 'White', 'Navy', 'Beige', 'Red', 'Green']),
+                is_active=True,
+            ))
+
+        AffiliateProduct.objects.bulk_create(
+            mock_instances,
+            update_conflicts=True,
+            unique_fields=['aw_product_id'],
+            update_fields=[
+                'source', 'name', 'brand', 'description', 'price', 'rrp_price',
+                'currency', 'image_url', 'aw_deep_link', 'merchant_deep_link',
+                'category', 'advertiser_name', 'colour', 'is_active', 'updated_at',
+            ],
+        )
+        count = len(mock_instances)
 
         self.stdout.write(self.style.SUCCESS(f'Generated {count} mock products successfully.'))

@@ -123,7 +123,7 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
         # Strict validation: Maximum 4 images per outfit post
         if count > 4:
             raise serializers.ValidationError({
-                'images': f"Maximum 4 images are allowed per outfit. You provided {count} images."
+                'images': f"Maximum 4 images are allowed per outfit post. You provided {count} images."
             })
 
         # Mandatory image check on creation

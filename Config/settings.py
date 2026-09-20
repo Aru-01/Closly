@@ -145,13 +145,24 @@ DB_ENGINE = config('DB_ENGINE', default='django.db.backends.sqlite3')
 DB_NAME = config('DB_NAME', default=None)
 
 if 'postgresql' in DB_ENGINE and DB_NAME:
+    db_host = config('DB_HOST', default='localhost')
+    if os.path.exists('/.dockerenv'):
+        import socket
+        if db_host in ('localhost', '127.0.0.1'):
+            db_host = 'host.docker.internal'
+        elif db_host == 'db':
+            try:
+                socket.gethostbyname('db')
+            except Exception:
+                db_host = 'host.docker.internal'
+
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
             'NAME': DB_NAME,
             'USER': config('DB_USER', default='postgres'),
             'PASSWORD': config('DB_PASSWORD', default=''),
-            'HOST': config('DB_HOST', default='localhost'),
+            'HOST': db_host,
             'PORT': config('DB_PORT', default='5432'),
         }
     }
@@ -314,11 +325,11 @@ CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS = True
 CELERY_BEAT_SCHEDULE = {
     'expire-24h-stories-hourly': {
         'task': 'social.tasks.expire_old_stories_task',
-        'schedule': 3600.0,  # runs every hour
+        'schedule': 3600.0,  # runs every hour to clean up 24-hour stories
     },
-    'system-heartbeat-self-ping-every-5-min': {
-        'task': 'social.tasks.heartbeat_self_ping_task',
-        'schedule': 300.0,  # runs every 5 minutes (300s) to keep DB/Redis/Web active
+    'sync-awin-feeds-daily': {
+        'task': 'affiliate.tasks.sync_awin_feeds_task',
+        'schedule': 86400.0,  # runs once every 24 hours to sync new affiliate inventory
     },
 }
 

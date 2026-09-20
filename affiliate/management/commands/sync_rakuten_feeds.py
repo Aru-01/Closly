@@ -52,6 +52,17 @@ class Command(BaseCommand):
                 break
             self._sync_advertiser(adv['mid'], adv['brand'])
 
+        # Auto-purge inactive Rakuten products older than 30 days
+        from datetime import timedelta
+        cutoff = self._now() - timedelta(days=30)
+        purged, _ = AffiliateProduct.objects.filter(
+            source=AffiliateProduct.SOURCE_RAKUTEN,
+            is_active=False,
+            updated_at__lt=cutoff
+        ).delete()
+        if purged:
+            self.stdout.write(self.style.NOTICE(f'Purged {purged} inactive Rakuten products older than 30 days.'))
+
         self.stdout.write(self.style.SUCCESS(
             f'\nRakuten sync complete. Total imported/updated: {self.total}'
         ))
@@ -110,93 +121,82 @@ class Command(BaseCommand):
 
     # ------------------------------------------------------------------ #
     def _save_products(self, items, sync_time):
-        saved = 0
-        with transaction.atomic():
-            for item in items:
+        deduped = {}
+        for item in items:
+            try:
+                def t(tag):
+                    return (item.findtext(tag) or '').strip()
+
+                mid          = t('mid')
+                linkid       = t('linkid')
+                product_name = t('productname')
+                link_url     = t('linkurl')      # affiliate tracking URL
+
+                if not product_name or not link_url:
+                    continue
+
+                # Unique ID: rakuten_<mid>_<linkid>
+                network_id = f'rakuten_{mid}_{linkid}'
+
+                sale_str  = t('saleprice') or '0'
+                base_str  = t('price') or '0'
                 try:
-                    def t(tag):
-                        return (item.findtext(tag) or '').strip()
+                    sale_price = decimal.Decimal(sale_str.replace(',', '.'))
+                except decimal.InvalidOperation:
+                    sale_price = decimal.Decimal('0.00')
+                try:
+                    base_price = decimal.Decimal(base_str.replace(',', '.'))
+                except decimal.InvalidOperation:
+                    base_price = decimal.Decimal('0.00')
 
-                    mid          = t('mid')
-                    linkid       = t('linkid')
-                    product_name = t('productname')
-                    link_url     = t('linkurl')      # affiliate tracking URL
+                if sale_price > 0:
+                    price = sale_price
+                    rrp   = base_price if base_price > sale_price else None
+                else:
+                    price = base_price
+                    rrp   = None
 
-                    if not product_name or not link_url:
-                        continue
+                currency = t('currency') or 'GBP'
+                image_url = t('imageurl') or t('largeimage') or t('smallimage') or ''
+                brand = t('merchantname') or ''
+                description = t('description') or ''
+                category = t('categoryname') or ''
+                merchant_deep_link = t('clickurl') or t('buyurl') or link_url
+                colour = t('color') or t('colour') or ''
 
-                    # Unique ID: rakuten_<mid>_<linkid>
-                    network_id = f'rakuten_{mid}_{linkid}'
+                deduped[network_id] = AffiliateProduct(
+                    aw_product_id=network_id,
+                    source=AffiliateProduct.SOURCE_RAKUTEN,
+                    name=product_name,
+                    brand=brand,
+                    description=description,
+                    price=price,
+                    rrp_price=rrp if rrp and rrp != price else None,
+                    currency=currency,
+                    image_url=image_url,
+                    aw_deep_link=link_url,
+                    merchant_deep_link=merchant_deep_link,
+                    category=category,
+                    advertiser_name=brand,
+                    colour=colour,
+                    is_active=True,
+                )
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f'  Row error: {e}'))
 
-                    # Price — saleprice=0 means no sale, use price as the actual price.
-                    # If saleprice > 0 it's the discounted price; price becomes RRP.
-                    sale_str  = t('saleprice') or '0'
-                    base_str  = t('price') or '0'
-                    try:
-                        sale_price = decimal.Decimal(sale_str.replace(',', '.'))
-                    except decimal.InvalidOperation:
-                        sale_price = decimal.Decimal('0.00')
-                    try:
-                        base_price = decimal.Decimal(base_str.replace(',', '.'))
-                    except decimal.InvalidOperation:
-                        base_price = decimal.Decimal('0.00')
-
-                    if sale_price > 0:
-                        # Product is on sale — sale_price is the actual price, base_price is RRP
-                        price = sale_price
-                        rrp   = base_price if base_price > sale_price else None
-                    else:
-                        # No sale — base_price is the actual price
-                        price = base_price
-                        rrp   = None
-
-                    # Currency
-                    currency = t('currency') or 'GBP'
-
-                    # Images — Rakuten uses <imageurl> tag
-                    image_url = t('imageurl') or t('largeimage') or t('smallimage') or ''
-
-                    # Merchant / brand
-                    brand = t('merchantname') or ''
-
-                    # Description
-                    description = t('description') or ''
-
-                    # Category
-                    category = t('categoryname') or ''
-
-                    # Direct buy URL
-                    merchant_deep_link = t('clickurl') or t('buyurl') or link_url
-
-                    # Colour (sometimes in keywords or description)
-                    colour = t('color') or t('colour') or ''
-
-                    AffiliateProduct.objects.update_or_create(
-                        aw_product_id=network_id,
-                        defaults={
-                            'source':             AffiliateProduct.SOURCE_RAKUTEN,
-                            'name':               product_name,
-                            'brand':              brand,
-                            'description':        description,
-                            'price':              price,
-                            'rrp_price':          rrp if rrp and rrp != price else None,
-                            'currency':           currency,
-                            'image_url':          image_url,
-                            'aw_deep_link':       link_url,
-                            'merchant_deep_link': merchant_deep_link,
-                            'category':           category,
-                            'advertiser_name':    brand,
-                            'colour':             colour,
-                            'is_active':          True,
-                            'updated_at':         sync_time,
-                        }
-                    )
-                    saved += 1
-
-                except Exception as e:
-                    self.stdout.write(self.style.ERROR(f'  Row error: {e}'))
-
-        return saved
+        if deduped:
+            AffiliateProduct.objects.bulk_create(
+                list(deduped.values()),
+                update_conflicts=True,
+                unique_fields=['aw_product_id'],
+                update_fields=[
+                    'source', 'name', 'brand', 'description', 'price',
+                    'rrp_price', 'currency', 'image_url', 'aw_deep_link',
+                    'merchant_deep_link', 'category', 'advertiser_name',
+                    'colour', 'is_active', 'updated_at',
+                ],
+            )
+        return len(deduped)
 
     # ------------------------------------------------------------------ #
     # HTTP helper with auto token refresh
