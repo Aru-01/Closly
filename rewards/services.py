@@ -101,6 +101,9 @@ def process_expired_points(user):
         points__gt=0
     )
 
+    if not expired_txs.exists():
+        return 0
+
     total_expired = 0
     with transaction.atomic():
         for tx in expired_txs:

@@ -1,8 +1,9 @@
 from django.contrib import admin
+from unfold.admin import ModelAdmin
 from .models import AffiliateProduct
 
 @admin.register(AffiliateProduct)
-class AffiliateProductAdmin(admin.ModelAdmin):
+class AffiliateProductAdmin(ModelAdmin):
     list_display = ('name', 'brand', 'price', 'currency', 'category', 'is_active', 'updated_at')
     list_filter = ('is_active', 'brand', 'currency', 'category')
     search_fields = ('name', 'brand', 'aw_product_id', 'description')

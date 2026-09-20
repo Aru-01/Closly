@@ -1,6 +1,16 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.utils.translation import gettext_lazy as _
+from django.contrib import messages
+from django.utils.html import format_html
+from django.urls import path, reverse
+from django.shortcuts import redirect
+from django.db.models import Sum
+from unfold.admin import ModelAdmin
+from unfold.decorators import display
+
+from closet.models import ClosetItem
+from social.models import TodayOutfit, Story
 from .models import (
     User,
     UserLoginHistory,
@@ -8,9 +18,11 @@ from .models import (
     ProfileDataDeletionRequest,
     UserPreference,
 )
+from .utils import purge_and_anonymize_user
+
 
 @admin.register(UserPreference)
-class UserPreferenceAdmin(admin.ModelAdmin):
+class UserPreferenceAdmin(ModelAdmin):
     list_display = [
         'user',
         'body_type',
@@ -37,19 +49,226 @@ class UserPreferenceAdmin(admin.ModelAdmin):
     ]
     ordering = ['-created_at']
 
+
 @admin.register(ProfileDataDeletionRequest)
-class ProfileDataDeletionRequestAdmin(admin.ModelAdmin):
+class ProfileDataDeletionRequestAdmin(ModelAdmin):
     list_display = ('email', 'status', 'created_at')
     list_filter = ('status',)
     search_fields = ('email',)
     readonly_fields = ('email', 'user', 'created_at', 'updated_at', 'verification_token')
 
+
 @admin.register(AccountDeletionRequest)
-class AccountDeletionRequestAdmin(admin.ModelAdmin):
-    list_display = ('name', 'email', 'status', 'created_at')
-    list_filter = ('status',)
-    search_fields = ('name', 'email')
-    readonly_fields = ('name', 'email', 'user', 'created_at', 'updated_at', 'verification_token')
+class AccountDeletionRequestAdmin(ModelAdmin):
+    change_form_template = "admin/users/accountdeletionrequest/change_form.html"
+    list_display = (
+        'id',
+        'user_display',
+        'reason_display',
+        'wardrobe_items_count',
+        'status_badge',
+        'created_at',
+        'action_buttons',
+    )
+    list_filter = ('status', 'created_at')
+    search_fields = ('name', 'email', 'reason', 'details')
+    readonly_fields = ('user', 'created_at', 'updated_at', 'verification_token')
+    actions = ['accept_and_purge_accounts', 'reject_deletion_requests']
+
+    fieldsets = (
+        ("Request Status & Feedback", {
+            "fields": ("status", "reason", "details", "name", "email", "user"),
+        }),
+        ("Audit & Token Security", {
+            "fields": ("verification_token", "created_at", "updated_at"),
+            "classes": ("collapse",),
+        }),
+    )
+
+    @display(description="User / Applicant", header=True)
+    def user_display(self, obj):
+        return [obj.name or "User", obj.email]
+
+    @display(description="Reason")
+    def reason_display(self, obj):
+        reason_text = obj.reason or "Account deletion requested"
+        if len(reason_text) > 35:
+            return reason_text[:32] + "..."
+        return reason_text
+
+    @display(description="Wardrobe Pieces")
+    def wardrobe_items_count(self, obj):
+        if not obj.user:
+            return "0 pieces"
+        count = ClosetItem.objects.filter(user=obj.user).count()
+        return f"{count} pieces"
+
+    @display(
+        description="Status",
+        label={
+            "pending": "warning",
+            "completed": "success",
+            "rejected": "danger",
+        }
+    )
+    def status_badge(self, obj):
+        return obj.status
+
+    def action_buttons(self, obj):
+        if obj.status == 'pending':
+            url = reverse('admin:accept_account_deletion', args=[obj.pk])
+            return format_html(
+                '<a class="button" style="background:#dc2626;color:#ffffff;font-weight:600;padding:5px 12px;border-radius:6px;text-decoration:none;font-size:12px;" href="{}" onclick="return confirm(\'Permanently purge all data for {}?\');">Purge & Erase</a>',
+                url, obj.email
+            )
+        elif obj.status == 'completed':
+            return format_html('<span style="color:#16a34a;font-weight:600;font-size:12px;">✓ Completed</span>')
+        return format_html('<span style="color:#64748b;font-size:12px;">{}</span>', obj.get_status_display())
+    action_buttons.short_description = 'Actions'
+
+    @admin.action(description="Accept & Purge Selected User Accounts")
+    def accept_and_purge_accounts(self, request, queryset):
+        purged_count = 0
+        for req in queryset:
+            if req.status != 'completed' and req.user:
+                purge_and_anonymize_user(req.user)
+                req.status = 'completed'
+                req.save()
+                purged_count += 1
+            elif req.status != 'completed':
+                req.status = 'completed'
+                req.save()
+        self.message_user(
+            request,
+            f"Successfully processed {purged_count} account deletion(s). Confirmation emails dispatched and private data wiped.",
+            messages.SUCCESS
+        )
+
+    @admin.action(description="Reject Selected Deletion Requests")
+    def reject_deletion_requests(self, request, queryset):
+        count = queryset.filter(status='pending').update(status='rejected')
+        self.message_user(
+            request,
+            f"Marked {count} deletion request(s) as rejected.",
+            messages.WARNING
+        )
+
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path(
+                '<int:req_id>/accept-purge/',
+                self.admin_site.admin_view(self.process_single_approval),
+                name='accept_account_deletion'
+            ),
+        ]
+        return custom_urls + urls
+
+    def process_single_approval(self, request, req_id):
+        req = self.get_object(request, str(req_id))
+        if req:
+            if req.user:
+                purge_and_anonymize_user(req.user)
+            req.status = 'completed'
+            req.save()
+            self.message_user(
+                request,
+                f"Account deletion for {req.email} accepted. Data export email sent and private data wiped.",
+                messages.SUCCESS
+            )
+        return redirect('admin:users_accountdeletionrequest_changelist')
+
+    def changeform_view(self, request, object_id=None, form_url='', extra_context=None):
+        """
+        Inject live nested dossier data about the target user account,
+        their digital wardrobe footprint, and social activity to present to admin.
+        """
+        extra_context = extra_context or {}
+        if object_id:
+            obj = self.get_object(request, object_id)
+            if obj:
+                u = obj.user or User.objects.filter(email=obj.email).first()
+                if u:
+                    # If obj.user wasn't linked yet, link it now
+                    if not obj.user:
+                        obj.user = u
+                        obj.save(update_fields=['user'])
+
+                    items_qs = ClosetItem.objects.filter(user=u)
+                    total_items = items_qs.count()
+                    total_val = items_qs.aggregate(v=Sum('price'))['v'] or 0.0
+
+                    tops = items_qs.filter(category='top').count()
+                    bottoms = items_qs.filter(category='bottom').count()
+                    outerwear = items_qs.filter(category='dresses_outerwear').count()
+                    shoes = items_qs.filter(category='shoes').count()
+                    accessories = items_qs.filter(category__in=['accessories', 'other']).count()
+
+                    preview_items = list(items_qs[:10])
+
+                    outfits_count = TodayOutfit.objects.filter(user=u).count()
+                    stories_count = Story.objects.filter(user=u).count()
+
+                    followers_count = getattr(u, 'followers', None).count() if hasattr(u, 'followers') else 0
+                    following_count = getattr(u, 'following', None).count() if hasattr(u, 'following') else 0
+
+                    from rewards.models import UserRewardProfile
+                    reward_p = UserRewardProfile.objects.filter(user=u).first()
+                    closet_points = reward_p.available_points if reward_p else 0
+
+                    extra_context.update({
+                        'user_info': {
+                            'id': u.id,
+                            'name': u.name,
+                            'email': u.email,
+                            'phone': getattr(u, 'phone', None),
+                            'auth_provider': getattr(u, 'auth_provider', 'email'),
+                            'is_email_verified': u.is_email_verified,
+                            'date_joined': u.date_joined,
+                            'last_login': u.last_login,
+                        },
+                        'wardrobe_stats': {
+                            'total_count': total_items,
+                            'total_valuation': total_val,
+                            'tops_count': tops,
+                            'bottoms_count': bottoms,
+                            'outerwear_count': outerwear,
+                            'shoes_count': shoes,
+                            'accessories_count': accessories,
+                            'items': preview_items,
+                        },
+                        'social_stats': {
+                            'outfits_count': outfits_count,
+                            'stories_count': stories_count,
+                            'followers_count': followers_count,
+                            'following_count': following_count,
+                            'closet_points': closet_points,
+                        }
+                    })
+                else:
+                    # Provide clean default stats so UI never renders broken/empty states
+                    extra_context.update({
+                        'user_info': None,
+                        'wardrobe_stats': {
+                            'total_count': 0,
+                            'total_valuation': 0.0,
+                            'tops_count': 0,
+                            'bottoms_count': 0,
+                            'outerwear_count': 0,
+                            'shoes_count': 0,
+                            'accessories_count': 0,
+                            'items': [],
+                        },
+                        'social_stats': {
+                            'outfits_count': 0,
+                            'stories_count': 0,
+                            'followers_count': 0,
+                            'following_count': 0,
+                            'closet_points': 0,
+                        }
+                    })
+        return super().changeform_view(request, object_id, form_url, extra_context=extra_context)
+
 
 
 

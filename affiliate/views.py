@@ -462,9 +462,9 @@ class AffiliateProductForYouView(generics.ListAPIView):
 
         if cases:
             score_expression = Case(*cases, default=Value(0), output_field=IntegerField())
-            return qs.annotate(relevance_score=score_expression).order_by('-relevance_score', '?')
+            return qs.annotate(relevance_score=score_expression).order_by('-relevance_score', '-created_at')
 
-        return qs.order_by('-created_at', '?')
+        return qs.order_by('-created_at')
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())

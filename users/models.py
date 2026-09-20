@@ -468,18 +468,26 @@ class AccountDeletionRequest(models.Model):
         ('pending', 'Pending'),
         ('verified', 'Verified'),
         ('completed', 'Completed'),
+        ('rejected', 'Rejected'),
     ]
 
     user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     name = models.CharField(max_length=150)
     email = models.EmailField()
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    reason = models.CharField(max_length=255, blank=True, default='')
+    details = models.TextField(blank=True, default='')
     verification_token = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Account Deletion Request'
+        verbose_name_plural = 'Account Deletion Requests'
+
     def __str__(self):
-        return f"Deletion request for {self.email}"
+        return f"Deletion request for {self.email} ({self.status})"
 
 class ProfileDataDeletionRequest(models.Model):
     STATUS_CHOICES = [
