@@ -48,6 +48,10 @@ CSRF_TRUSTED_ORIGINS = [
 
 INSTALLED_APPS = [
     'daphne',
+    'unfold',
+    'unfold.contrib.filters',
+    'unfold.contrib.forms',
+    'unfold.contrib.inlines',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -164,6 +168,7 @@ if 'postgresql' in DB_ENGINE and DB_NAME:
             'PASSWORD': config('DB_PASSWORD', default=''),
             'HOST': db_host,
             'PORT': config('DB_PORT', default='5432'),
+            'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=600, cast=int),
         }
     }
 else:
@@ -173,6 +178,14 @@ else:
             'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
+
+# Cache Configuration
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'closly-fast-cache',
+    }
+}
 
 
 # Password validation
@@ -371,5 +384,93 @@ DRESS_ANALYZER_DIR = BASE_DIR / 'dress-analyzer-ai'
 AI_SCAN_CONCURRENCY_LIMIT = config('AI_SCAN_CONCURRENCY_LIMIT', default=15, cast=int)
 AI_SCAN_QUEUE_TIMEOUT = config('AI_SCAN_QUEUE_TIMEOUT', default=35, cast=int)
 AI_SCAN_CACHE_TTL = config('AI_SCAN_CACHE_TTL', default=600, cast=int)
+
+# Django Unfold Luxury Admin Dashboard Settings
+from django.urls import reverse_lazy
+
+UNFOLD = {
+    "SITE_TITLE": "Closly Luxury Wardrobe Admin",
+    "SITE_HEADER": "Closly Admin",
+    "SITE_SUBHEADER": "AI Wardrobe & Stylist Platform",
+    "SITE_SYMBOL": "checkroom",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    "DASHBOARD_CALLBACK": "users.dashboard.dashboard_callback",
+    "SIDEBAR": {
+        "show_search": True,
+        "show_all_applications": False,
+        "navigation": [
+            {
+                "title": "Administration & Security",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Users Management",
+                        "icon": "group",
+                        "link": reverse_lazy("admin:users_user_changelist"),
+                    },
+                    {
+                        "title": "Account Deletion Requests",
+                        "icon": "person_remove",
+                        "link": reverse_lazy("admin:users_accountdeletionrequest_changelist"),
+                        "badge": "users.dashboard.pending_deletions_badge",
+                    },
+                    {
+                        "title": "User Preferences",
+                        "icon": "tune",
+                        "link": reverse_lazy("admin:users_userpreference_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": "Closet & Digital Wardrobe",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Closet Items",
+                        "icon": "checkroom",
+                        "link": reverse_lazy("admin:closet_closetitem_changelist"),
+                    },
+                    {
+                        "title": "Today's Outfits",
+                        "icon": "styler",
+                        "link": reverse_lazy("admin:social_todayoutfit_changelist"),
+                    },
+                    {
+                        "title": "24h Stories",
+                        "icon": "auto_stories",
+                        "link": reverse_lazy("admin:social_story_changelist"),
+                    },
+                    {
+                        "title": "Direct Messages",
+                        "icon": "chat",
+                        "link": reverse_lazy("admin:social_directmessage_changelist"),
+                    },
+                ],
+            },
+            {
+                "title": "Affiliate & Loyalty",
+                "separator": True,
+                "items": [
+                    {
+                        "title": "Affiliate Products",
+                        "icon": "shopping_bag",
+                        "link": reverse_lazy("admin:affiliate_affiliateproduct_changelist"),
+                    },
+                    {
+                        "title": "User Rewards Profiles",
+                        "icon": "military_tech",
+                        "link": reverse_lazy("admin:rewards_userrewardprofile_changelist"),
+                    },
+                    {
+                        "title": "Reward Transactions",
+                        "icon": "receipt_long",
+                        "link": reverse_lazy("admin:rewards_rewardpointtransaction_changelist"),
+                    },
+                ],
+            },
+        ],
+    },
+}
 
 

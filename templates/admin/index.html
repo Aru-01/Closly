@@ -1,0 +1,833 @@
+{% extends 'admin/index.html' %}
+{% load i18n static %}
+
+{% block extrahead %}
+{{ block.super }}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+    :root {
+        --closly-font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        --closly-display-font: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+
+        /* Light Mode Glassmorphism Tokens */
+        --c-bg: #f8fafc;
+        --c-card-bg: rgba(255, 255, 255, 0.88);
+        --c-card-border: rgba(226, 232, 240, 0.9);
+        --c-card-shadow: 0 10px 30px -5px rgba(15, 23, 42, 0.05), 0 4px 6px -2px rgba(15, 23, 42, 0.02);
+        --c-card-highlight: rgba(255, 255, 255, 0.95);
+        --c-text-primary: #0f172a;
+        --c-text-secondary: #334155;
+        --c-text-muted: #64748b;
+        --c-subtle-bg: #f1f5f9;
+        --c-banner-bg: linear-gradient(135deg, #1e1b4b 0%, #0f172a 60%, #1e293b 100%);
+        --c-banner-text: #ffffff;
+        --c-banner-sub: #cbd5e1;
+        --c-table-head: #f8fafc;
+        --c-table-hover: #f1f5f9;
+    }
+
+    html.dark {
+        /* Dark Mode Luxury Glossy Glass Tokens */
+        --c-bg: #09090b;
+        --c-card-bg: rgba(24, 24, 30, 0.82);
+        --c-card-border: rgba(255, 255, 255, 0.09);
+        --c-card-shadow: 0 14px 35px -8px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+        --c-card-highlight: rgba(255, 255, 255, 0.04);
+        --c-text-primary: #ffffff;
+        --c-text-secondary: #e2e8f0;
+        --c-text-muted: #94a3b8;
+        --c-subtle-bg: rgba(255, 255, 255, 0.05);
+        --c-banner-bg: linear-gradient(135deg, rgba(30, 27, 75, 0.9) 0%, rgba(15, 23, 42, 0.95) 100%);
+        --c-banner-text: #ffffff;
+        --c-banner-sub: #94a3b8;
+        --c-table-head: rgba(255, 255, 255, 0.03);
+        --c-table-hover: rgba(255, 255, 255, 0.05);
+    }
+
+    .glass-panel {
+        font-family: var(--closly-font);
+        background: var(--c-card-bg);
+        border: 1px solid var(--c-card-border);
+        box-shadow: var(--c-card-shadow);
+        backdrop-filter: blur(24px) saturate(190%);
+        -webkit-backdrop-filter: blur(24px) saturate(190%);
+        border-radius: 18px;
+        transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    .glass-panel:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+    }
+
+    .closly-kpi-grid {
+        display: grid !important;
+        grid-template-columns: repeat(4, 1fr) !important;
+        gap: 20px !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+    }
+
+    @media (max-width: 1024px) {
+        .closly-kpi-grid {
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 16px !important;
+        }
+    }
+
+    @media (max-width: 600px) {
+        .closly-kpi-grid {
+            grid-template-columns: 1fr !important;
+            gap: 12px !important;
+        }
+    }
+
+    .kpi-title {
+        font-family: var(--closly-font);
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--c-text-muted);
+    }
+
+    .kpi-value {
+        font-family: var(--closly-display-font);
+        font-weight: 800;
+        font-size: 1.95rem;
+        letter-spacing: -0.03em;
+        color: var(--c-text-primary);
+        line-height: 1.1;
+    }
+
+    .kpi-sub {
+        font-size: 0.8rem;
+        font-weight: 600;
+        margin-top: 6px;
+    }
+
+    .closly-hero-banner {
+        background: var(--c-banner-bg) !important;
+        color: var(--c-banner-text) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        box-shadow: 0 20px 45px -15px rgba(0, 0, 0, 0.45) !important;
+        border-radius: 20px !important;
+        position: relative !important;
+        overflow: hidden !important;
+        padding: 26px 30px !important;
+        box-sizing: border-box !important;
+        width: 100% !important;
+    }
+
+    .closly-hero-banner::after {
+        content: '';
+        position: absolute;
+        top: -50%;
+        right: -20%;
+        width: 450px;
+        height: 450px;
+        background: radial-gradient(circle, rgba(99, 102, 241, 0.28) 0%, rgba(0, 0, 0, 0) 70%);
+        pointer-events: none;
+    }
+
+    .closly-hero-flex {
+        position: relative !important;
+        z-index: 10 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 20px !important;
+        flex-wrap: wrap !important;
+    }
+
+    .closly-hero-main {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 6px !important;
+        max-width: 620px !important;
+    }
+
+    .closly-hero-headline {
+        display: flex !important;
+        align-items: center !important;
+        gap: 12px !important;
+    }
+
+    .closly-hero-icon {
+        width: 42px !important;
+        min-width: 42px !important;
+        height: 42px !important;
+        border-radius: 12px !important;
+        background: rgba(99, 102, 241, 0.25) !important;
+        border: 1px solid rgba(165, 180, 252, 0.35) !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        color: #c7d2fe !important;
+        flex-shrink: 0 !important;
+    }
+
+    .closly-hero-title {
+        font-family: 'Outfit', -apple-system, sans-serif !important;
+        font-weight: 800 !important;
+        font-size: 1.35rem !important;
+        letter-spacing: -0.02em !important;
+        color: #ffffff !important;
+        margin: 0 !important;
+        line-height: 1.2 !important;
+    }
+
+    .closly-hero-desc {
+        font-size: 0.84rem !important;
+        color: #cbd5e1 !important;
+        margin: 0 !important;
+        line-height: 1.4 !important;
+    }
+
+    .closly-hero-badges {
+        display: flex !important;
+        align-items: center !important;
+        gap: 12px !important;
+        flex-wrap: wrap !important;
+    }
+
+    .closly-hero-badge-engine {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        padding: 6px 14px !important;
+        border-radius: 9999px !important;
+        font-size: 0.76rem !important;
+        font-weight: 700 !important;
+        background: rgba(16, 185, 129, 0.16) !important;
+        border: 1px solid rgba(52, 211, 153, 0.35) !important;
+        color: #6ee7b7 !important;
+        backdrop-filter: blur(12px) !important;
+    }
+
+    .closly-hero-badge-pulse {
+        width: 8px !important;
+        height: 8px !important;
+        border-radius: 9999px !important;
+        background: #34d399 !important;
+        display: inline-block !important;
+        box-shadow: 0 0 10px #34d399 !important;
+    }
+
+    .closly-hero-badge-queue {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        padding: 6px 16px !important;
+        border-radius: 9999px !important;
+        font-size: 0.76rem !important;
+        font-weight: 700 !important;
+        text-decoration: none !important;
+        transition: all 0.2s ease !important;
+    }
+
+    .closly-hero-badge-queue.has-pending {
+        background: rgba(239, 68, 68, 0.22) !important;
+        border: 1px solid rgba(248, 113, 113, 0.45) !important;
+        color: #fca5a5 !important;
+        box-shadow: 0 0 14px rgba(239, 68, 68, 0.25) !important;
+    }
+
+    .closly-hero-badge-queue.no-pending {
+        background: rgba(255, 255, 255, 0.08) !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        color: #e2e8f0 !important;
+    }
+
+    .closly-kpi-card {
+        background: var(--c-card-bg) !important;
+        border: 1px solid var(--c-card-border) !important;
+        box-shadow: var(--c-card-shadow) !important;
+        backdrop-filter: blur(24px) saturate(190%) !important;
+        -webkit-backdrop-filter: blur(24px) saturate(190%) !important;
+        border-radius: 18px !important;
+        padding: 20px 22px !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: space-between !important;
+        min-height: 135px !important;
+        box-sizing: border-box !important;
+        transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+    }
+
+    .closly-kpi-card:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 20px 45px -10px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+    }
+
+    .closly-kpi-top {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        margin-bottom: 12px !important;
+    }
+
+    .closly-kpi-icon {
+        width: 40px !important;
+        min-width: 40px !important;
+        height: 40px !important;
+        border-radius: 12px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex-shrink: 0 !important;
+    }
+
+    .closly-kpi-icon-blue {
+        background: rgba(59, 130, 246, 0.12) !important;
+        border: 1px solid rgba(59, 130, 246, 0.25) !important;
+        color: #60a5fa !important;
+    }
+
+    .closly-kpi-icon-red {
+        background: rgba(239, 68, 68, 0.15) !important;
+        border: 1px solid rgba(239, 68, 68, 0.3) !important;
+        color: #f87171 !important;
+    }
+
+    .closly-kpi-icon-amber {
+        background: rgba(245, 158, 11, 0.12) !important;
+        border: 1px solid rgba(245, 158, 11, 0.25) !important;
+        color: #fbbf24 !important;
+    }
+
+    .closly-kpi-icon-indigo {
+        background: rgba(99, 102, 241, 0.12) !important;
+        border: 1px solid rgba(99, 102, 241, 0.25) !important;
+        color: #a5b4fc !important;
+    }
+
+    /* Executive Attention Queue Card */
+    .closly-compliance-card {
+        background: rgba(18, 19, 28, 0.82) !important;
+        border: 1px solid rgba(239, 68, 68, 0.35) !important;
+        border-radius: 20px !important;
+        padding: 24px 28px !important;
+        box-shadow: 0 20px 45px -12px rgba(0, 0, 0, 0.6), 0 0 25px rgba(239, 68, 68, 0.1) !important;
+        backdrop-filter: blur(28px) saturate(200%) !important;
+        -webkit-backdrop-filter: blur(28px) saturate(200%) !important;
+        margin-bottom: 24px !important;
+        box-sizing: border-box !important;
+        width: 100% !important;
+    }
+
+    html:not(.dark) .closly-compliance-card {
+        background: rgba(255, 255, 255, 0.94) !important;
+        border: 1px solid rgba(239, 68, 68, 0.3) !important;
+        box-shadow: 0 16px 35px -10px rgba(15, 23, 42, 0.08) !important;
+    }
+
+    .closly-card-header {
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        padding-bottom: 18px !important;
+        margin-bottom: 20px !important;
+        border-bottom: 1px solid rgba(239, 68, 68, 0.2) !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+    }
+
+    .closly-header-left {
+        display: flex !important;
+        align-items: center !important;
+        gap: 16px !important;
+    }
+
+    .closly-shield-icon {
+        width: 44px !important;
+        min-width: 44px !important;
+        height: 44px !important;
+        border-radius: 12px !important;
+        background: rgba(239, 68, 68, 0.15) !important;
+        border: 1px solid rgba(239, 68, 68, 0.35) !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        color: #ef4444 !important;
+        flex-shrink: 0 !important;
+        box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2) !important;
+    }
+
+    .closly-header-text {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+    }
+
+    .closly-header-title-row {
+        display: flex !important;
+        align-items: center !important;
+        gap: 12px !important;
+        flex-wrap: wrap !important;
+    }
+
+    .closly-header-title {
+        font-family: 'Outfit', -apple-system, sans-serif !important;
+        font-weight: 800 !important;
+        font-size: 1.1rem !important;
+        color: #ffffff !important;
+        margin: 0 !important;
+        line-height: 1.2 !important;
+        letter-spacing: -0.01em !important;
+    }
+
+    html:not(.dark) .closly-header-title {
+        color: #0f172a !important;
+    }
+
+    .closly-pill-badge {
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        background: rgba(239, 68, 68, 0.2) !important;
+        border: 1px solid rgba(239, 68, 68, 0.4) !important;
+        color: #fca5a5 !important;
+        border-radius: 9999px !important;
+        padding: 3px 10px !important;
+        font-size: 0.72rem !important;
+        font-weight: 700 !important;
+        text-transform: uppercase !important;
+        letter-spacing: 0.04em !important;
+    }
+
+    html:not(.dark) .closly-pill-badge {
+        background: rgba(239, 68, 68, 0.1) !important;
+        color: #b91c1c !important;
+        border-color: rgba(239, 68, 68, 0.3) !important;
+    }
+
+    .closly-header-subtitle {
+        font-size: 0.8rem !important;
+        color: #94a3b8 !important;
+        margin: 0 !important;
+        line-height: 1.3 !important;
+    }
+
+    html:not(.dark) .closly-header-subtitle {
+        color: #64748b !important;
+    }
+
+    .closly-header-link {
+        font-size: 0.82rem !important;
+        font-weight: 700 !important;
+        color: #ef4444 !important;
+        text-decoration: none !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 4px !important;
+        white-space: nowrap !important;
+        transition: color 0.15s ease !important;
+    }
+
+    .closly-header-link:hover {
+        color: #f87171 !important;
+        text-decoration: underline !important;
+    }
+
+    /* Dispatch Row Items */
+    .closly-dispatch-list {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 14px !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+    }
+
+    .closly-dispatch-row {
+        background: rgba(255, 255, 255, 0.035) !important;
+        border: 1px solid rgba(255, 255, 255, 0.09) !important;
+        border-radius: 16px !important;
+        padding: 18px 24px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: space-between !important;
+        gap: 24px !important;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+        cursor: pointer !important;
+        box-sizing: border-box !important;
+        width: 100% !important;
+        transition: transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.18s ease, box-shadow 0.18s ease !important;
+    }
+
+    html:not(.dark) .closly-dispatch-row {
+        background: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        box-shadow: 0 4px 12px -2px rgba(15, 23, 42, 0.05) !important;
+    }
+
+    .closly-dispatch-row:hover {
+        transform: translateY(-2px) !important;
+        border-color: rgba(239, 68, 68, 0.5) !important;
+        box-shadow: 0 12px 30px -5px rgba(239, 68, 68, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+    }
+
+    /* Row Left: Applicant info */
+    .closly-applicant-block {
+        display: flex !important;
+        align-items: center !important;
+        gap: 16px !important;
+        min-width: 280px !important;
+        flex-shrink: 0 !important;
+    }
+
+    .closly-avatar-squircle {
+        width: 46px !important;
+        min-width: 46px !important;
+        height: 46px !important;
+        border-radius: 14px !important;
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.25) 0%, rgba(168, 85, 247, 0.25) 100%) !important;
+        border: 1px solid rgba(139, 92, 246, 0.4) !important;
+        color: #c7d2fe !important;
+        font-family: 'Outfit', -apple-system, sans-serif !important;
+        font-weight: 800 !important;
+        font-size: 1.2rem !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex-shrink: 0 !important;
+        box-shadow: 0 4px 14px rgba(99, 102, 241, 0.2) !important;
+    }
+
+    .closly-applicant-info {
+        display: flex !important;
+        flex-direction: column !important;
+        gap: 4px !important;
+    }
+
+    .closly-applicant-name-line {
+        display: flex !important;
+        align-items: center !important;
+        gap: 10px !important;
+        flex-wrap: wrap !important;
+    }
+
+    .closly-applicant-name {
+        font-size: 0.98rem !important;
+        font-weight: 700 !important;
+        color: #ffffff !important;
+        line-height: 1.2 !important;
+    }
+
+    html:not(.dark) .closly-applicant-name {
+        color: #0f172a !important;
+    }
+
+    .closly-email-chip {
+        font-family: monospace !important;
+        font-size: 0.76rem !important;
+        color: #a5b4fc !important;
+        background: rgba(99, 102, 241, 0.1) !important;
+        border: 1px solid rgba(99, 102, 241, 0.2) !important;
+        border-radius: 6px !important;
+        padding: 2px 8px !important;
+    }
+
+    html:not(.dark) .closly-email-chip {
+        color: #4338ca !important;
+        background: #eef2ff !important;
+        border-color: #c7d2fe !important;
+    }
+
+    .closly-timestamp {
+        font-size: 0.75rem !important;
+        color: #64748b !important;
+        display: flex !important;
+        align-items: center !important;
+        gap: 5px !important;
+    }
+
+    /* Row Middle: Metadata Pills */
+    .closly-meta-block {
+        display: flex !important;
+        align-items: center !important;
+        gap: 10px !important;
+        flex-wrap: wrap !important;
+        flex-grow: 1 !important;
+    }
+
+    .closly-tag-reason {
+        padding: 6px 12px !important;
+        border-radius: 10px !important;
+        font-size: 0.78rem !important;
+        font-weight: 600 !important;
+        background: rgba(99, 102, 241, 0.12) !important;
+        border: 1px solid rgba(99, 102, 241, 0.25) !important;
+        color: #c7d2fe !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        white-space: nowrap !important;
+    }
+
+    html:not(.dark) .closly-tag-reason {
+        background: #eef2ff !important;
+        border-color: #c7d2fe !important;
+        color: #4338ca !important;
+    }
+
+    .closly-tag-footprint {
+        padding: 6px 12px !important;
+        border-radius: 10px !important;
+        font-size: 0.78rem !important;
+        font-weight: 600 !important;
+        background: rgba(245, 158, 11, 0.12) !important;
+        border: 1px solid rgba(245, 158, 11, 0.25) !important;
+        color: #fde68a !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 6px !important;
+        white-space: nowrap !important;
+    }
+
+    html:not(.dark) .closly-tag-footprint {
+        background: #fffbeb !important;
+        border-color: #fde68a !important;
+        color: #b45309 !important;
+    }
+
+    .closly-tag-quote {
+        font-size: 0.78rem !important;
+        font-style: italic !important;
+        color: #94a3b8 !important;
+        max-width: 260px !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+    }
+
+    /* Row Right: Action Button */
+    .closly-action-block {
+        flex-shrink: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+    }
+
+    .closly-purge-button {
+        background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%) !important;
+        color: #ffffff !important;
+        font-family: 'Outfit', -apple-system, sans-serif !important;
+        font-weight: 700 !important;
+        font-size: 0.85rem !important;
+        padding: 10px 22px !important;
+        border-radius: 12px !important;
+        box-shadow: 0 4px 16px rgba(239, 68, 68, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        gap: 8px !important;
+        text-decoration: none !important;
+        white-space: nowrap !important;
+        cursor: pointer !important;
+        transition: transform 0.15s ease, box-shadow 0.15s ease !important;
+    }
+
+    .closly-purge-button:hover {
+        transform: translateY(-1px) !important;
+        box-shadow: 0 6px 22px rgba(239, 68, 68, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.45) !important;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex flex-col gap-6 mb-8">
+
+    <!-- Top Executive Luxury Hero Banner -->
+    <div class="closly-hero-banner">
+        <div class="closly-hero-flex">
+            <div class="closly-hero-main">
+                <div class="closly-hero-headline">
+                    <div class="closly-hero-icon">
+                        <span class="material-symbols-outlined" style="font-size: 24px !important;">checkroom</span>
+                    </div>
+                    <h1 class="closly-hero-title">Closly Executive Command</h1>
+                </div>
+                <p class="closly-hero-desc">
+                    Live telemetry across active digital wardrobes, daily stylist AI recommendations, and account privacy enforcement.
+                </p>
+            </div>
+
+            <!-- Operational Status Badges -->
+            <div class="closly-hero-badges">
+                <span class="closly-hero-badge-engine">
+                    <span class="closly-hero-badge-pulse"></span>
+                    Engine Operational
+                </span>
+                
+                <a href="{% url 'admin:users_accountdeletionrequest_changelist' %}" class="closly-hero-badge-queue {% if kpi_metrics.pending_deletions_count > 0 %}has-pending{% else %}no-pending{% endif %}">
+                    <span class="material-symbols-outlined" style="font-size: 16px !important;">person_remove</span>
+                    Deletion Queue: {{ kpi_metrics.pending_deletions_count }}
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- 4 KPI Metrics Grid with Glossy Glassmorphism -->
+    <div class="closly-kpi-grid">
+        
+        <!-- Metric 1: Total Users -->
+        <div class="closly-kpi-card">
+            <div class="closly-kpi-top">
+                <span class="kpi-title">User Community</span>
+                <div class="closly-kpi-icon closly-kpi-icon-blue">
+                    <span class="material-symbols-outlined" style="font-size: 22px !important;">group</span>
+                </div>
+            </div>
+            <div>
+                <div class="kpi-value">{{ kpi_metrics.total_users }}</div>
+                <div class="kpi-sub text-emerald-600 dark:text-emerald-400">
+                    {{ kpi_metrics.active_users }} active member profiles
+                </div>
+            </div>
+        </div>
+
+        <!-- Metric 2: Pending Deletions -->
+        <div class="closly-kpi-card" {% if kpi_metrics.pending_deletions_count > 0 %}style="border-color: rgba(239, 68, 68, 0.45) !important;"{% endif %}>
+            <div class="closly-kpi-top">
+                <span class="kpi-title">Deletion Requests</span>
+                <div class="closly-kpi-icon closly-kpi-icon-red">
+                    <span class="material-symbols-outlined" style="font-size: 22px !important;">person_remove</span>
+                </div>
+            </div>
+            <div>
+                <div class="kpi-value" {% if kpi_metrics.pending_deletions_count > 0 %}style="color: #ef4444 !important;"{% endif %}>
+                    {{ kpi_metrics.pending_deletions_count }}
+                </div>
+                <div class="kpi-sub" {% if kpi_metrics.pending_deletions_count > 0 %}style="color: #ef4444 !important;"{% endif %}>
+                    {% if kpi_metrics.pending_deletions_count > 0 %}Pending executive action{% else %}Queue is fully cleared{% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Metric 3: Digital Closet Inventory & Valuation -->
+        <div class="closly-kpi-card">
+            <div class="closly-kpi-top">
+                <span class="kpi-title">Closet Inventory</span>
+                <div class="closly-kpi-icon closly-kpi-icon-amber">
+                    <span class="material-symbols-outlined" style="font-size: 22px !important;">checkroom</span>
+                </div>
+            </div>
+            <div>
+                <div class="kpi-value">{{ kpi_metrics.total_closet_items }}</div>
+                <div class="kpi-sub text-amber-600 dark:text-amber-400">
+                    {{ kpi_metrics.wardrobe_valuation }} asset valuation
+                </div>
+            </div>
+        </div>
+
+        <!-- Metric 4: Daily Outfits & Stories -->
+        <div class="closly-kpi-card">
+            <div class="closly-kpi-top">
+                <span class="kpi-title">Outfits & Social</span>
+                <div class="closly-kpi-icon closly-kpi-icon-indigo">
+                    <span class="material-symbols-outlined" style="font-size: 22px !important;">styler</span>
+                </div>
+            </div>
+            <div>
+                <div class="kpi-value">{{ kpi_metrics.total_outfits }}</div>
+                <div class="kpi-sub text-indigo-600 dark:text-indigo-400">
+                    {{ kpi_metrics.total_stories }} active 24h stories
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Urgent Account Deletion Review Queue (Executive Pure-CSS Attention Card Feed) -->
+    {% if recent_pending_deletions %}
+    <div class="closly-compliance-card">
+        
+        <!-- Header Ribbon -->
+        <div class="closly-card-header">
+            <div class="closly-header-left">
+                <div class="closly-shield-icon">
+                    <span class="material-symbols-outlined" style="font-size: 26px !important;">shield</span>
+                </div>
+                <div class="closly-header-text">
+                    <div class="closly-header-title-row">
+                        <h3 class="closly-header-title">
+                            Action Required: Pending Account Deletion Requests
+                        </h3>
+                        <span class="closly-pill-badge">
+                            <span style="width: 6px; height: 6px; border-radius: 9999px; background: #ef4444; display: inline-block;"></span>
+                            {{ recent_pending_deletions|length }} Pending Review
+                        </span>
+                    </div>
+                    <p class="closly-header-subtitle">
+                        Compliance requests waiting for GDPR privacy audit, digital wardrobe erasure, and user confirmation.
+                    </p>
+                </div>
+            </div>
+            <a href="{% url 'admin:users_accountdeletionrequest_changelist' %}" class="closly-header-link">
+                <span>View Full Queue &rarr;</span>
+            </a>
+        </div>
+
+        <!-- Pending Items Feed (Spacious, Pure-CSS Action Rows) -->
+        <div class="closly-dispatch-list">
+            {% for req in recent_pending_deletions %}
+            <div class="closly-dispatch-row closly-clickable-row" data-href="{% url 'admin:users_accountdeletionrequest_change' req.id %}">
+                
+                <!-- Left: Applicant Info & Avatar -->
+                <div class="closly-applicant-block">
+                    <div class="closly-avatar-squircle">
+                        {{ req.name|slice:":1"|default:"U"|upper }}
+                    </div>
+                    <div class="closly-applicant-info">
+                        <div class="closly-applicant-name-line">
+                            <span class="closly-applicant-name">{{ req.name|default:"Applicant" }}</span>
+                            <span class="closly-email-chip">{{ req.email }}</span>
+                        </div>
+                        <div class="closly-timestamp">
+                            <span class="material-symbols-outlined" style="font-size: 14px !important;">schedule</span>
+                            <span>Submitted {{ req.created_at|date:"d M Y, H:i" }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Middle: Impact & Stated Reason -->
+                <div class="closly-meta-block">
+                    <div class="closly-tag-reason">
+                        <span class="material-symbols-outlined" style="font-size: 15px !important;">help_outline</span>
+                        <span>{{ req.reason|default:"I no longer need digital wardrobe management" }}</span>
+                    </div>
+
+                    <div class="closly-tag-footprint">
+                        <span class="material-symbols-outlined" style="font-size: 15px !important;">checkroom</span>
+                        <span>{{ req.items_count }} items to be erased</span>
+                    </div>
+
+                    {% if req.details %}
+                    <div class="closly-tag-quote" title="{{ req.details }}">
+                        "{{ req.details }}"
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- Right: High-Contrast Purge Action Button -->
+                <div class="closly-action-block">
+                    <a href="{% url 'admin:users_accountdeletionrequest_change' req.id %}" class="closly-purge-button">
+                        <span>Inspect & Purge</span>
+                        <span class="material-symbols-outlined" style="font-size: 16px !important;">arrow_forward</span>
+                    </a>
+                </div>
+
+            </div>
+            {% endfor %}
+        </div>
+
+    </div>
+    {% endif %}
+
+</div>
+
+<!-- Default Unfold App List & Navigation History -->
+{{ block.super }}
+{% endblock %}

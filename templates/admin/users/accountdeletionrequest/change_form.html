@@ -1,0 +1,444 @@
+{% extends "admin/change_form.html" %}
+{% load i18n static admin_urls unfold %}
+
+{% block extrahead %}
+{{ block.super }}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+    :root {
+        --dos-font: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+        --dos-display: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+
+        /* Light Mode Luxury Glass Tokens */
+        --dos-card-bg: rgba(255, 255, 255, 0.88);
+        --dos-card-border: rgba(226, 232, 240, 0.9);
+        --dos-card-shadow: 0 16px 40px -10px rgba(15, 23, 42, 0.08), inset 0 1px 0 rgba(255, 255, 255, 0.95);
+        --dos-tile-bg: #f8fafc;
+        --dos-tile-border: #e2e8f0;
+        --dos-text-head: #0f172a;
+        --dos-text-body: #334155;
+        --dos-text-dim: #64748b;
+    }
+
+    html.dark {
+        /* Dark Mode High-Contrast Luxury Glass Tokens */
+        --dos-card-bg: rgba(18, 19, 28, 0.76);
+        --dos-card-border: rgba(255, 255, 255, 0.12);
+        --dos-card-shadow: 0 20px 50px -12px rgba(0, 0, 0, 0.7), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        --dos-tile-bg: rgba(255, 255, 255, 0.035);
+        --dos-tile-border: rgba(255, 255, 255, 0.08);
+        --dos-text-head: #ffffff;
+        --dos-text-body: #f1f5f9;
+        --dos-text-dim: #94a3b8;
+    }
+
+    /* Core Luxury Dossier Container */
+    .closly-dossier-wrapper {
+        font-family: var(--dos-font);
+        background: var(--dos-card-bg);
+        border: 1px solid var(--dos-card-border);
+        box-shadow: var(--dos-card-shadow);
+        backdrop-filter: blur(24px) saturate(190%);
+        -webkit-backdrop-filter: blur(24px) saturate(190%);
+        border-radius: 20px;
+        overflow: hidden;
+        margin-bottom: 24px;
+    }
+
+    /* Section Typography & Titles */
+    .dos-title {
+        font-family: var(--dos-display);
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        color: var(--dos-text-head);
+    }
+
+    .dos-section-heading {
+        font-family: var(--dos-display);
+        font-size: 0.8rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--dos-text-dim);
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+    }
+
+    /* Robust Standalone CSS Grid Systems (immune to Tailwind purge) */
+    .dos-grid-4 {
+        display: grid !important;
+        grid-template-columns: repeat(4, 1fr) !important;
+        gap: 14px !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+    }
+
+    .dos-grid-2 {
+        display: grid !important;
+        grid-template-columns: repeat(2, 1fr) !important;
+        gap: 14px !important;
+        width: 100% !important;
+        box-sizing: border-box !important;
+    }
+
+    @media (max-width: 1024px) {
+        .dos-grid-4 {
+            grid-template-columns: repeat(2, 1fr) !important;
+            gap: 12px !important;
+        }
+    }
+
+    @media (max-width: 600px) {
+        .dos-grid-4, .dos-grid-2 {
+            grid-template-columns: 1fr !important;
+            gap: 10px !important;
+        }
+    }
+
+    /* Standalone Tile / Card Component */
+    .dos-tile {
+        background: var(--dos-tile-bg);
+        border: 1px solid var(--dos-tile-border);
+        border-radius: 14px;
+        padding: 14px 16px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        min-height: 72px;
+        box-sizing: border-box;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+        transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+
+    .dos-tile:hover {
+        border-color: rgba(99, 102, 241, 0.4);
+    }
+
+    .dos-label {
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--dos-text-dim);
+        display: block;
+        margin-bottom: 4px;
+        line-height: 1.1;
+    }
+
+    .dos-val {
+        font-size: 0.92rem;
+        font-weight: 600;
+        color: var(--dos-text-head);
+        line-height: 1.25;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .dos-stat-val {
+        font-family: var(--dos-display);
+        font-size: 1.55rem;
+        font-weight: 800;
+        color: var(--dos-text-head);
+        line-height: 1.15;
+        display: block;
+        margin-top: 2px;
+    }
+
+    /* Wardrobe Gallery Grid */
+    .dos-wardrobe-grid {
+        display: grid !important;
+        grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)) !important;
+        gap: 14px !important;
+        width: 100% !important;
+        margin-top: 12px !important;
+        box-sizing: border-box !important;
+    }
+
+    .dos-item-card {
+        background: var(--dos-tile-bg);
+        border: 1px solid var(--dos-tile-border);
+        border-radius: 14px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .dos-item-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.25);
+    }
+
+    /* Glossy Danger Purge Button */
+    .glossy-danger-btn {
+        background: linear-gradient(135deg, #ef4444 0%, #b91c1c 100%) !important;
+        color: #ffffff !important;
+        font-family: var(--dos-display);
+        font-weight: 700;
+        font-size: 0.88rem;
+        padding: 9px 20px;
+        border-radius: 12px;
+        box-shadow: 0 4px 16px rgba(239, 68, 68, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        text-decoration: none !important;
+        cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .glossy-danger-btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 22px rgba(239, 68, 68, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div id="content-main" class="flex flex-col gap-6">
+
+    {% if original and original.pk %}
+    <!-- Luxury Nested Dossier Card -->
+    <div class="closly-dossier-wrapper">
+        
+        <!-- Header Ribbon -->
+        <div class="px-6 py-5 border-b border-[var(--dos-card-border)] flex flex-col md:flex-row md:items-center justify-between gap-4 {% if original.status == 'pending' %}bg-red-500/10 border-red-500/20{% else %}bg-slate-500/5{% endif %}">
+            <div class="flex items-center gap-3.5">
+                <div class="w-12 h-12 rounded-2xl {% if original.status == 'pending' %}bg-red-500/20 text-red-600 dark:text-red-400 border border-red-500/30{% else %}bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30{% endif %} flex items-center justify-center shrink-0">
+                    <span class="material-symbols-outlined text-2xl">person_remove</span>
+                </div>
+                <div>
+                    <h2 class="text-xl dos-title">Account Deletion Dossier #{{ original.id }}</h2>
+                    <p class="text-xs" style="color: var(--dos-text-dim);">
+                        Submitted on <span class="font-semibold" style="color: var(--dos-text-body);">{{ original.created_at|date:"d F Y, H:i:s" }}</span> &bull; 
+                        Verification Token: <span class="font-mono px-2 py-0.5 rounded bg-black/5 dark:bg-white/10 text-[11px] font-semibold">{{ original.verification_token }}</span>
+                    </p>
+                </div>
+            </div>
+
+            <!-- Status Pill & Action Buttons -->
+            <div class="flex items-center gap-3">
+                {% if original.status == 'pending' %}
+                <span class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                    <span class="w-2 h-2 rounded-full bg-amber-500 animate-ping"></span>
+                    Pending Review
+                </span>
+                <a href="{% url 'admin:accept_account_deletion' original.pk %}" onclick="return confirm('CRITICAL CONFIRMATION:\n\nAre you sure you want to permanently erase and anonymize this account?\n\n- All wardrobe items and outfit photos will be permanently deleted.\n- Direct message threads will be preserved as \'Deleted User\'.\n- A GDPR deletion export email will be sent to {{ original.email }}.');" class="glossy-danger-btn">
+                    <span class="material-symbols-outlined text-base">delete_forever</span>
+                    Accept & Purge Account
+                </a>
+                {% elif original.status == 'completed' %}
+                <span class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30">
+                    <span class="material-symbols-outlined text-sm">check_circle</span>
+                    Purged & GDPR Anonymized
+                </span>
+                {% elif original.status == 'rejected' %}
+                <span class="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider bg-slate-500/20 text-slate-700 dark:text-slate-300 border border-slate-500/30">
+                    Rejected / Withdrawn
+                </span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="p-6 sm:p-8 flex flex-col gap-6">
+
+            <!-- Section 1: User Reason & Written Feedback -->
+            <div class="dos-tile border-l-4 border-l-indigo-500" style="padding: 16px 20px;">
+                <span class="dos-section-heading">
+                    <span class="material-symbols-outlined text-base text-indigo-500">help_outline</span>
+                    Deletion Justification & User Feedback
+                </span>
+                
+                <div class="dos-grid-2 mb-2">
+                    <div>
+                        <span class="dos-label">Primary Stated Reason</span>
+                        <div class="inline-flex items-center px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-500/20 mt-1">
+                            {{ original.reason|default:"I no longer need digital wardrobe management" }}
+                        </div>
+                    </div>
+                    <div>
+                        <span class="dos-label">Applicant Name & Email</span>
+                        <div class="dos-val mt-1" style="font-size: 0.95rem;">
+                            {{ original.name }} &lt;<span class="text-indigo-600 dark:text-indigo-400 font-semibold">{{ original.email }}</span>&gt;
+                        </div>
+                    </div>
+                </div>
+
+                {% if original.details %}
+                <div class="mt-3 pt-3 border-t border-[var(--dos-tile-border)]">
+                    <span class="dos-label">User's Detailed Written Explanation</span>
+                    <blockquote class="text-xs sm:text-sm mt-1 p-3 rounded-xl bg-black/5 dark:bg-white/5 border border-[var(--dos-tile-border)] italic leading-relaxed" style="color: var(--dos-text-body);">
+                        "{{ original.details }}"
+                    </blockquote>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Section 2: Target User Account Profile -->
+            <div>
+                <span class="dos-section-heading">
+                    <span class="material-symbols-outlined text-base text-blue-500">badge</span>
+                    Target User Account Identity Dossier
+                </span>
+
+                {% if user_info %}
+                <div class="dos-grid-4">
+                    <div class="dos-tile">
+                        <span class="dos-label">Account UUID</span>
+                        <div class="font-mono text-xs truncate mt-0.5" style="color: var(--dos-text-head);" title="{{ user_info.id }}">{{ user_info.id }}</div>
+                    </div>
+                    <div class="dos-tile">
+                        <span class="dos-label">Display Name</span>
+                        <div class="dos-val mt-0.5">{{ user_info.name|default:"Not specified" }}</div>
+                    </div>
+                    <div class="dos-tile">
+                        <span class="dos-label">Account Email</span>
+                        <div class="dos-val mt-0.5 text-indigo-600 dark:text-indigo-400 font-medium">{{ user_info.email }}</div>
+                    </div>
+                    <div class="dos-tile">
+                        <span class="dos-label">Phone Contact</span>
+                        <div class="dos-val mt-0.5">{{ user_info.phone|default:"Unlisted" }}</div>
+                    </div>
+                    <div class="dos-tile">
+                        <span class="dos-label">Auth Provider</span>
+                        <div class="dos-val capitalize mt-0.5">{{ user_info.auth_provider }}</div>
+                    </div>
+                    <div class="dos-tile">
+                        <span class="dos-label">Email Verified</span>
+                        <div class="mt-0.5 text-xs font-bold {% if user_info.is_email_verified %}text-emerald-600 dark:text-emerald-400{% else %}text-amber-600 dark:text-amber-400{% endif %}">
+                            {{ user_info.is_email_verified|yesno:"Verified Email,Unverified Email" }}
+                        </div>
+                    </div>
+                    <div class="dos-tile">
+                        <span class="dos-label">Date Joined</span>
+                        <div class="dos-val mt-0.5">{{ user_info.date_joined|date:"d M Y" }}</div>
+                    </div>
+                    <div class="dos-tile">
+                        <span class="dos-label">Last Active Login</span>
+                        <div class="dos-val mt-0.5">{{ user_info.last_login|date:"d M Y, H:i"|default:"Never" }}</div>
+                    </div>
+                </div>
+                {% else %}
+                <div class="p-5 rounded-2xl flex items-center gap-3 bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-200">
+                    <span class="material-symbols-outlined text-amber-500 text-xl">info</span>
+                    <div>
+                        <strong>Archived Account Record:</strong> No active user profile is bound to this request in the primary database (account was already purged under GDPR or submitted externally). The submitted applicant details and verification token are retained for legal audit compliance.
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Section 3: Digital Wardrobe Assets Footprint -->
+            <div>
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
+                    <span class="dos-section-heading" style="margin-bottom: 0;">
+                        <span class="material-symbols-outlined text-base text-amber-500">checkroom</span>
+                        Wardrobe Digital Assets (Will be permanently wiped)
+                    </span>
+                    <div class="flex items-center gap-4 text-xs">
+                        <span style="color: var(--dos-text-dim);">Total Pieces: <strong class="text-indigo-600 dark:text-indigo-400 font-bold">{{ wardrobe_stats.total_count }}</strong></span>
+                        <span style="color: var(--dos-text-dim);">Asset Valuation: <strong class="text-emerald-600 dark:text-emerald-400 font-bold">${{ wardrobe_stats.total_valuation|floatformat:2 }}</strong></span>
+                    </div>
+                </div>
+
+                {% if wardrobe_stats.total_count > 0 %}
+                <!-- Category Breakdown Badges -->
+                <div class="flex flex-wrap gap-2 mb-3">
+                    <span class="px-3 py-1 rounded-lg text-xs font-semibold bg-black/5 dark:bg-white/5 border border-[var(--dos-tile-border)]" style="color: var(--dos-text-body);">
+                        Tops: {{ wardrobe_stats.tops_count }}
+                    </span>
+                    <span class="px-3 py-1 rounded-lg text-xs font-semibold bg-black/5 dark:bg-white/5 border border-[var(--dos-tile-border)]" style="color: var(--dos-text-body);">
+                        Bottoms: {{ wardrobe_stats.bottoms_count }}
+                    </span>
+                    <span class="px-3 py-1 rounded-lg text-xs font-semibold bg-black/5 dark:bg-white/5 border border-[var(--dos-tile-border)]" style="color: var(--dos-text-body);">
+                        Outerwear/Dresses: {{ wardrobe_stats.outerwear_count }}
+                    </span>
+                    <span class="px-3 py-1 rounded-lg text-xs font-semibold bg-black/5 dark:bg-white/5 border border-[var(--dos-tile-border)]" style="color: var(--dos-text-body);">
+                        Shoes: {{ wardrobe_stats.shoes_count }}
+                    </span>
+                    <span class="px-3 py-1 rounded-lg text-xs font-semibold bg-black/5 dark:bg-white/5 border border-[var(--dos-tile-border)]" style="color: var(--dos-text-body);">
+                        Accessories: {{ wardrobe_stats.accessories_count }}
+                    </span>
+                </div>
+
+                <!-- Visual Wardrobe Items Cards Gallery -->
+                <div class="dos-wardrobe-grid">
+                    {% for item in wardrobe_stats.items %}
+                    <div class="dos-item-card">
+                        <div>
+                            <div class="w-full h-28 rounded-lg overflow-hidden bg-black/5 dark:bg-white/5 border border-[var(--dos-tile-border)] mb-2 flex items-center justify-center">
+                                {% if item.image %}
+                                <img src="{{ item.image.url }}" class="w-full h-full object-cover" alt="{{ item.name }}">
+                                {% else %}
+                                <span class="material-symbols-outlined text-3xl" style="color: var(--dos-text-dim);">checkroom</span>
+                                {% endif %}
+                            </div>
+                            <div class="text-xs font-bold truncate" style="color: var(--dos-text-head);" title="{{ item.name }}">{{ item.name }}</div>
+                            <div class="text-[11px] truncate mt-0.5" style="color: var(--dos-text-dim);">{{ item.brand|default:"Generic" }} &bull; {{ item.category }}</div>
+                        </div>
+                        <div class="flex items-center justify-between mt-2 pt-2 border-t border-[var(--dos-tile-border)] text-xs">
+                            <span class="text-[11px] font-semibold" style="color: var(--dos-text-dim);">{{ item.times_worn }}x worn</span>
+                            <span class="font-bold text-emerald-600 dark:text-emerald-400">${{ item.price|floatformat:2 }}</span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="p-6 rounded-2xl text-center flex flex-col items-center justify-center gap-1.5" style="background: var(--dos-tile-bg); border: 1px dashed var(--dos-tile-border);">
+                    <span class="material-symbols-outlined text-3xl" style="color: var(--dos-text-dim);">checkroom</span>
+                    <span class="text-xs font-medium" style="color: var(--dos-text-dim);">No active wardrobe pieces found for this user account (0 pieces registered or already erased).</span>
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Section 4: Social & Engagement Activity (Fixed Grid with Explicit Height) -->
+            <div>
+                <span class="dos-section-heading">
+                    <span class="material-symbols-outlined text-base text-indigo-500">hub</span>
+                    Social & Platform Activity (Will be deleted / Chat anonymized)
+                </span>
+
+                <div class="dos-grid-4">
+                    <div class="dos-tile">
+                        <span class="dos-label">Outfits Posted</span>
+                        <div class="dos-stat-val">{{ social_stats.outfits_count }}</div>
+                    </div>
+                    <div class="dos-tile">
+                        <span class="dos-label">24h Stories</span>
+                        <div class="dos-stat-val">{{ social_stats.stories_count }}</div>
+                    </div>
+                    <div class="dos-tile">
+                        <span class="dos-label">Followers / Following</span>
+                        <div class="dos-stat-val">{{ social_stats.followers_count }} <span class="text-xs font-normal text-slate-400">/</span> {{ social_stats.following_count }}</div>
+                    </div>
+                    <div class="dos-tile">
+                        <span class="dos-label">Closet Reward Points</span>
+                        <div class="dos-stat-val text-indigo-600 dark:text-indigo-400">{{ social_stats.closet_points }} <span class="text-xs font-bold">pts</span></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Section 5: GDPR & Google Play Legal Shield -->
+            <div class="p-5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-800 dark:text-amber-200 flex items-start gap-3.5">
+                <span class="material-symbols-outlined text-amber-500 text-2xl shrink-0 mt-0.5">verified_user</span>
+                <div class="flex flex-col gap-1 leading-relaxed">
+                    <strong class="font-bold text-sm">Google Play & GDPR Account Deletion Compliance Enforcement:</strong>
+                    <p>Executing "Accept & Purge Account" permanently purges all personal identifiers, clothing images, and outfit records from database tables. Direct message threads with active conversation partners remain intact with author anonymized as <strong>"Deleted User"</strong> to prevent breaking chat histories. A complete GDPR audit record is dispatched to <strong>{{ original.email }}</strong>.</p>
+                </div>
+            </div>
+
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Standard Form for Editing Status or Metadata -->
+    {{ block.super }}
+</div>
+{% endblock %}
