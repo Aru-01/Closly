@@ -113,13 +113,25 @@
         
         <div class="email-body">
             <div class="greeting">Hello {{ user.name }},</div>
-            <p class="intro-text">This email confirms that your Closly account and associated profile data have been successfully deleted from our system as requested.</p>
+            <p class="intro-text">This email confirms that your Closly account and associated profile data have been permanently deleted and anonymized from our system as requested.</p>
             
+            {% if summary %}
+            <div class="info-card" style="margin-bottom: 20px;">
+                <p style="font-weight: 600; color: #0f172a; margin-bottom: 8px;">Final Account Summary Record:</p>
+                <p style="margin-bottom: 4px;">• Account Name: <strong>{{ summary.name }}</strong></p>
+                <p style="margin-bottom: 4px;">• Registered Email: <strong>{{ summary.email }}</strong></p>
+                <p style="margin-bottom: 4px;">• Member Since: <strong>{{ summary.date_joined }}</strong></p>
+                <p style="margin-bottom: 4px;">• Wardrobe Items Purged: <strong>{{ summary.closet_items_count }}</strong></p>
+                <p style="margin-bottom: 4px;">• Outfit Posts Purged: <strong>{{ summary.outfits_count }}</strong></p>
+                <p>• Lifetime Reward Points Cleared: <strong>{{ summary.lifetime_points }}</strong></p>
+            </div>
+            {% endif %}
+
             <div class="info-card">
-                <p>We're sorry to see you go! If you ever wish to return, you are always welcome to register a new account at any time.</p>
+                <p>In accordance with GDPR & Google Play User Data policies, all your wardrobe photos, outfits, stories, follower connections, and personal identifiers have been completely purged from our active databases.</p>
             </div>
             
-            <p style="font-size: 13px; color: #94a3b8;">If you did not request this deletion, please contact our support team immediately.</p>
+            <p style="font-size: 13px; color: #94a3b8;">If you did not request this deletion or have questions, please contact our support team at support@myclosly.com.</p>
         </div>
         
         <div class="email-footer">
