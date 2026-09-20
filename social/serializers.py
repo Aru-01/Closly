@@ -105,20 +105,25 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
         uploaded_files = []
 
         if request and hasattr(request, 'FILES') and request.FILES:
+            get_file_list = getattr(
+                request.FILES,
+                'getlist',
+                lambda k: ([request.FILES[k]] if k in request.FILES else [])
+            )
             # 1. Check if multiple files are passed under 'images'
-            images_list = request.FILES.getlist('images')
+            images_list = get_file_list('images')
             if images_list:
                 uploaded_files = images_list
             else:
                 # 2. Check if multiple files are passed under 'image'
-                image_list = request.FILES.getlist('image')
+                image_list = get_file_list('image')
                 if image_list:
                     uploaded_files = image_list
                 else:
                     # 3. Check numbered keys like image_1, image_2, etc.
                     for key in sorted(request.FILES.keys()):
                         if key.startswith('image'):
-                            uploaded_files.extend(request.FILES.getlist(key))
+                            uploaded_files.extend(get_file_list(key))
 
         # Check for direct attribute (e.g. from unit tests passing 'image' file directly)
         if not uploaded_files and attrs.get('image'):
@@ -229,41 +234,48 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
         if 'warm_tag' in data and 'weather_tag' not in data:
             data['weather_tag'] = data['warm_tag']
 
-        # Support is_public boolean alias for visibility ('public'|'private')
-        if 'is_public' in data and 'visibility' not in data:
-            val = data['is_public']
-            if isinstance(val, str):
-                val = val.lower() in ('true', '1', 'yes')
-            data['visibility'] = 'public' if val else 'private'
+        # Clean up whitespace / extra quotes on visibility if provided
+        if 'visibility' in data:
+            v_val = str(data['visibility']).strip().lower().replace('"', '').replace("'", "")
+            data['visibility'] = v_val
 
         # Support stringified JSON, comma-separated, single int, or list for tagged_items
         if 'tagged_items' in data:
             items_val = data['tagged_items']
-            if isinstance(items_val, str):
-                items_val = items_val.strip()
-                if items_val.startswith('[') and items_val.endswith(']'):
-                    import json
-                    try:
-                        items_val = json.loads(items_val)
-                    except Exception:
-                        pass
-                elif ',' in items_val:
-                    items_val = [int(x.strip()) for x in items_val.split(',') if x.strip().isdigit()]
-                elif items_val.isdigit():
-                    items_val = [int(items_val)]
+            clean_ids = []
 
-            if isinstance(items_val, (int, float)):
-                data['tagged_items'] = [int(items_val)]
-            elif isinstance(items_val, list):
-                parsed = []
-                for x in items_val:
-                    if isinstance(x, int):
-                        parsed.append(x)
-                    elif isinstance(x, str) and x.strip().isdigit():
-                        parsed.append(int(x.strip()))
-                    elif hasattr(x, 'id'):
-                        parsed.append(x.id)
-                data['tagged_items'] = parsed
+            def _extract_ids(val):
+                if isinstance(val, (list, tuple)):
+                    for it in val:
+                        _extract_ids(it)
+                elif isinstance(val, dict) and 'id' in val:
+                    _extract_ids(val['id'])
+                elif hasattr(val, 'id'):
+                    _extract_ids(val.id)
+                elif isinstance(val, str):
+                    s = val.strip()
+                    if s.startswith('[') and s.endswith(']'):
+                        import json
+                        try:
+                            _extract_ids(json.loads(s))
+                            return
+                        except Exception:
+                            pass
+                    for part in s.split(','):
+                        part = part.strip()
+                        if part.isdigit():
+                            clean_ids.append(int(part))
+                elif isinstance(val, (int, float)):
+                    clean_ids.append(int(val))
+
+            _extract_ids(items_val)
+
+            # Important: Django QueryDict requires setlist for list values,
+            # otherwise assigning a list wraps it into a nested list [[pk]]
+            if hasattr(data, 'setlist'):
+                data.setlist('tagged_items', clean_ids)
+            else:
+                data['tagged_items'] = clean_ids
 
         return super().to_internal_value(data)
 
