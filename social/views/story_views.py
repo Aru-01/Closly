@@ -127,7 +127,17 @@ class StoryCreateView(APIView):
         }, status=status.HTTP_200_OK)
 
     def post(self, request):
-        serializer = StorySerializer(data=request.data, context={'request': request})
+        data = request.data.copy() if hasattr(request.data, 'copy') else dict(request.data)
+        # Ensure media / file alias from request.FILES is populated
+        for alias in ('media', 'file', 'media_file', 'picture', 'story_image'):
+            if hasattr(request, 'FILES') and alias in request.FILES and 'image' not in request.FILES:
+                data['image'] = request.FILES[alias]
+                break
+            elif alias in data and 'image' not in data:
+                data['image'] = data[alias]
+                break
+
+        serializer = StorySerializer(data=data, context={'request': request})
         if serializer.is_valid():
             story = serializer.save(user=request.user)
             return Response({

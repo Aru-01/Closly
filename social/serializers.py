@@ -13,7 +13,9 @@ from .models import (
     StoryView,
     StoryLike,
 )
+from closet.models import ClosetItem
 from closet.serializers import ClosetItemSerializer
+from django.db.models import F
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field
 
@@ -64,6 +66,8 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
     likes_count = serializers.ReadOnlyField()
     is_liked = serializers.SerializerMethodField()
     tagged_items_details = ClosetItemSerializer(source='tagged_items', many=True, read_only=True)
+    clothes = ClosetItemSerializer(source='tagged_items', many=True, read_only=True)
+    clothes_details = ClosetItemSerializer(source='tagged_items', many=True, read_only=True)
     style_category = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
     weather_tag = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
 
@@ -81,6 +85,8 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
             'weather_tag',
             'tagged_items',
             'tagged_items_details',
+            'clothes',
+            'clothes_details',
             'likes_count',
             'is_liked',
             'created_at',
@@ -148,6 +154,15 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
         outfit = TodayOutfit.objects.create(**validated_data)
         if tagged_items:
             outfit.tagged_items.set(tagged_items)
+            # Increment worn count for tagged clothes and update last_worn_at
+            item_ids = [it.id if hasattr(it, 'id') else it for it in tagged_items]
+            ClosetItem.objects.filter(id__in=item_ids).update(
+                times_worn=F('times_worn') + 1,
+                last_worn_at=timezone.now()
+            )
+            # Invalidate cached tagged_items if any so serializer output has updated times_worn
+            if hasattr(outfit, '_prefetched_objects_cache'):
+                outfit._prefetched_objects_cache.pop('tagged_items', None)
 
         # Store all uploaded images (orders 0, 1, 2, 3) in OutfitImage
         if uploaded_images:
@@ -169,7 +184,21 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
         instance.save()
 
         if tagged_items is not None:
+            # Increment worn count for newly added clothes
+            current_ids = set(instance.tagged_items.values_list('id', flat=True))
+            new_item_ids = [
+                (it.id if hasattr(it, 'id') else it)
+                for it in tagged_items
+                if (it.id if hasattr(it, 'id') else it) not in current_ids
+            ]
+            if new_item_ids:
+                ClosetItem.objects.filter(id__in=new_item_ids).update(
+                    times_worn=F('times_worn') + 1,
+                    last_worn_at=timezone.now()
+                )
             instance.tagged_items.set(tagged_items)
+            if hasattr(instance, '_prefetched_objects_cache'):
+                instance._prefetched_objects_cache.pop('tagged_items', None)
 
         # If new images were provided in update, replace existing images
         if uploaded_images:
@@ -190,9 +219,11 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
         else:
             data = dict(data)
 
-        # Support alias clothes_items -> tagged_items
-        if 'clothes_items' in data and 'tagged_items' not in data:
-            data['tagged_items'] = data['clothes_items']
+        # Support aliases for clothes: clothes, cloth_ids, clothes_ids, clothes_items, items, cloth_id -> tagged_items
+        for alias in ('clothes', 'cloth_ids', 'clothes_ids', 'clothes_items', 'items', 'cloth_id'):
+            if alias in data and 'tagged_items' not in data:
+                data['tagged_items'] = data[alias]
+                break
 
         # Support alias warm_tag -> weather_tag
         if 'warm_tag' in data and 'weather_tag' not in data:
@@ -205,7 +236,7 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
                 val = val.lower() in ('true', '1', 'yes')
             data['visibility'] = 'public' if val else 'private'
 
-        # Support stringified JSON or comma-separated tagged_items in multipart form-data
+        # Support stringified JSON, comma-separated, single int, or list for tagged_items
         if 'tagged_items' in data:
             items_val = data['tagged_items']
             if isinstance(items_val, str):
@@ -213,13 +244,26 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
                 if items_val.startswith('[') and items_val.endswith(']'):
                     import json
                     try:
-                        data['tagged_items'] = json.loads(items_val)
+                        items_val = json.loads(items_val)
                     except Exception:
                         pass
                 elif ',' in items_val:
-                    data['tagged_items'] = [int(x.strip()) for x in items_val.split(',') if x.strip().isdigit()]
+                    items_val = [int(x.strip()) for x in items_val.split(',') if x.strip().isdigit()]
                 elif items_val.isdigit():
-                    data['tagged_items'] = [int(items_val)]
+                    items_val = [int(items_val)]
+
+            if isinstance(items_val, (int, float)):
+                data['tagged_items'] = [int(items_val)]
+            elif isinstance(items_val, list):
+                parsed = []
+                for x in items_val:
+                    if isinstance(x, int):
+                        parsed.append(x)
+                    elif isinstance(x, str) and x.strip().isdigit():
+                        parsed.append(int(x.strip()))
+                    elif hasattr(x, 'id'):
+                        parsed.append(x.id)
+                data['tagged_items'] = parsed
 
         return super().to_internal_value(data)
 
@@ -321,7 +365,10 @@ class StorySerializer(serializers.ModelSerializer):
     Detailed serializer for a single story item.
     """
     user = UserSimpleSerializer(read_only=True)
-    image = AbsoluteImageField(max_length=500, required=True)
+    image = AbsoluteImageField(max_length=500, required=False)
+    caption = serializers.CharField(max_length=500, required=False, allow_blank=True, default='')
+    media = serializers.SerializerMethodField(read_only=True)
+    media_type = serializers.SerializerMethodField(read_only=True)
     views_count = serializers.ReadOnlyField()
     loves_count = serializers.ReadOnlyField()
     has_viewed = serializers.SerializerMethodField()
@@ -335,6 +382,8 @@ class StorySerializer(serializers.ModelSerializer):
             'id',
             'user',
             'image',
+            'media',
+            'media_type',
             'caption',
             'created_at',
             'expires_at',
@@ -345,7 +394,54 @@ class StorySerializer(serializers.ModelSerializer):
             'has_loved',
             'recent_viewers',
         ]
-        read_only_fields = ['id', 'user', 'created_at', 'expires_at', 'views_count', 'loves_count']
+        read_only_fields = ['id', 'user', 'created_at', 'expires_at', 'views_count', 'loves_count', 'media', 'media_type']
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'copy'):
+            data = data.copy()
+        else:
+            data = dict(data)
+
+        # Map media / file aliases to image
+        for alias in ('media', 'file', 'media_file', 'picture', 'story_image'):
+            if alias in data and 'image' not in data:
+                data['image'] = data[alias]
+                break
+
+        request = self.context.get('request')
+        if request and hasattr(request, 'FILES') and request.FILES:
+            for alias in ('media', 'file', 'media_file', 'picture', 'story_image'):
+                if alias in request.FILES and 'image' not in request.FILES:
+                    data['image'] = request.FILES[alias]
+                    break
+
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        if not attrs.get('image') and request and hasattr(request, 'FILES') and request.FILES:
+            for alias in ('image', 'media', 'file', 'media_file', 'picture', 'story_image'):
+                if alias in request.FILES:
+                    attrs['image'] = request.FILES[alias]
+                    break
+
+        if not attrs.get('image') and self.instance is None:
+            raise serializers.ValidationError({
+                'image': "Story picture or media file is required. Please upload an image file under 'media' or 'image'."
+            })
+
+        if attrs.get('image'):
+            validate_image_file(attrs['image'], max_mb=30)
+
+        return attrs
+
+    def get_media(self, obj):
+        if obj.image:
+            return build_absolute_media_url(obj.image, request=self.context.get('request'))
+        return None
+
+    def get_media_type(self, obj):
+        return 'image'
 
     def validate_image(self, value):
         if value:
