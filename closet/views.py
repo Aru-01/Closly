@@ -134,15 +134,17 @@ class WearTodayView(APIView):
 
 
 def get_wardrobe_analytics(user, items):
-    total_items = items.count()
+    items_list = list(items) if not isinstance(items, list) else items
+    total_items = len(items_list)
     now = timezone.now()
-    thirty_days_ago = now - timedelta(days=30)
+    fifteen_days_ago = now - timedelta(days=15)
 
-    # Ghost pieces: never worn (times_worn == 0) OR not worn in the last 30 days
-    ghost_items_qs = items.filter(
-        models.Q(times_worn=0) | models.Q(last_worn_at__lt=thirty_days_ago) | models.Q(last_worn_at__isnull=True)
-    ).distinct()
-    ghost_count = ghost_items_qs.count()
+    # Ghost pieces: never worn (times_worn == 0) OR not worn in the last 15 days
+    ghost_items = [
+        it for it in items_list
+        if it.times_worn == 0 or it.last_worn_at is None or it.last_worn_at < fifteen_days_ago
+    ]
+    ghost_count = len(ghost_items)
     active_count = max(0, total_items - ghost_count)
 
     utilization_rate = (active_count / total_items * 100) if total_items > 0 else 100.0
@@ -181,10 +183,9 @@ def get_wardrobe_analytics(user, items):
 
     # Environmental & Space Waste Impact of Ghost Pieces
     wasted_carbon_kg = round(ghost_count * 12.5, 2)
-    agg_res = ghost_items_qs.aggregate(total_cost=models.Sum('price'))
-    wasted_investment = float(agg_res.get('total_cost') or 0.0)
+    wasted_investment = float(sum((it.price or 0.0) for it in ghost_items))
     space_waste_pct = round((ghost_count / total_items * 100), 1) if total_items > 0 else 0.0
-    co2_saved = round(sum(max(0, it.times_worn - 1) for it in items) * 0.85, 2)
+    co2_saved = round(sum(max(0, it.times_worn - 1) for it in items_list) * 0.85, 2)
 
     return {
         'total_pieces': total_items,
@@ -204,7 +205,9 @@ def get_wardrobe_analytics(user, items):
             'co2_saved_kg': co2_saved,
             'summary': f"{ghost_count} unworn pieces represent {wasted_carbon_kg} kg of dormant CO2 and ${wasted_investment:,.2f} in idle closet space."
         },
-        'ghost_items_qs': ghost_items_qs
+        'ghost_items': ghost_items,
+        'ghost_items_qs': items if hasattr(items, 'filter') else ClosetItem.objects.filter(user=user, id__in=[it.id for it in ghost_items]),
+        'items_list': items_list
     }
 
 
@@ -229,15 +232,15 @@ class ClosetScoreDashboardView(APIView):
 
     def get(self, request):
         user = request.user
-        items = ClosetItem.objects.filter(user=user)
+        items = list(ClosetItem.objects.filter(user=user))
         analytics = get_wardrobe_analytics(user, items)
 
         # 1. Cost per wear (average across worn pieces)
         worn_items = [it for it in items if it.times_worn > 0]
         if worn_items:
             avg_cpw = round(sum(it.per_wear_cost for it in worn_items) / len(worn_items), 2)
-        elif items.exists():
-            avg_cpw = round(float(sum(it.price for it in items) / items.count()), 2)
+        elif items:
+            avg_cpw = round(float(sum((it.price or 0.0) for it in items) / len(items)), 2)
         else:
             avg_cpw = 0.0
 
@@ -274,7 +277,7 @@ class ClosetScoreDashboardView(APIView):
         else:
             look_pts = 6.0
         # - Category completeness (0 - 10 pts)
-        cat_count = items.values('category').distinct().count()
+        cat_count = len(set(it.category for it in items))
         cat_pts = min(10.0, cat_count * 2.5)
 
         raw_score = util_pts + cpw_pts + look_pts + cat_pts
@@ -348,7 +351,7 @@ class ClosetAuditView(APIView):
 
     def get(self, request):
         user = request.user
-        items = ClosetItem.objects.filter(user=user)
+        items = list(ClosetItem.objects.filter(user=user))
         analytics = get_wardrobe_analytics(user, items)
 
         # 1. 5 Most worn items ordered by per_wear_cost in INCREASING order ($2, $5, etc.)
@@ -356,7 +359,7 @@ class ClosetAuditView(APIView):
         worn_items_sorted = sorted(worn_items_list, key=lambda x: x.per_wear_cost)[:5]
 
         # 2. 5 Ghost pieces ordered by price in DESCENDING order (highest neglected investments)
-        ghost_items_sorted = analytics['ghost_items_qs'].order_by('-price')[:5]
+        ghost_items_sorted = sorted(analytics['ghost_items'], key=lambda x: (x.price or 0.0), reverse=True)[:5]
 
         return Response({
             'success': True,

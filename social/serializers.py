@@ -33,9 +33,20 @@ class UserSimpleSerializer(serializers.ModelSerializer):
         fields = ['id', 'email', 'name', 'country', 'city', 'profile_picture']
 
     def get_profile_picture(self, obj):
+        if not getattr(obj, 'is_active', True):
+            return None
         if obj.profile_picture:
             return build_absolute_media_url(obj.profile_picture, request=self.context.get('request'))
         return None
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        if not getattr(instance, 'is_active', True):
+            ret['name'] = 'Deleted User'
+            ret['profile_picture'] = None
+            ret['city'] = None
+            ret['country'] = None
+        return ret
 
 
 class OutfitImageSerializer(serializers.ModelSerializer):
@@ -488,8 +499,16 @@ class StorySerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated or obj.user_id != request.user.id:
             return None
-        recent_views = obj.views.select_related('viewer')[:5]
-        loved_user_ids = set(obj.likes.values_list('user_id', flat=True))
+        if 'views' in getattr(obj, '_prefetched_objects_cache', {}):
+            recent_views = list(obj.views.all())[:5]
+        else:
+            recent_views = list(obj.views.select_related('viewer')[:5])
+
+        if 'likes' in getattr(obj, '_prefetched_objects_cache', {}):
+            loved_user_ids = {l.user_id for l in obj.likes.all()}
+        else:
+            loved_user_ids = set(obj.likes.values_list('user_id', flat=True))
+
         return [
             {
                 'viewer': UserSimpleSerializer(v.viewer, context=self.context).data,

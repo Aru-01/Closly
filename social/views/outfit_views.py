@@ -308,7 +308,7 @@ class OutfitCalendarView(APIView):
         except (ValueError, TypeError):
             year, month = now.year, now.month
 
-        outfits = (
+        outfits = list(
             TodayOutfit.objects.filter(
                 user=request.user,
                 created_at__year=year,
@@ -346,7 +346,7 @@ class OutfitCalendarView(APIView):
                 'year': year,
                 'month': month,
                 'is_running_month': (year == now.year and month == now.month),
-                'total_outfits': outfits.count(),
+                'total_outfits': len(outfits),
                 'days': days_map
             }
         }, status=status.HTTP_200_OK)

@@ -9,6 +9,7 @@ Provides:
 import requests
 import logging
 from django.utils import timezone
+from django.core.cache import cache
 from closet.models import ClosetItem
 from users.utils import build_absolute_media_url
 
@@ -59,6 +60,11 @@ def get_live_weather(lat=None, lon=None, city=None, user=None):
     else:
         target_lat, target_lon = default_lat, default_lon
 
+    cache_key = f"live_weather:{round(target_lat, 2)}:{round(target_lon, 2)}"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
     now = timezone.now()
     day_name = now.strftime('%A')
     date_formatted = now.strftime('%d %b %Y')
@@ -81,7 +87,7 @@ def get_live_weather(lat=None, lon=None, city=None, user=None):
             code = int(current.get('weather_code', 2))
 
             condition, vibe, icon = WMO_WEATHER_CODES.get(code, ("Partly Cloudy", "Mild & Pleasant", "partly_cloudy"))
-            return {
+            weather_result = {
                 "day": day_name,
                 "date": date_formatted,
                 "city": city_name,
@@ -94,11 +100,13 @@ def get_live_weather(lat=None, lon=None, city=None, user=None):
                 "pressure": f"{pressure_mb} mb",
                 "icon": icon,
             }
+            cache.set(cache_key, weather_result, timeout=3600)  # Cache for 1 hour (3600 seconds)
+            return weather_result
     except Exception as e:
         logger.warning(f"Open-Meteo weather fetch failed: {e}. Using seasonal fallback.")
 
     # Graceful Fallback
-    return {
+    fallback_result = {
         "day": day_name,
         "date": date_formatted,
         "city": city_name,
@@ -111,6 +119,8 @@ def get_live_weather(lat=None, lon=None, city=None, user=None):
         "pressure": "1012 mb",
         "icon": "partly_cloudy",
     }
+    cache.set(cache_key, fallback_result, timeout=3600)
+    return fallback_result
 
 
 import json
@@ -122,6 +132,7 @@ def get_ai_daily_outfit_recommendation(user, user_items, weather, request=None):
     Leverages OpenAI GPT-4o as Closly's luxury personal stylist.
     Selects matching items from the user's available wardrobe for today's weather
     and produces an inspiring, tailored styling explanation.
+    Rotates items daily to ensure users discover and wear their whole closet.
     """
     api_key = getattr(settings, 'LLM_API_KEY', '') or ''
     if not api_key or not user_items:
@@ -148,6 +159,20 @@ def get_ai_daily_outfit_recommendation(user, user_items, weather, request=None):
             if parts:
                 prefs_text = "; ".join(parts)
 
+        # Deterministic daily rotation seed to order items for LLM visibility
+        now = timezone.now()
+        user_num = int(str(user.id).replace('-', '')[:8], 16) if hasattr(user, 'id') and user.id else 0
+        day_seed = now.date().toordinal() + user_num
+
+        # Sort items: prioritize least worn and least recently worn
+        sorted_items = sorted(
+            user_items,
+            key=lambda it: (it.times_worn, it.last_worn_at.timestamp() if it.last_worn_at else 0)
+        )
+        # Apply day offset so different items lead the candidate list across days
+        rotation_offset = day_seed % len(sorted_items)
+        rotated_candidates = sorted_items[rotation_offset:] + sorted_items[:rotation_offset]
+
         items_summary = [
             {
                 "id": it.id,
@@ -157,16 +182,19 @@ def get_ai_daily_outfit_recommendation(user, user_items, weather, request=None):
                 "brand": it.brand,
                 "times_worn": it.times_worn
             }
-            for it in user_items[:25]
+            for it in rotated_candidates[:25]
         ]
 
         temp = weather.get("temp", "20°C")
         condition = weather.get("condition", "Pleasant")
         vibe = weather.get("weather_vibe", "Mild")
+        day_name = weather.get("day", now.strftime('%A'))
+        date_str = weather.get("date", now.strftime('%d %b %Y'))
 
         prompt = f"""You are Closly's luxury AI fashion stylist.
-Select the most cohesive and stylish outfit from the user's available wardrobe for today's weather.
+Select the most cohesive and stylish outfit from the user's available digital wardrobe for today's weather.
 
+Date: {day_name}, {date_str}
 Today's Weather:
 - Temperature: {temp}
 - Sky Condition: {condition} ({vibe})
@@ -176,10 +204,19 @@ User Style Preferences: {prefs_text}
 Available Wardrobe Pieces:
 {json.dumps(items_summary, indent=2)}
 
-Guidelines:
-1. Select 1 top, 1 bottom, optional outerwear (if temperature is cold or rainy), shoes, and accessories if available.
-2. Only select IDs that exist in the provided list.
-3. Write an encouraging, chic, 2-3 sentence personalized styling explanation ("styling_description") telling the user why these exact pieces are perfect for today's weather and aesthetic.
+Stylist Instructions & Rotation Rules:
+1. DAILY WARDROBE ROTATION:
+   - Ensure the outfit recommendation varies day-to-day.
+   - Prioritize pieces that have 0 or few `times_worn` so the user utilizes their whole closet.
+   - Never recommend the exact same pieces day after day.
+2. HANDLING WARDROBE GAPS:
+   - If the user's closet contains multiple categories (top, bottom, shoes, etc.), compose a complete matching look.
+   - If the user only has items in ONE category (for example, only tops uploaded), choose today's best featured piece from that category, and in the styling explanation provide personalized advice on what bottoms and shoes to pair with it.
+3. WEATHER DEMAND:
+   - Cold (<14°C): Prioritize warm pieces, outerwear, jackets, or layering.
+   - Rain / Showers / Thunderstorm: Advise on water protection and layering.
+   - Warm (>21°C): Prioritize light, breathable tops or dresses.
+4. Only select IDs that exist in the provided Available Wardrobe Pieces.
 
 Respond with ONLY valid JSON:
 {{
@@ -191,7 +228,7 @@ Respond with ONLY valid JSON:
         response = client.chat.completions.create(
             model=model,
             max_tokens=400,
-            temperature=0.3,
+            temperature=0.7,
             messages=[{"role": "user", "content": prompt}]
         )
 
@@ -276,60 +313,124 @@ def suggest_daily_outfit(user, weather, request=None):
     Selects matching items from the user's online digital wardrobe (ClosetItem)
     tailored to today's temperature and conditions.
     First tries OpenAI GPT-4o Personal Stylist; falls back to deterministic rule engine.
+    Ensures smart daily rotation across the user's wardrobe and adapts to single-category wardrobes.
     """
     user_items = list(ClosetItem.objects.filter(user=user))
+    if not user_items:
+        return {
+            "pieces": [],
+            "styling_description": "Your digital closet is currently empty. Add your favorite clothes to receive personalized daily outfit recommendations.",
+            "item_ids_for_wear_today": [],
+            "total_pieces_selected": 0,
+        }
 
     # 1. Try OpenAI GPT-4o AI Personal Stylist
     ai_suggestion = get_ai_daily_outfit_recommendation(user, user_items, weather, request=request)
     if ai_suggestion:
         return ai_suggestion
 
-    # 2. Fallback to deterministic temperature-specific wardrobe logic
+    # 2. Fallback to deterministic temperature-specific wardrobe logic with daily rotation
     temp = weather.get("temp_val", 15.0)
     wind_str = weather.get("wind", "12 km/h")
     condition = weather.get("condition", "Partly Cloudy")
 
-    # Segregate by categories in-memory (1 query instead of 5 separate queries)
-    tops = [it for it in user_items if it.category == 'top']
-    bottoms = [it for it in user_items if it.category == 'bottom']
-    outerwears = [it for it in user_items if it.category == 'dresses_outerwear']
-    shoes = [it for it in user_items if it.category == 'shoes']
-    accessories = [it for it in user_items if it.category == 'accessories']
+    now = timezone.now()
+    user_num = int(str(user.id).replace('-', '')[:8], 16) if hasattr(user, 'id') and user.id else 0
+    day_seed = now.date().toordinal() + user_num
 
-    selected_top = tops[0] if tops else None
-    selected_bottom = bottoms[0] if bottoms else None
+    # Segregate by categories in-memory, sorted by least worn then least recently worn
+    def sort_items(items):
+        return sorted(
+            items,
+            key=lambda it: (it.times_worn, it.last_worn_at.timestamp() if it.last_worn_at else 0)
+        )
+
+    tops = sort_items([it for it in user_items if it.category == 'top'])
+    bottoms = sort_items([it for it in user_items if it.category == 'bottom'])
+    outerwears = sort_items([it for it in user_items if it.category == 'dresses_outerwear'])
+    shoes = sort_items([it for it in user_items if it.category == 'shoes'])
+    accessories = sort_items([it for it in user_items if it.category in ['accessories', 'other']])
+
+    # Pick rotated item for each category using day_seed
+    def pick_rotated(item_list, offset_extra=0):
+        if not item_list:
+            return None
+        idx = (day_seed + offset_extra) % len(item_list)
+        return item_list[idx]
+
+    selected_top = pick_rotated(tops)
+    selected_bottom = pick_rotated(bottoms)
+    selected_shoes = pick_rotated(shoes)
+    selected_acc = pick_rotated(accessories)
     selected_outerwear = None
-    selected_shoes = shoes[0] if shoes else None
-    selected_acc = accessories[0] if accessories else None
 
-    # Temperature-specific wardrobe logic
-    if temp < 14.0:
-        # Cold: Outerwear is required
+    # Weather flags
+    is_rain = any(w in condition.lower() for w in ['rain', 'drizzle', 'shower', 'storm', 'snow'])
+    is_cold = temp < 14.0
+    is_mild = 14.0 <= temp <= 21.0
+    is_warm = temp > 21.0
+
+    if is_cold:
+        # Cold: Outerwear is required if available
         if outerwears:
-            selected_outerwear = outerwears[0]
+            selected_outerwear = pick_rotated(outerwears)
+        
+        top_name = selected_top.name if selected_top else "warm top"
+        if selected_bottom:
+            bottom_desc = f"with {selected_bottom.name}"
+        else:
+            bottom_desc = "paired with dark slim jeans or tailored trousers"
+
         style_reason = (
             f"With temperatures at {temp}°C and {condition.lower()} skies, "
             f"layering is essential for thermal warmth. "
-            f"A structured coat or jacket layered over your {selected_top.name if selected_top else 'top'} "
-            f"with durable {selected_bottom.name if selected_bottom else 'trousers'} will keep you warm, comfortable, and chic."
+            + (f"Layer your {selected_outerwear.name} over your {top_name} " if selected_outerwear else f"Wear your {top_name} ")
+            + f"{bottom_desc} to stay warm, comfortable, and chic."
         )
-    elif 14.0 <= temp <= 21.0:
-        # Mild / Breezy: Light layering (blazer or jacket)
-        if outerwears:
-            selected_outerwear = outerwears[0]
+    elif is_mild:
+        # Mild / Breezy: Light layering
+        if outerwears and (temp < 18.0 or is_rain):
+            selected_outerwear = pick_rotated(outerwears)
+        
+        top_name = selected_top.name if selected_top else "versatile top"
+        if selected_bottom:
+            bottom_desc = f"with {selected_bottom.name}"
+        else:
+            bottom_desc = "paired with your favorite chinos or denim"
+
         style_reason = (
             f"Today's {temp}°C temperature and {wind_str} breeze call for smart transitional styling. "
-            f"Pairing your {selected_top.name if selected_top else 'favorite top'} "
-            + (f"under your {selected_outerwear.name} " if selected_outerwear else "")
-            + f"with {selected_bottom.name if selected_bottom else 'tailored bottoms'} offers the perfect balance of breathability and light wind protection."
+            f"Your featured piece today is the {top_name}"
+            + (f", layered under the {selected_outerwear.name} " if selected_outerwear else " ")
+            + f"{bottom_desc} for the ideal balance of breathability and comfort."
         )
     else:
         # Warm / Hot: Light and breathable
+        # In warm weather, a dress from dresses_outerwear can replace top+bottom
+        if outerwears and not selected_bottom and not selected_top:
+            selected_outerwear = pick_rotated(outerwears)
+
+        top_name = selected_top.name if selected_top else "light cotton piece"
+        if selected_bottom:
+            bottom_desc = f"paired with {selected_bottom.name}"
+        else:
+            bottom_desc = "paired with lightweight trousers or shorts"
+
         style_reason = (
             f"Enjoy the warm {temp}°C weather! "
-            f"A light, breathable {selected_top.name if selected_top else 'cotton top'} "
-            f"paired with {selected_bottom.name if selected_bottom else 'comfortable bottoms'} "
-            f"keeps you cool and effortless all day long."
+            f"Your {top_name} {bottom_desc} keeps you cool and effortless all day long."
+        )
+
+    # Append rain protection note if applicable
+    if is_rain:
+        style_reason += " Showers are expected today, so don't forget an umbrella and water-resistant footwear."
+
+    # If the user only has items in 1 category (e.g. only tops or only 1 item), acknowledge wardrobe rotation
+    if not selected_bottom and not selected_shoes and not selected_outerwear and selected_top:
+        style_reason = (
+            f"Today's weather ({temp}°C, {condition.lower()}) highlights your {selected_top.name} "
+            f"from {selected_top.brand or 'your closet'}. "
+            f"Style this rotating wardrobe staple with clean denim or neutral trousers to complete today's look."
         )
 
     # Format selected items
@@ -343,7 +444,7 @@ def suggest_daily_outfit(user, weather, request=None):
         (selected_shoes, "shoes"),
         (selected_acc, "accessories"),
     ]:
-        if item:
+        if item and item.id not in items_to_record:
             items_to_record.append(item.id)
             outfit_pieces.append({
                 "slot": slot,
@@ -355,6 +456,23 @@ def suggest_daily_outfit(user, weather, request=None):
                 "price": float(item.price),
                 "times_worn": item.times_worn,
                 "image": build_absolute_media_url(item.image, request=request)
+            })
+
+    # If user has multiple items but NONE matched the canonical 5 slots, pick the rotated item from whatever is available
+    if not outfit_pieces and user_items:
+        fallback_item = pick_rotated(sort_items(user_items))
+        if fallback_item:
+            items_to_record.append(fallback_item.id)
+            outfit_pieces.append({
+                "slot": "top",
+                "id": fallback_item.id,
+                "name": fallback_item.name,
+                "category": fallback_item.category,
+                "color": fallback_item.color,
+                "brand": fallback_item.brand,
+                "price": float(fallback_item.price),
+                "times_worn": fallback_item.times_worn,
+                "image": build_absolute_media_url(fallback_item.image, request=request)
             })
 
     return {

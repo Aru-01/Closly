@@ -197,9 +197,7 @@ class ExploreNewsfeedView(generics.ListAPIView):
                 style_q = Q()
                 for s in styles:
                     style_q |= Q(user__preferences__style_match__icontains=s) | Q(caption__icontains=s)
-                matched_qs = qs.filter(style_q)
-                if matched_qs.exists():
-                    qs = matched_qs
+                return qs.filter(style_q).order_by('-_likes_count', '-created_at')
             return qs.order_by('-_likes_count', '-created_at')
 
         elif category in ('minimalist', 'streetwear', 'classic', 'chic', 'casual', 'formal', 'bohemian', 'sporty'):
@@ -208,9 +206,7 @@ class ExploreNewsfeedView(generics.ListAPIView):
                 Q(caption__icontains=category) |
                 Q(user__preferences__style_match__icontains=category)
             )
-            filtered = qs.filter(cat_q)
-            if filtered.exists():
-                return filtered.order_by('-_likes_count', '-created_at')
+            return qs.filter(cat_q).order_by('-_likes_count', '-created_at')
 
         return qs.order_by('-_likes_count', '-created_at')
 

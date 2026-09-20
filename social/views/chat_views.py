@@ -67,6 +67,12 @@ class DirectMessageSendView(APIView):
                 'message': 'Invalid user ID format.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        if not recipient.is_active:
+            return Response({
+                'success': False,
+                'message': 'This user is no longer on Closly.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         shared_product = None
         if product_id:
             try:

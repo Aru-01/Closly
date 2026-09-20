@@ -37,7 +37,7 @@ def get_active_stories_for_user(request_user, request=None):
             expires_at__gt=now
         )
         .select_related('user')
-        .prefetch_related('views', 'likes')
+        .prefetch_related('views__viewer', 'likes')
         .order_by('-created_at')
     )
 
@@ -184,7 +184,8 @@ class MyStoriesListView(APIView):
         now = timezone.now()
         stories = (
             Story.objects.filter(user=request.user, is_active=True, expires_at__gt=now)
-            .prefetch_related('views', 'likes')
+            .select_related('user')
+            .prefetch_related('views__viewer', 'likes')
             .order_by('-created_at')
         )
         serializer = StorySerializer(stories, many=True, context={'request': request})
