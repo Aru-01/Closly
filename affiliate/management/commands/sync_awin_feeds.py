@@ -3,6 +3,7 @@ import gzip
 import decimal
 import io
 import random
+import re
 import requests
 from django.core.management.base import BaseCommand
 from django.db import transaction
@@ -139,6 +140,12 @@ class Command(BaseCommand):
         # Use a sync timestamp to identify stale products without storing all IDs
         sync_time = tz.now()
 
+        self.shopify_cache = {}
+        self.http_session = requests.Session()
+        self.http_session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
+
         success_count = 0
         skip_count = 0
         error_count = 0
@@ -170,6 +177,7 @@ class Command(BaseCommand):
                     category=r['category'],
                     advertiser_name=r['advertiser_name'],
                     colour=r['colour'],
+                    additional_image_urls=r.get('additional_image_urls', []),
                     is_active=r['is_active'],
                 )
                 for r in deduped.values()
@@ -180,7 +188,7 @@ class Command(BaseCommand):
                 unique_fields=['aw_product_id'],
                 update_fields=[
                     'source', 'name', 'brand', 'description', 'price',
-                    'rrp_price', 'currency', 'image_url', 'aw_deep_link',
+                    'rrp_price', 'currency', 'image_url', 'additional_image_urls', 'aw_deep_link',
                     'merchant_deep_link', 'category', 'advertiser_name',
                     'colour', 'is_active', 'updated_at',
                 ],
@@ -213,6 +221,15 @@ class Command(BaseCommand):
                     or row.get('merchant_image_url', '').strip()
                 )
 
+                additional_images = []
+                for extra_col in ('alternate_image', 'alternate_image_two', 'alternate_image_three', 'alternate_image_four', 'more_images', 'additional_images'):
+                    val = row.get(extra_col, '').strip()
+                    if val and val.startswith(('http://', 'https://')) and val not in additional_images and val != image_url:
+                        additional_images.append(val)
+
+                # Enrich Shopify stores (Needs No Label, aZengear)
+                additional_images = self._enrich_shopify_images(merchant_deep_link, image_url, additional_images)
+
                 price_str = row.get(COL['price'], '0').strip()
                 try:
                     price = decimal.Decimal(price_str) if price_str else decimal.Decimal('0.00')
@@ -229,21 +246,22 @@ class Command(BaseCommand):
                 is_active = in_stock_val not in ('0', 'false', 'no', 'out of stock', '')
 
                 batch.append({
-                    'aw_product_id':      aw_product_id,
-                    'name':               name,
-                    'brand':              brand,
-                    'description':        description,
-                    'price':              price,
-                    'rrp_price':          rrp_price,
-                    'currency':           currency,
-                    'image_url':          image_url,
-                    'aw_deep_link':       aw_deep_link,
-                    'merchant_deep_link': merchant_deep_link,
-                    'category':           category,
-                    'advertiser_name':    advertiser,
-                    'colour':             colour,
-                    'is_active':          is_active,
-                    'updated_at':         sync_time,
+                    'aw_product_id':          aw_product_id,
+                    'name':                   name,
+                    'brand':                  brand,
+                    'description':            description,
+                    'price':                  price,
+                    'rrp_price':              rrp_price,
+                    'currency':               currency,
+                    'image_url':              image_url,
+                    'additional_image_urls':  additional_images,
+                    'aw_deep_link':           aw_deep_link,
+                    'merchant_deep_link':     merchant_deep_link,
+                    'category':               category,
+                    'advertiser_name':        advertiser,
+                    'colour':                 colour,
+                    'is_active':              is_active,
+                    'updated_at':             sync_time,
                 })
                 success_count += 1
 
@@ -299,6 +317,33 @@ class Command(BaseCommand):
     # ------------------------------------------------------------------
     # Mock data generator for local testing without Awin
     # ------------------------------------------------------------------
+    def _enrich_shopify_images(self, merchant_deep_link, image_url, additional_images):
+        for domain in ('needsnolabel.com', 'azengear.com'):
+            if domain in (merchant_deep_link or '').lower():
+                m = re.search(r'/products/([a-zA-Z0-9\-_]+)', merchant_deep_link or '')
+                if m:
+                    handle = m.group(1)
+                    if handle not in self.shopify_cache:
+                        try:
+                            resp = self.http_session.get(f'https://{domain}/products/{handle}.json', timeout=4)
+                            if resp.status_code == 200:
+                                data = resp.json()
+                                self.shopify_cache[handle] = [
+                                    img['src'] for img in data.get('product', {}).get('images', []) if img.get('src')
+                                ]
+                            else:
+                                self.shopify_cache[handle] = []
+                        except Exception:
+                            self.shopify_cache[handle] = []
+
+                    clean_main = image_url.split('?')[0] if '?' in image_url else image_url
+                    for src in self.shopify_cache.get(handle, []):
+                        clean_src = src.split('?')[0] if '?' in src else src
+                        if clean_src not in clean_main and src not in additional_images:
+                            additional_images.append(src)
+                break
+        return additional_images
+
     def generate_mock_data(self):
         self.stdout.write('Generating mock fashion affiliate products...')
 

@@ -274,4 +274,124 @@ class AffiliateAPITests(APITestCase):
         self.assertEqual(len(female_items), 13) # 65% of 20
         self.assertEqual(len(male_items), 7)   # 35% of 20
 
+    def test_for_you_variant_deduplication_and_brand_diversity(self):
+        """Test For You feed collapses identical model variants (e.g. Uniqlo Puffer in Olive, Navy, Black)."""
+        # Create 3 color variants of the exact same Uniqlo model
+        AffiliateProduct.objects.create(
+            aw_product_id='test_uniqlo_olive',
+            name='Uniqlo Ultra Light Down Seamless Puffer (Olive)',
+            brand='Uniqlo',
+            category='Clothing & Accessories > Jackets & Coats',
+            price=69.90,
+            image_url='https://example.com/puffer.jpg',
+            is_active=True
+        )
+        AffiliateProduct.objects.create(
+            aw_product_id='test_uniqlo_navy',
+            name='Uniqlo Ultra Light Down Seamless Puffer (Navy)',
+            brand='Uniqlo',
+            category='Clothing & Accessories > Jackets & Coats',
+            price=69.90,
+            image_url='https://example.com/puffer.jpg',
+            is_active=True
+        )
+        AffiliateProduct.objects.create(
+            aw_product_id='test_uniqlo_black',
+            name='Uniqlo Ultra Light Down Seamless Puffer (Black)',
+            brand='Uniqlo',
+            category='Clothing & Accessories > Jackets & Coats',
+            price=69.90,
+            image_url='https://example.com/puffer.jpg',
+            is_active=True
+        )
+
+        # Create distinct items from other brands
+        AffiliateProduct.objects.create(
+            aw_product_id='test_nb_sneakers',
+            name='New Balance 997H Heritage Sneakers (White)',
+            brand='New Balance',
+            category='Clothing & Accessories > Shoes',
+            price=90.00,
+            image_url='https://example.com/nb.jpg',
+            is_active=True
+        )
+        AffiliateProduct.objects.create(
+            aw_product_id='test_ck_tee',
+            name='Calvin Klein Organic Cotton Logo Tee (Grey)',
+            brand='Calvin Klein',
+            category='Clothing & Accessories > Tops',
+            price=29.00,
+            image_url='https://example.com/ck.jpg',
+            is_active=True
+        )
+
+        url = reverse('affiliate:products-for-you') + '?page=1&page_size=20'
+        res = self.client.get(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        results = res.data['data']['results']
+        uniqlo_puffers = [p for p in results if 'Uniqlo Ultra Light Down Seamless Puffer' in p['name']]
+        # Exactly 1 Uniqlo puffer variant should be present, not 3!
+        self.assertEqual(len(uniqlo_puffers), 1)
+
+    def test_for_you_dynamic_refresh_with_seed(self):
+        """Test For You feed provides seed in pagination, is deterministic with same seed, and varies on refresh."""
+        # Create a collection of diverse products
+        for i in range(25):
+            AffiliateProduct.objects.create(
+                aw_product_id=f'test_seed_item_{i}',
+                name=f'Designer Essential Piece {i}',
+                brand=f'Brand {i % 5}',
+                category='Fashion Accessories',
+                price=30.00 + i,
+                image_url=f'https://example.com/item_{i}.jpg',
+                is_active=True
+            )
+
+        url = reverse('affiliate:products-for-you')
+        
+        # 1. First fetch — verify seed is assigned and included in response
+        res1 = self.client.get(url, {'page': 1, 'page_size': 10, 'seed': 11111})
+        self.assertEqual(res1.status_code, status.HTTP_200_OK)
+        self.assertIn('seed', res1.data['data'])
+        self.assertEqual(res1.data['data']['seed'], 11111)
+        next_link = res1.data['data']['next']
+        self.assertIsNotNone(next_link)
+        self.assertIn('seed=11111', next_link)
+
+        # 2. Fetch page 2 with the same seed — must have 0 overlap with page 1
+        res1_page2 = self.client.get(url, {'page': 2, 'page_size': 10, 'seed': 11111})
+        self.assertEqual(res1_page2.status_code, status.HTTP_200_OK)
+        ids_p1 = [p['id'] for p in res1.data['data']['results']]
+        ids_p2 = [p['id'] for p in res1_page2.data['data']['results']]
+        overlap = set(ids_p1).intersection(set(ids_p2))
+        self.assertEqual(len(overlap), 0)
+
+        # 3. Pull-to-refresh with new seed — must yield varied ordering
+        res2 = self.client.get(url, {'page': 1, 'page_size': 10, 'seed': 99999})
+        self.assertEqual(res2.status_code, status.HTTP_200_OK)
+        ids_refresh = [p['id'] for p in res2.data['data']['results']]
+        self.assertNotEqual(ids_p1, ids_refresh)
+
+    def test_for_you_excludes_mock_and_broken_products(self):
+        """Test mock products with fake URLs or closly_ ids are strictly excluded from feed."""
+        mock_prod = AffiliateProduct.objects.create(
+            aw_product_id='closly_men_9999',
+            name='Fake Mock Product (Never Route)',
+            brand='FakeBrand',
+            category='Clothing',
+            price=99.99,
+            image_url='https://example.com/fake.jpg',
+            aw_deep_link='https://www.awin1.com/cread.php?awinmid=99999&awinaffid=2612792&ued=https://example.com',
+            is_active=True
+        )
+
+        url = reverse('affiliate:products-for-you')
+        res = self.client.get(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        results = res.data['data']['results']
+        result_ids = [p['id'] for p in results]
+        self.assertNotIn(mock_prod.id, result_ids)
+
+
 

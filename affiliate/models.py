@@ -66,10 +66,13 @@ class AffiliateProduct(models.Model):
 
     currency = models.CharField(_('currency'), max_length=10, default='GBP')
 
-    # ------------------------------------------------------------------ #
-    # Images
-    # ------------------------------------------------------------------ #
     image_url = models.URLField(_('image URL'), max_length=2000, blank=True, default='')
+    additional_image_urls = models.JSONField(
+        _('additional image URLs'),
+        default=list,
+        blank=True,
+        help_text=_("List of additional product gallery images"),
+    )
 
     # ------------------------------------------------------------------ #
     # Links

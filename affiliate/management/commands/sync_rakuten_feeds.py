@@ -6,7 +6,9 @@ Auto-refreshes the OAuth token when expired.
 """
 import base64
 import decimal
+import re
 import time
+import urllib.parse
 import xml.etree.ElementTree as ET
 import requests
 from django.core.management.base import BaseCommand
@@ -39,6 +41,11 @@ class Command(BaseCommand):
         self.limit      = options.get('limit')
         self.page_size  = min(options.get('page_size', 100), 100)
         self.total      = 0
+        self.d1_cache   = {}
+        self.http_session = requests.Session()
+        self.http_session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        })
 
         if not self.token:
             self.stdout.write(self.style.ERROR('RAKUTEN_TOKEN not set in .env'))
@@ -161,8 +168,26 @@ class Command(BaseCommand):
                 brand = t('merchantname') or ''
                 description = t('description') or ''
                 category = t('categoryname') or ''
-                merchant_deep_link = t('clickurl') or t('buyurl') or link_url
+                real_merchant_url = ''
+                if link_url and 'murl=' in link_url:
+                    try:
+                        parsed = urllib.parse.urlparse(link_url)
+                        qs = urllib.parse.parse_qs(parsed.query)
+                        if 'murl' in qs and qs['murl']:
+                            real_merchant_url = qs['murl'][0]
+                    except Exception:
+                        pass
+                merchant_deep_link = real_merchant_url or t('clickurl') or t('buyurl') or link_url
                 colour = t('color') or t('colour') or ''
+
+                additional_images = self._enrich_additional_images(
+                    mid=mid,
+                    image_url=image_url,
+                    link_url=link_url,
+                    merchant_deep_link=merchant_deep_link,
+                    item=item,
+                    brand=brand,
+                )
 
                 deduped[network_id] = AffiliateProduct(
                     aw_product_id=network_id,
@@ -174,12 +199,13 @@ class Command(BaseCommand):
                     rrp_price=rrp if rrp and rrp != price else None,
                     currency=currency,
                     image_url=image_url,
+                    additional_image_urls=additional_images,
                     aw_deep_link=link_url,
                     merchant_deep_link=merchant_deep_link,
                     category=category,
                     advertiser_name=brand,
                     colour=colour,
-                    is_active=True,
+                    is_active=bool(price > 0 and image_url),
                 )
             except Exception as e:
                 self.stdout.write(self.style.ERROR(f'  Row error: {e}'))
@@ -191,12 +217,73 @@ class Command(BaseCommand):
                 unique_fields=['aw_product_id'],
                 update_fields=[
                     'source', 'name', 'brand', 'description', 'price',
-                    'rrp_price', 'currency', 'image_url', 'aw_deep_link',
+                    'rrp_price', 'currency', 'image_url', 'additional_image_urls', 'aw_deep_link',
                     'merchant_deep_link', 'category', 'advertiser_name',
                     'colour', 'is_active', 'updated_at',
                 ],
             )
         return len(deduped)
+
+    # ------------------------------------------------------------------ #
+    # Multi-image enrichment helper
+    # ------------------------------------------------------------------ #
+    def _enrich_additional_images(self, mid, image_url, link_url, merchant_deep_link, item, brand=''):
+        """
+        Enrich additional_images for Rakuten merchants who only provide a single imageurl
+        in their productsearch XML feed.
+        """
+        additional = []
+
+        # 1. Check XML tags if Rakuten includes any secondary image tags
+        for img_tag in ('largeimage', 'smallimage', 'alternateimage'):
+            val = (item.findtext(img_tag) or '').strip()
+            if val and val.startswith(('http://', 'https://')) and val != image_url and val not in additional:
+                additional.append(val)
+
+        if not image_url:
+            return additional
+
+        # 2. D1 Milano (MID 47344 - Shopify store: fetch genuine distinct gallery images)
+        if '47344' in str(mid) or 'd1milano' in (link_url or '').lower() or 'd1milano' in (merchant_deep_link or '').lower():
+            handle = None
+            for u in (merchant_deep_link, link_url):
+                unquoted = urllib.parse.unquote(u or '')
+                m = re.search(r'd1milano\.com/products/([a-zA-Z0-9\-_]+)', unquoted)
+                if m:
+                    handle = m.group(1)
+                    break
+            if handle:
+                if handle not in self.d1_cache:
+                    try:
+                        resp = self.http_session.get(f'https://d1milano.com/products/{handle}.json', timeout=4)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            imgs = [img['src'] for img in data.get('product', {}).get('images', []) if img.get('src')]
+                            self.d1_cache[handle] = imgs
+                        else:
+                            self.d1_cache[handle] = []
+                    except Exception:
+                        self.d1_cache[handle] = []
+                for img_src in self.d1_cache.get(handle, []):
+                    clean_src = img_src.split('?')[0] if '?' in img_src else img_src
+                    clean_main = image_url.split('?')[0] if '?' in image_url else image_url
+                    if clean_src != clean_main and img_src not in additional:
+                        additional.append(img_src)
+
+        # 3. Tory Burch EU (MID 43656 - Scene7 CDN multi-angle views)
+        if '43656' in str(mid) or 'tory burch' in (brand or '').lower() or 'toryburch' in (link_url or '').lower():
+            if '_SLANG' in image_url:
+                for view in ('SLSID', 'SLDET', 'SLTOP', 'SLBOT', 'SLBAC', 'SLFRO'):
+                    extra = re.sub(r'_SLANG(\.[^\s?]+|\?[^\s]*)', f'_{view}\\1', image_url)
+                    if extra != image_url and extra not in additional:
+                        additional.append(extra)
+            elif '_SLSID' in image_url:
+                for view in ('SLANG', 'SLDET', 'SLTOP', 'SLBOT', 'SLBAC', 'SLFRO'):
+                    extra = re.sub(r'_SLSID(\.[^\s?]+|\?[^\s]*)', f'_{view}\\1', image_url)
+                    if extra != image_url and extra not in additional:
+                        additional.append(extra)
+
+        return additional
 
     # ------------------------------------------------------------------ #
     # HTTP helper with auto token refresh

@@ -114,8 +114,10 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
     discount_percent = serializers.ReadOnlyField()
     affiliate_url    = serializers.SerializerMethodField()
     image_url        = serializers.SerializerMethodField()
+    images           = serializers.SerializerMethodField()
     is_loved         = serializers.SerializerMethodField()
     favorites_count  = serializers.SerializerMethodField()
+    clicks_count     = serializers.SerializerMethodField()
 
     class Meta:
         model = AffiliateProduct
@@ -132,12 +134,14 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
             'currency',
             'colour',
             'image_url',
+            'images',                # All available product images (gallery/carousel)
             'affiliate_url',         # use THIS for the 'Buy' button — deep links to product
             'merchant_deep_link',    # direct brand URL (no tracking, fallback)
             'advertiser_name',
             'source',
             'is_loved',
             'favorites_count',
+            'clicks_count',          # Total users who clicked 'Buy' on this product
             'is_active',
             'created_at',
             'updated_at',
@@ -146,6 +150,18 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
 
     def get_image_url(self, obj):
         return fix_image_url(obj.image_url)
+
+    def get_images(self, obj):
+        primary = fix_image_url(obj.image_url)
+        raw_extra = getattr(obj, 'additional_image_urls', []) or []
+        extra = [fix_image_url(u) for u in raw_extra if u and isinstance(u, str)]
+        res = []
+        if primary:
+            res.append(primary)
+        for u in extra:
+            if u not in res:
+                res.append(u)
+        return res
 
     def get_affiliate_url(self, obj):
         from .views import build_affiliate_url
@@ -161,3 +177,8 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
         if hasattr(obj, '_favorites_count'):
             return obj._favorites_count
         return obj.favorites.count()
+
+    def get_clicks_count(self, obj):
+        if hasattr(obj, '_clicks_count'):
+            return obj._clicks_count
+        return obj.clicks.count()
