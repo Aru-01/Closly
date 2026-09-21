@@ -397,18 +397,39 @@ class AffiliateProductForYouView(generics.ListAPIView):
     GET /api/affiliate/products/for-you/
 
     Returns personalized affiliate products recommended specifically for the current user
-    based on their UserPreference (style match, color palette, preferred brands, and categories).
-    If the user is not authenticated or has no preferences, returns curated popular products.
+    based on their UserPreference (style match, color palette, preferred brands, and categories)
+    and gender ratio balancing:
+    - If user gender is Male: 65% Male/Unisex products, 35% Female products.
+    - If user gender is Female: 65% Female products, 35% Male/Unisex products.
+    - If user gender is unspecified / other / unauthenticated: standard taste profile ranking.
     """
     permission_classes = [AllowAny]
     authentication_classes = [JWTAuthentication]
     serializer_class = AffiliateProductListSerializer
     pagination_class = NewsfeedPagination
 
-    def get_queryset(self):
-        qs = AffiliateProduct.objects.filter(is_active=True)
-        user = self.request.user
+    def _get_female_filter(self):
+        female_cats = ['women', 'dress', 'skirt']
+        female_cat_q = Q()
+        for fc in female_cats:
+            female_cat_q |= Q(category__icontains=fc)
 
+        female_brands = ['Twinset', 'Tory Burch Eu', 'Needs No Label', 'Needs no label']
+        female_brand_q = Q(brand__in=female_brands)
+
+        female_words = [
+            'dress', 'skirt', 'shirtdress', 'sundress', 'midaxi', 'midi dress', 'maxi dress', 'mini dress',
+            'wrap dress', 'mini-jupe', 'robe', 'camisole', 'halterneck', 'jumpsuit', 'strappy heels', 'heels',
+            'slingback', "d'orsay", 'pump', 'pumps', 'bra', 'brassière', 'bralette', 'bikini', 'blouse',
+            'soutien-gorge', 'satchel', 'maternity', 'mary jane', 'fille', 'swimsuit'
+        ]
+        female_word_q = Q()
+        for fw in female_words:
+            female_word_q |= Q(name__icontains=fw)
+
+        return female_cat_q | female_brand_q | female_word_q
+
+    def _apply_relevance_scoring(self, qs, user):
         if not user or not user.is_authenticated or not hasattr(user, 'preferences'):
             return qs.order_by('-created_at')
 
@@ -430,7 +451,7 @@ class AffiliateProductForYouView(generics.ListAPIView):
         # Build Q filters with relevance scoring
         brand_q = Q()
         for b in preferred_brands:
-            if b:
+            if b and b.strip():
                 brand_q |= Q(brand__icontains=b.strip())
 
         color_q = Q()
@@ -465,6 +486,86 @@ class AffiliateProductForYouView(generics.ListAPIView):
             return qs.annotate(relevance_score=score_expression).order_by('-relevance_score', '-created_at')
 
         return qs.order_by('-created_at')
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = AffiliateProduct.objects.filter(is_active=True)
+        return self._apply_relevance_scoring(qs, user)
+
+    def paginate_queryset(self, queryset):
+        user = self.request.user
+        gender = getattr(user, 'gender', None) if user and user.is_authenticated else None
+        if gender:
+            gender = gender.lower()
+
+        if gender not in ('male', 'female'):
+            return super().paginate_queryset(queryset)
+
+        female_filter = self._get_female_filter()
+        base_qs = AffiliateProduct.objects.filter(is_active=True)
+
+        scored_female = self._apply_relevance_scoring(base_qs.filter(female_filter), user)
+        scored_male = self._apply_relevance_scoring(base_qs.exclude(female_filter), user)
+
+        if gender == 'male':
+            primary_qs = scored_male
+            secondary_qs = scored_female
+        else:
+            primary_qs = scored_female
+            secondary_qs = scored_male
+
+        page_size = self.paginator.get_page_size(self.request) or getattr(self.paginator, 'page_size', 20) or 20
+        page_number_str = self.request.query_params.get(self.paginator.page_query_param, 1)
+        try:
+            page_number = int(page_number_str)
+            if page_number < 1:
+                page_number = 1
+        except (ValueError, TypeError):
+            page_number = 1
+
+        primary_target = int(round(page_size * 0.65))
+        secondary_target = page_size - primary_target
+
+        p_start = (page_number - 1) * primary_target
+        p_end = p_start + primary_target
+        s_start = (page_number - 1) * secondary_target
+        s_end = s_start + secondary_target
+
+        primary_batch = list(primary_qs[p_start:p_end])
+        secondary_batch = list(secondary_qs[s_start:s_end])
+
+        # Backfill if one pool is exhausted near the end of catalog
+        if len(primary_batch) < primary_target:
+            needed = primary_target - len(primary_batch)
+            extra_sec = list(secondary_qs[s_end:s_end + needed])
+            secondary_batch.extend(extra_sec)
+        elif len(secondary_batch) < secondary_target:
+            needed = secondary_target - len(secondary_batch)
+            extra_prim = list(primary_qs[p_end:p_end + needed])
+            primary_batch.extend(extra_prim)
+
+        # Smooth 2:1 Interleaving: (P, P, S, P, P, S...)
+        interleaved = []
+        p_i, s_i = 0, 0
+        while p_i < len(primary_batch) or s_i < len(secondary_batch):
+            for _ in range(2):
+                if p_i < len(primary_batch):
+                    interleaved.append(primary_batch[p_i])
+                    p_i += 1
+            if s_i < len(secondary_batch):
+                interleaved.append(secondary_batch[s_i])
+                s_i += 1
+
+        total_count = primary_qs.count() + secondary_qs.count()
+        from django.core.paginator import Paginator, Page
+        paginator = Paginator(range(total_count), page_size)
+        try:
+            self.paginator.page = paginator.page(page_number)
+        except Exception:
+            self.paginator.page = Page([], page_number, paginator)
+
+        self.paginator.request = self.request
+        return interleaved
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -501,6 +602,7 @@ class AffiliateProductForYouView(generics.ListAPIView):
 
         user = request.user
         prefs_summary = None
+        gender_summary = getattr(user, 'gender', None) if user and user.is_authenticated else None
         if user and user.is_authenticated and hasattr(user, 'preferences'):
             prefs = user.preferences
             prefs_summary = {
@@ -510,7 +612,13 @@ class AffiliateProductForYouView(generics.ListAPIView):
             }
         
         response.data['user_taste_profile'] = prefs_summary
-        response.data['message'] = "Personalized 'For You' products curated based on your Style DNA."
+        if gender_summary in ('male', 'female'):
+            response.data['gender_balance'] = {
+                'user_gender': gender_summary,
+                'primary_ratio': '65%',
+                'secondary_ratio': '35%',
+            }
+        response.data['message'] = "Personalized 'For You' products curated based on your Style DNA and balanced preferences."
         return response
 
 
