@@ -526,11 +526,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return build_absolute_media_url(obj.profile_picture, request=self.context.get('request'))
 
     def get_share_url(self, obj):
-        """Build full public profile share URL"""
+        """Build full public profile share URL using email handle"""
+        handle = obj.email.split('@')[0] if obj.email and '@' in obj.email else str(obj.id)
         request = self.context.get('request')
         if request is not None:
-            return request.build_absolute_uri(f"/u/{obj.id}/")
-        return f"https://closly.app/u/{obj.id}/"
+            return request.build_absolute_uri(f"/u/{handle}/")
+        return f"https://closly.app/u/{handle}/"
 
     def get_points_summary(self, obj):
         """Get points balance and tier info"""
@@ -549,24 +550,36 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def get_followers_count(self, obj):
         """Total followers count"""
+        if hasattr(obj, '_cached_followers_count'):
+            return obj._cached_followers_count
         try:
-            return obj.followers_set.count()
+            val = obj.followers_set.count()
         except Exception:
-            return 0
+            val = 0
+        obj._cached_followers_count = val
+        return val
 
     def get_following_count(self, obj):
         """Total following count"""
+        if hasattr(obj, '_cached_following_count'):
+            return obj._cached_following_count
         try:
-            return obj.following_set.count()
+            val = obj.following_set.count()
         except Exception:
-            return 0
+            val = 0
+        obj._cached_following_count = val
+        return val
 
     def get_looks_count(self, obj):
         """Total outfit looks created by user"""
+        if hasattr(obj, '_cached_looks_count'):
+            return obj._cached_looks_count
         try:
-            return obj.today_outfits.count()
+            val = obj.today_outfits.count()
         except Exception:
-            return 0
+            val = 0
+        obj._cached_looks_count = val
+        return val
 
     def get_outfit_count(self, obj):
         """Alias for looks_count matching other user profile response"""
@@ -578,10 +591,14 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def get_closet_count(self, obj):
         """Total items in user's digital wardrobe"""
+        if hasattr(obj, '_cached_closet_count'):
+            return obj._cached_closet_count
         try:
-            return obj.closet_items.count()
+            val = obj.closet_items.count()
         except Exception:
-            return 0
+            val = 0
+        obj._cached_closet_count = val
+        return val
 
     def get_style_dna(self, obj):
         """User's style DNA identities (e.g. ['minimalist', 'nordic'])"""

@@ -3,6 +3,7 @@ Utility functions for user authentication and token management
 """
 
 import secrets
+from urllib.parse import urlparse
 from django.core.mail import send_mail
 from django.conf import settings
 from django.template.loader import render_to_string
@@ -429,10 +430,34 @@ def validate_age(date_of_birth, min_age=13):
     return age >= min_age
 
 
+LOCAL_DEV_HOSTS = {'127.0.0.1', 'localhost', '0.0.0.0', '10.0.2.2', 'testserver'}
+
+
+def _normalize_media_url(url_str):
+    if not url_str:
+        return url_str
+    try:
+        parsed = urlparse(url_str)
+        hostname = (parsed.hostname or '').lower()
+        # If running locally (127.0.0.1, localhost, etc.), never force HTTPS because local dev server is plain HTTP
+        if hostname in LOCAL_DEV_HOSTS:
+            if url_str.startswith('https://'):
+                return 'http://' + url_str[8:]
+            return url_str
+        # For non-local hosts, honor FORCE_HTTPS_MEDIA_URL
+        if getattr(settings, 'FORCE_HTTPS_MEDIA_URL', False) and url_str.startswith('http://'):
+            return 'https://' + url_str[7:]
+    except Exception:
+        pass
+    return url_str
+
+
 def build_absolute_media_url(file_or_url, request=None):
     """
     Constructs a fully qualified absolute URL with scheme and host for media files.
-    Ensures URLs start with 'https://' when configured or when accessed via secure proxies.
+    Ensures URLs start with 'https://' when configured or when accessed via secure proxies,
+    while keeping local development hosts (127.0.0.1, localhost, etc.) on 'http://' to
+    prevent SSL handshake failures.
     """
     if not file_or_url:
         return None
@@ -450,9 +475,7 @@ def build_absolute_media_url(file_or_url, request=None):
 
     # If it's already a full URL
     if raw_url.startswith('http://') or raw_url.startswith('https://'):
-        if getattr(settings, 'FORCE_HTTPS_MEDIA_URL', False) and raw_url.startswith('http://'):
-            return 'https://' + raw_url[7:]
-        return raw_url
+        return _normalize_media_url(raw_url)
 
     media_url = getattr(settings, 'MEDIA_URL', '/media/')
     if not raw_url.startswith(media_url):
@@ -464,9 +487,7 @@ def build_absolute_media_url(file_or_url, request=None):
     if request is not None:
         try:
             abs_url = request.build_absolute_uri(clean_path)
-            if getattr(settings, 'FORCE_HTTPS_MEDIA_URL', False) and abs_url.startswith('http://'):
-                abs_url = 'https://' + abs_url[7:]
-            return abs_url
+            return _normalize_media_url(abs_url)
         except Exception:
             pass
 
@@ -474,8 +495,7 @@ def build_absolute_media_url(file_or_url, request=None):
     backend_url = getattr(settings, 'BACKEND_URL', '') or ''
     if backend_url:
         base = backend_url.rstrip('/')
-        if getattr(settings, 'FORCE_HTTPS_MEDIA_URL', False) and base.startswith('http://'):
-            base = 'https://' + base[7:]
-        return f"{base}{clean_path}"
+        full_url = f"{base}{clean_path}"
+        return _normalize_media_url(full_url)
 
     return clean_path

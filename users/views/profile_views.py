@@ -203,7 +203,8 @@ class ShareProfileAPIView(APIView):
         if not user.referral_code:
             user.save()
 
-        share_url = request.build_absolute_uri(f"/u/{user.id}/")
+        handle = user.email.split('@')[0] if user.email and '@' in user.email else str(user.id)
+        share_url = request.build_absolute_uri(f"/u/{handle}/")
         referral_code = user.referral_code
         share_text = f"Check out my fashion closet and daily styles on Closly! Join using my link: {share_url}?ref={referral_code}"
 
@@ -214,7 +215,7 @@ class ShareProfileAPIView(APIView):
                 'share_url': share_url,
                 'referral_code': referral_code,
                 'share_text': share_text,
-                'deep_link': f"closly://user/{user.id}?ref={referral_code}",
+                'deep_link': f"closly://user/{handle}?ref={referral_code}",
             }
         }, status=status.HTTP_200_OK)
 
@@ -224,16 +225,26 @@ class PublicProfileWebView(APIView):
     Public web landing page for a shared profile.
     Renders mobile-first luxury profile view with deep-link into Closly app.
     
-    GET /u/<uuid:user_id>/
+    GET /u/<str:user_id>/ (supports email handle, UUID, or email)
     """
     permission_classes = [AllowAny]
     authentication_classes = []
 
     def get(self, request, user_id):
+        profile_user = None
+        # 1. Try UUID lookup
         try:
             profile_user = User.objects.filter(pk=user_id).first()
-        except (ValueError, TypeError):
+        except (ValueError, TypeError, Exception):
             profile_user = None
+
+        # 2. Try email handle lookup (e.g. 'fabonin338' for 'fabonin338@blobapps.com')
+        if not profile_user:
+            profile_user = User.objects.filter(email__istartswith=f"{user_id}@").first()
+
+        # 3. Fallback to exact email match or username
+        if not profile_user:
+            profile_user = User.objects.filter(email__iexact=user_id).first()
 
         if not profile_user:
             from django.http import Http404

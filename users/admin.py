@@ -5,7 +5,7 @@ from django.contrib import messages
 from django.utils.html import format_html
 from django.urls import path, reverse
 from django.shortcuts import redirect
-from django.db.models import Sum
+from django.db.models import Sum, Count, Q
 from unfold.admin import ModelAdmin
 from unfold.decorators import display
 
@@ -23,6 +23,9 @@ from .utils import purge_and_anonymize_user
 
 @admin.register(UserPreference)
 class UserPreferenceAdmin(ModelAdmin):
+    list_select_related = ('user',)
+    show_full_result_count = False
+    autocomplete_fields = ('user',)
     list_display = [
         'user',
         'body_type',
@@ -49,9 +52,19 @@ class UserPreferenceAdmin(ModelAdmin):
     ]
     ordering = ['-created_at']
 
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user')
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj:
+            return ('user', 'created_at', 'updated_at')
+        return self.readonly_fields
+
 
 @admin.register(ProfileDataDeletionRequest)
 class ProfileDataDeletionRequestAdmin(ModelAdmin):
+    list_select_related = ('user',)
+    show_full_result_count = False
     list_display = ('email', 'status', 'created_at')
     list_filter = ('status',)
     search_fields = ('email',)
@@ -61,6 +74,8 @@ class ProfileDataDeletionRequestAdmin(ModelAdmin):
 @admin.register(AccountDeletionRequest)
 class AccountDeletionRequestAdmin(ModelAdmin):
     change_form_template = "admin/users/accountdeletionrequest/change_form.html"
+    list_select_related = ('user',)
+    show_full_result_count = False
     list_display = (
         'id',
         'user_display',
@@ -74,6 +89,19 @@ class AccountDeletionRequestAdmin(ModelAdmin):
     search_fields = ('name', 'email', 'reason', 'details')
     readonly_fields = ('user', 'created_at', 'updated_at', 'verification_token')
     actions = ['accept_and_purge_accounts', 'reject_deletion_requests']
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).select_related('user').annotate(
+            _closet_items_count=Count('user__closet_items', distinct=True)
+        )
+
+    def get_object(self, request, object_id, from_field=None):
+        cache_attr = f'_cached_del_obj_{object_id}'
+        if hasattr(request, cache_attr):
+            return getattr(request, cache_attr)
+        obj = super().get_object(request, object_id, from_field)
+        setattr(request, cache_attr, obj)
+        return obj
 
     fieldsets = (
         ("Request Status & Feedback", {
@@ -98,6 +126,8 @@ class AccountDeletionRequestAdmin(ModelAdmin):
 
     @display(description="Wardrobe Pieces")
     def wardrobe_items_count(self, obj):
+        if hasattr(obj, '_closet_items_count'):
+            return f"{obj._closet_items_count} pieces"
         if not obj.user:
             return "0 pieces"
         count = ClosetItem.objects.filter(user=obj.user).count()
@@ -195,14 +225,24 @@ class AccountDeletionRequestAdmin(ModelAdmin):
                         obj.save(update_fields=['user'])
 
                     items_qs = ClosetItem.objects.filter(user=u)
-                    total_items = items_qs.count()
-                    total_val = items_qs.aggregate(v=Sum('price'))['v'] or 0.0
+                    # Consolidate 7 queries into 1 single aggregate query
+                    stats = items_qs.aggregate(
+                        total_count=Count('id'),
+                        total_valuation=Sum('price'),
+                        tops=Count('id', filter=Q(category='top')),
+                        bottoms=Count('id', filter=Q(category='bottom')),
+                        outerwear=Count('id', filter=Q(category='dresses_outerwear')),
+                        shoes=Count('id', filter=Q(category='shoes')),
+                        accessories=Count('id', filter=Q(category__in=['accessories', 'other'])),
+                    )
+                    total_items = stats['total_count'] or 0
+                    total_val = stats['total_valuation'] or 0.0
 
-                    tops = items_qs.filter(category='top').count()
-                    bottoms = items_qs.filter(category='bottom').count()
-                    outerwear = items_qs.filter(category='dresses_outerwear').count()
-                    shoes = items_qs.filter(category='shoes').count()
-                    accessories = items_qs.filter(category__in=['accessories', 'other']).count()
+                    tops = stats['tops'] or 0
+                    bottoms = stats['bottoms'] or 0
+                    outerwear = stats['outerwear'] or 0
+                    shoes = stats['shoes'] or 0
+                    accessories = stats['accessories'] or 0
 
                     preview_items = list(items_qs[:10])
 
@@ -213,8 +253,11 @@ class AccountDeletionRequestAdmin(ModelAdmin):
                     following_count = getattr(u, 'following', None).count() if hasattr(u, 'following') else 0
 
                     from rewards.models import UserRewardProfile
-                    reward_p = UserRewardProfile.objects.filter(user=u).first()
-                    closet_points = reward_p.available_points if reward_p else 0
+                    closet_points = (
+                        UserRewardProfile.objects.filter(user=u)
+                        .values_list('available_points', flat=True)
+                        .first() or 0
+                    )
 
                     extra_context.update({
                         'user_info': {
@@ -277,7 +320,18 @@ class UserAdmin(BaseUserAdmin):
     """
     Custom User Admin with enhanced display and filters
     """
-    
+    show_full_result_count = False
+
+    def get_object(self, request, object_id, from_field=None):
+        if request and getattr(request, 'user', None) and request.user.is_authenticated and str(request.user.pk) == str(object_id):
+            return request.user
+        cache_attr = f'_cached_user_obj_{object_id}'
+        if hasattr(request, cache_attr):
+            return getattr(request, cache_attr)
+        obj = super().get_object(request, object_id, from_field)
+        setattr(request, cache_attr, obj)
+        return obj
+
     # Display fields in list view
     list_display = [
         'email',
@@ -398,7 +452,9 @@ class UserLoginHistoryAdmin(admin.ModelAdmin):
     """
     Admin interface for User Login History
     """
-    
+    list_select_related = ('user',)
+    show_full_result_count = False
+
     # Display fields in list view
     list_display = [
         'user',
