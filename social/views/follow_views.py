@@ -239,6 +239,9 @@ class OtherUserProfileView(APIView):
         if pic_url and not pic_url.startswith(('http://', 'https://')):
             pic_url = request.build_absolute_uri(pic_url)
 
+        pref_target = getattr(target_user, 'preferences', None)
+        target_styles = pref_target.style_match if pref_target and pref_target.style_match else []
+
         return Response({
             'success': True,
             'message': f"Profile of {target_user.name or 'User'} retrieved successfully.",
@@ -256,7 +259,11 @@ class OtherUserProfileView(APIView):
                 'followers_count': followers_count,
                 'following_count': following_count,
                 'outfit_count': outfit_count,
+                'outfits_count': outfit_count,
+                'looks_count': outfit_count,
                 'closet_count': closet_count,
+                'style_dna': target_styles,
+                'style_match': target_styles,
                 'dna_match': dna,
             }
         }, status=status.HTTP_200_OK)

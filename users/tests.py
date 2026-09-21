@@ -276,3 +276,36 @@ class UserPreferenceAndLoginTestCase(TestCase):
         res_fake = self.client.post(refresh_url, {'refresh': str(fake_refresh)}, format='json')
         self.assertEqual(res_fake.status_code, status.HTTP_401_UNAUTHORIZED)
         self.assertFalse(res_fake.data['success'])
+
+    def test_self_profile_includes_counts_and_style_dna(self):
+        """Test GET /api/users/profile/ includes followers, following, looks, closet counts and style_dna."""
+        from users.models import UserPreference
+        pref, _ = UserPreference.objects.get_or_create(user=self.user)
+        pref.style_match = ['minimalist', 'nordic', 'streetwear']
+        pref.save()
+
+        self.client.force_authenticate(user=self.user)
+        url = reverse('users:profile')
+        res = self.client.get(url)
+
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data['success'])
+        data = res.data['data']
+
+        # Verify all requested fields exist
+        self.assertIn('followers_count', data)
+        self.assertIn('following_count', data)
+        self.assertIn('looks_count', data)
+        self.assertIn('outfit_count', data)
+        self.assertIn('closet_count', data)
+        self.assertIn('style_dna', data)
+        self.assertIn('style_match', data)
+        self.assertIn('current_tier', data)
+
+        # Verify style_dna content
+        self.assertEqual(data['style_dna'], ['minimalist', 'nordic', 'streetwear'])
+        self.assertEqual(data['style_match'], ['minimalist', 'nordic', 'streetwear'])
+        self.assertIsInstance(data['followers_count'], int)
+        self.assertIsInstance(data['following_count'], int)
+        self.assertIsInstance(data['looks_count'], int)
+        self.assertIsInstance(data['closet_count'], int)

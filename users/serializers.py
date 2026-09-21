@@ -413,6 +413,42 @@ class UserProfileSerializer(serializers.ModelSerializer):
     points_summary = serializers.SerializerMethodField(
         help_text="Current points balance and tier status"
     )
+
+    followers_count = serializers.SerializerMethodField(
+        help_text="Total number of users following this user"
+    )
+
+    following_count = serializers.SerializerMethodField(
+        help_text="Total number of users this user is following"
+    )
+
+    looks_count = serializers.SerializerMethodField(
+        help_text="Total number of outfit looks created by user"
+    )
+
+    outfit_count = serializers.SerializerMethodField(
+        help_text="Alias for looks_count matching other user profile response"
+    )
+
+    outfits_count = serializers.SerializerMethodField(
+        help_text="Plural alias for looks_count"
+    )
+
+    closet_count = serializers.SerializerMethodField(
+        help_text="Total number of wardrobe items in digital closet"
+    )
+
+    style_dna = serializers.SerializerMethodField(
+        help_text="User's style DNA preferences (e.g. ['minimalist', 'nordic'])"
+    )
+
+    style_match = serializers.SerializerMethodField(
+        help_text="List of user's style match keys"
+    )
+
+    current_tier = serializers.SerializerMethodField(
+        help_text="User's current reward loyalty tier (e.g. Bronze, Silver, Gold, Platinum, Diamond)"
+    )
     
     class Meta:
         model = User
@@ -435,6 +471,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'referral_code',
             'share_url',
             'points_summary',
+            'current_tier',
+            'followers_count',
+            'following_count',
+            'looks_count',
+            'outfit_count',
+            'outfits_count',
+            'closet_count',
+            'style_dna',
+            'style_match',
             'date_joined',
             'last_login',
         ]
@@ -448,6 +493,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'referral_code',
             'share_url',
             'points_summary',
+            'current_tier',
+            'followers_count',
+            'following_count',
+            'looks_count',
+            'outfit_count',
+            'outfits_count',
+            'closet_count',
+            'style_dna',
+            'style_match',
             'date_joined',
             'last_login',
         ]
@@ -492,6 +546,63 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'total_points': available,
             **tier_info
         }
+
+    def get_followers_count(self, obj):
+        """Total followers count"""
+        try:
+            return obj.followers_set.count()
+        except Exception:
+            return 0
+
+    def get_following_count(self, obj):
+        """Total following count"""
+        try:
+            return obj.following_set.count()
+        except Exception:
+            return 0
+
+    def get_looks_count(self, obj):
+        """Total outfit looks created by user"""
+        try:
+            return obj.today_outfits.count()
+        except Exception:
+            return 0
+
+    def get_outfit_count(self, obj):
+        """Alias for looks_count matching other user profile response"""
+        return self.get_looks_count(obj)
+
+    def get_outfits_count(self, obj):
+        """Plural alias for looks_count"""
+        return self.get_looks_count(obj)
+
+    def get_closet_count(self, obj):
+        """Total items in user's digital wardrobe"""
+        try:
+            return obj.closet_items.count()
+        except Exception:
+            return 0
+
+    def get_style_dna(self, obj):
+        """User's style DNA identities (e.g. ['minimalist', 'nordic'])"""
+        try:
+            if hasattr(obj, 'preferences') and obj.preferences:
+                return obj.preferences.style_match or []
+        except Exception:
+            pass
+        return []
+
+    def get_style_match(self, obj):
+        """Alias for style_dna"""
+        return self.get_style_dna(obj)
+
+    def get_current_tier(self, obj):
+        """User's loyalty tier name"""
+        try:
+            reward_profile = getattr(obj, 'reward_profile', None)
+            return reward_profile.current_tier if reward_profile else 'Bronze'
+        except Exception:
+            return 'Bronze'
 
     # Mood tracking removed from the project. Any mood-related data/relations
     # have been intentionally omitted from the serializer.
