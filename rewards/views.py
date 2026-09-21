@@ -35,11 +35,12 @@ class RewardPointsSummaryView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def get(self, request):
-        # 1. Process any expired points in real time
-        process_expired_points(request.user)
-
-        # 2. Fetch profile
+        # 1. Fetch profile once
         profile, _ = UserRewardProfile.objects.get_or_create(user=request.user)
+
+        # 2. Process any expired points in real time using the fetched profile
+        process_expired_points(request.user, profile=profile)
+
         tier_info = get_tier_info(profile.lifetime_points, profile.available_points)
 
         return Response({
@@ -86,13 +87,19 @@ class RewardPointsHistoryView(generics.ListAPIView):
     serializer_class = RewardPointTransactionSerializer
     pagination_class = StandardRewardsPagination
 
+    def _get_reward_profile(self):
+        if not hasattr(self, '_cached_reward_profile'):
+            self._cached_reward_profile, _ = UserRewardProfile.objects.get_or_create(user=self.request.user)
+        return self._cached_reward_profile
+
     def get_queryset(self):
-        process_expired_points(self.request.user)
+        profile = self._get_reward_profile()
+        process_expired_points(self.request.user, profile=profile)
         return RewardPointTransaction.objects.filter(user=self.request.user).order_by('-created_at')
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
-        profile, _ = UserRewardProfile.objects.get_or_create(user=request.user)
+        profile = self._get_reward_profile()
         response.data['available_points'] = profile.available_points
         response.data['lifetime_points'] = profile.lifetime_points
         response.data['current_tier'] = profile.current_tier

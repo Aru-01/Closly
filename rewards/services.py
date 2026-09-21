@@ -84,14 +84,15 @@ def get_tier_info(lifetime_points, available_points=None):
     }
 
 
-def process_expired_points(user):
+def process_expired_points(user, profile=None):
     """
     Evaluates transactions that passed their 60-day validity.
     Deducts expired points from available_points.
     DOES NOT deduct from lifetime_points (user's tier is preserved permanently).
     """
     now = timezone.now()
-    profile, _ = UserRewardProfile.objects.get_or_create(user=user)
+    if profile is None:
+        profile, _ = UserRewardProfile.objects.get_or_create(user=user)
 
     expired_txs = RewardPointTransaction.objects.filter(
         user=user,
