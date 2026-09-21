@@ -60,7 +60,7 @@ class ClosetItem(models.Model):
         ordering = ['-created_at']
 
     def __str__(self):
-        return f"{self.name} ({self.get_category_display()}) - {self.user.email}"
+        return f"{self.name} ({self.get_category_display()})"
 
     @property
     def per_wear_cost(self):
