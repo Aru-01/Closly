@@ -76,11 +76,29 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
     images_details = serializers.SerializerMethodField()
     likes_count = serializers.ReadOnlyField()
     is_liked = serializers.SerializerMethodField()
+    tagged_items = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=ClosetItem.objects.none(),
+        required=False
+    )
     tagged_items_details = ClosetItemSerializer(source='tagged_items', many=True, read_only=True)
-    clothes = ClosetItemSerializer(source='tagged_items', many=True, read_only=True)
-    clothes_details = ClosetItemSerializer(source='tagged_items', many=True, read_only=True)
+    # clothes = serializers.SerializerMethodField()
+    # clothes_details = serializers.SerializerMethodField()
     style_category = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
     weather_tag = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get('request')
+        # Only populate the full queryset on write operations (POST, PUT, PATCH)
+        # Prevents DRF HTML form renderers on GET requests from loading all closet items
+        if request and request.method in ('POST', 'PUT', 'PATCH'):
+            if request.user and request.user.is_authenticated:
+                self.fields['tagged_items'].queryset = ClosetItem.objects.filter(user=request.user)
+            else:
+                self.fields['tagged_items'].queryset = ClosetItem.objects.all()
+        else:
+            self.fields['tagged_items'].queryset = ClosetItem.objects.none()
 
     class Meta:
         model = TodayOutfit
@@ -96,8 +114,8 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
             'weather_tag',
             'tagged_items',
             'tagged_items_details',
-            'clothes',
-            'clothes_details',
+            # 'clothes',
+            # 'clothes_details',
             'likes_count',
             'is_liked',
             'created_at',
@@ -323,14 +341,39 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.BooleanField)
     def get_is_liked(self, obj):
+        if hasattr(obj, '_is_liked'):
+            return obj._is_liked
+
         liked_outfit_ids = self.context.get('liked_outfit_ids')
         if liked_outfit_ids is not None:
-            return obj.id in liked_outfit_ids
+            obj._is_liked = obj.id in liked_outfit_ids
+            return obj._is_liked
 
         request = self.context.get('request')
         if request and request.user.is_authenticated:
-            return OutfitLike.objects.filter(outfit=obj, user=request.user).exists()
+            if not hasattr(request, '_liked_outfit_cache'):
+                request._liked_outfit_cache = {}
+            if obj.id not in request._liked_outfit_cache:
+                request._liked_outfit_cache[obj.id] = OutfitLike.objects.filter(
+                    outfit_id=obj.id, user_id=request.user.id
+                ).exists()
+            obj._is_liked = request._liked_outfit_cache[obj.id]
+            return obj._is_liked
         return False
+
+    # def get_clothes(self, obj):
+    #     return []
+
+    # def get_clothes_details(self, obj):
+    #     return []
+
+    # def to_representation(self, instance):
+    #     ret = super().to_representation(instance)
+    #     # Both 'clothes' and 'clothes_details' can reuse the exact same serialized list from 'tagged_items_details' if needed:
+    #     # items_details = ret.get('tagged_items_details', [])
+    #     # ret['clothes'] = items_details
+    #     # ret['clothes_details'] = items_details
+    #     return ret
 
 
 class UserFollowSerializer(serializers.ModelSerializer):

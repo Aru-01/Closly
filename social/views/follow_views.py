@@ -280,11 +280,18 @@ class UserOutfitsListView(generics.ListAPIView):
     serializer_class = TodayOutfitSerializer
     pagination_class = StandardSocialPagination
 
+    def _get_target_user(self):
+        if not hasattr(self, '_target_user'):
+            user_id = self.kwargs.get('user_id')
+            try:
+                self._target_user = get_object_or_404(User, pk=user_id)
+            except (ValidationError, ValueError):
+                self._target_user = None
+        return self._target_user
+
     def get_queryset(self):
-        user_id = self.kwargs.get('user_id')
-        try:
-            target_user = get_object_or_404(User, pk=user_id)
-        except (ValidationError, ValueError):
+        target_user = self._get_target_user()
+        if not target_user:
             return TodayOutfit.objects.none()
 
         # If viewing own profile, show all; if viewing others, show public only

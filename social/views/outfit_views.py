@@ -379,9 +379,18 @@ class OutfitDetailView(generics.RetrieveUpdateDestroyAPIView):
     def get_serializer_context(self):
         context = super().get_serializer_context()
         if self.request.user.is_authenticated:
-            context['liked_outfit_ids'] = set(
-                OutfitLike.objects.filter(user=self.request.user).values_list('outfit_id', flat=True)
-            )
+            raw_req = getattr(self.request, '_request', self.request)
+            if not hasattr(raw_req, '_cached_liked_outfit_ids'):
+                lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+                pk = self.kwargs.get(lookup_url_kwarg) or self.kwargs.get('pk')
+                if pk:
+                    is_liked = OutfitLike.objects.filter(user_id=self.request.user.id, outfit_id=pk).exists()
+                    raw_req._cached_liked_outfit_ids = {int(pk)} if is_liked else set()
+                else:
+                    raw_req._cached_liked_outfit_ids = set(
+                        OutfitLike.objects.filter(user_id=self.request.user.id).values_list('outfit_id', flat=True)
+                    )
+            context['liked_outfit_ids'] = raw_req._cached_liked_outfit_ids
         return context
 
     def retrieve(self, request, *args, **kwargs):
@@ -464,6 +473,7 @@ class OutfitLikersListView(APIView):
         return Response({
             'success': True,
             'message': f"Users who liked outfit {pk} retrieved successfully.",
+            'total_count': len(likers),
             'data': likers_data
         }, status=status.HTTP_200_OK)
 
