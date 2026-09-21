@@ -36,6 +36,8 @@ services:
     container_name: closly_web
     restart: unless-stopped
     command: daphne -b 0.0.0.0 -p 8000 Config.asgi:application
+    env_file:
+      - .env
     volumes:
       - .:/app
       - ./media:/app/media
@@ -63,6 +65,8 @@ services:
     container_name: closly_celery_worker
     restart: unless-stopped
     command: celery -A Config worker -l info
+    env_file:
+      - .env
     volumes:
       - .:/app
       - ./media:/app/media
@@ -78,6 +82,8 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
     depends_on:
+      db:
+        condition: service_healthy
       redis:
         condition: service_healthy
 
@@ -86,6 +92,8 @@ services:
     container_name: closly_celery_beat
     restart: unless-stopped
     command: celery -A Config beat -l info
+    env_file:
+      - .env
     volumes:
       - .:/app
     environment:
@@ -100,6 +108,8 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
     depends_on:
+      db:
+        condition: service_healthy
       redis:
         condition: service_healthy
 
