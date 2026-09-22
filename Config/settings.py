@@ -556,3 +556,103 @@ LOGGING = {
         },
     },
 }
+
+# OpenAPI & Swagger Documentation Settings (drf-spectacular)
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Closly API Ecosystem',
+    'DESCRIPTION': (
+        'Comprehensive OpenAPI 3.0 specification for Closly - Intelligent Digital Wardrobe, '
+        'Fashion Social Network, AI Stylist & Affiliate E-Commerce Platform.\n\n'
+        '### Authentication\n'
+        'Most endpoints require a JWT Bearer Token in the `Authorization` header:\n'
+        '```\n'
+        'Authorization: Bearer <your_access_token>\n'
+        '```'
+    ),
+    'VERSION': '2.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'COMPONENT_SPLIT_REQUEST': True,
+    'SCHEMA_PATH_PREFIX': r'/api/',
+    'SWAGGER_UI_SETTINGS': {
+        'deepLinking': True,
+        'persistAuthorization': True,
+        'displayOperationId': False,
+        'filter': True,
+        'docExpansion': 'none',
+        'defaultModelsExpandDepth': 1,
+        'defaultModelExpandDepth': 1,
+        'displayRequestDuration': True,
+        'syntaxHighlight.theme': 'monokai',
+        'showExtensions': True,
+        'showCommonExtensions': True,
+        'tryItOutEnabled': True,
+    },
+    'REDOC_UI_SETTINGS': {
+        'theme': {
+            'colors': {
+                'primary': {
+                    'main': '#6366F1',
+                }
+            }
+        }
+    },
+    'TAGS': [
+        {
+            'name': 'Authentication & Security',
+            'description': 'User signup, login, Firebase phone/social auth, OTP verification, and JWT token rotation.',
+        },
+        {
+            'name': 'User Profile & Preferences',
+            'description': 'User profile management, styling preferences, language settings, and public profile sharing.',
+        },
+        {
+            'name': 'Account Privacy & GDPR',
+            'description': 'GDPR compliant account deletion and profile data erasure requests with email confirmation tokens.',
+        },
+        {
+            'name': 'Closet & Digital Wardrobe',
+            'description': 'Digital closet inventory, clothing item cataloging, category tagging, and wear tracking.',
+        },
+        {
+            'name': 'AI Wardrobe Scanner & Vision',
+            'description': 'AI-driven computer vision scanning, dominant color extraction, wardrobe audit, and score analytics.',
+        },
+        {
+            'name': 'Outfits & Looks',
+            'description': 'Daily outfit creation, lookbook items, calendar styling, outfit likes, and today weather recommendations.',
+        },
+        {
+            'name': 'Social Feed & Network',
+            'description': 'Public & following newsfeeds, user discovery, explore grid, and follower/following relationship graphs.',
+        },
+        {
+            'name': 'Stories & Ephemeral Moments',
+            'description': '24-hour ephemeral stories, user story rings, story view logging, reactions, and story replies.',
+        },
+        {
+            'name': 'Direct Messaging & Chat',
+            'description': 'Real-time 1-on-1 direct conversations, chat history, unread counters, and instant message dispatch.',
+        },
+        {
+            'name': 'Affiliate Products & Scraping',
+            'description': 'Monetized affiliate product discovery, For-You recommendations, click tracking, brands, and saved wishlists.',
+        },
+        {
+            'name': 'Rewards & Gamification',
+            'description': 'Closly points balance, milestone rewards, points history, and verified purchase points claims.',
+        },
+        {
+            'name': 'Push Notifications',
+            'description': 'User in-app notifications, unread notification management, and push notification preferences.',
+        },
+        {
+            'name': 'Legal & Compliance',
+            'description': 'Privacy policy, terms of service, support portal, and account deletion web forms.',
+        },
+        {
+            'name': 'System Gateway & Heartbeat',
+            'description': 'API root directory, system health check (PostgreSQL + Redis), uptime ping heartbeat, and Postman specs.',
+        },
+    ],
+}
+

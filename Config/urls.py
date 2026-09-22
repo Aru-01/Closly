@@ -18,7 +18,6 @@ from .views import (
 urlpatterns = [
     # API Gateway Root Dashboard
     path("", ApiRootView.as_view(), name="api-root-gateway"),
-    path("api/", ApiRootView.as_view(), name="api-root-gateway-api"),
     # OpenAPI 3.0, Swagger UI & Redoc Documentation
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(
@@ -26,8 +25,7 @@ urlpatterns = [
         SpectacularSwaggerView.as_view(url_name="schema"),
         name="swagger-ui",
     ),
-
-    path("api/redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
+    path("redoc/", SpectacularRedocView.as_view(url_name="schema"), name="redoc"),
     path(
         "api/docs/postman/",
         PostmanCollectionDownloadView.as_view(),
@@ -36,8 +34,6 @@ urlpatterns = [
     # Health Check & Uptime Heartbeat Pings (prevents cold starts)
     path("api/health/", HealthCheckView.as_view(), name="health-check"),
     path("api/health/ping/", PingHeartbeatView.as_view(), name="health-ping"),
-    path("health/", HealthCheckView.as_view(), name="health-check-short"),
-    path("ping/", PingHeartbeatView.as_view(), name="ping-short"),
     # Admin & App Modules
     path("admin/", admin.site.urls),
     path("api/users/", include("users.urls")),
@@ -57,6 +53,7 @@ if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
     try:
         from debug_toolbar.toolbar import debug_toolbar_urls
+
         urlpatterns += debug_toolbar_urls()
     except ImportError:
         pass
