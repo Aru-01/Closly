@@ -85,6 +85,14 @@ class UserProfileSerializer(serializers.ModelSerializer):
         help_text="User's current reward loyalty tier (e.g. Bronze, Silver, Gold, Platinum, Diamond)"
     )
     
+    is_online = serializers.SerializerMethodField(
+        help_text="Whether user is currently online or active within last 5 minutes"
+    )
+
+    last_seen = serializers.SerializerMethodField(
+        help_text="ISO datetime string of user's last activity or logout"
+    )
+
     class Meta:
         model = User
         fields = [
@@ -117,6 +125,8 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'style_match',
             'date_joined',
             'last_login',
+            'is_online',
+            'last_seen',
         ]
         read_only_fields = [
             'id',
@@ -255,6 +265,14 @@ class UserProfileSerializer(serializers.ModelSerializer):
             return reward_profile.current_tier if reward_profile else 'Bronze'
         except Exception:
             return 'Bronze'
+
+    def get_is_online(self, obj):
+        from users.utils import is_user_online
+        return is_user_online(obj.id)
+
+    def get_last_seen(self, obj):
+        from users.utils import get_user_last_seen
+        return get_user_last_seen(obj)
 
     def validate_name(self, value):
         """Validate name"""

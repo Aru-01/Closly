@@ -27,6 +27,13 @@ from .common_utils import (
     purge_and_anonymize_user,
 )
 
+from .user_activity import (
+    set_user_online,
+    set_user_offline,
+    is_user_online,
+    get_user_last_seen,
+)
+
 __all__ = [
     'initialize_firebase',
     'verify_firebase_token',
@@ -44,4 +51,8 @@ __all__ = [
     'calculate_age',
     'validate_age',
     'purge_and_anonymize_user',
+    'set_user_online',
+    'set_user_offline',
+    'is_user_online',
+    'get_user_last_seen',
 ]
