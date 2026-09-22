@@ -83,15 +83,6 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-# Conditionally enable debug_toolbar in development if installed
-if DEBUG:
-    try:
-        import debug_toolbar
-        INSTALLED_APPS.append("debug_toolbar")
-        MIDDLEWARE.append("debug_toolbar.middleware.DebugToolbarMiddleware")
-    except ImportError:
-        pass
-
 INTERNAL_IPS = [
     "127.0.0.1",
 ]
