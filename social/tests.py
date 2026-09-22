@@ -55,6 +55,55 @@ class SocialApiTests(TestCase):
         self.assertEqual(conv_res.status_code, status.HTTP_200_OK)
         self.assertEqual(len(conv_res.data['data']['results']), 1)
 
+    def test_direct_messaging_image_compression(self):
+        import io
+        from PIL import Image
+
+        # Create a test PIL image (large 1600x1200)
+        img_buffer = io.BytesIO()
+        img = Image.new('RGB', (1600, 1200), color='blue')
+        img.save(img_buffer, format='JPEG', quality=95)
+        img_buffer.seek(0)
+
+        uploaded_img = SimpleUploadedFile("chat_test.jpg", img_buffer.read(), content_type="image/jpeg")
+
+        # Send ONLY image (no text content)
+        msg_url = '/api/social/messages/'
+        data = {
+            'recipient_id': str(self.user2.id),
+            'image': uploaded_img,
+        }
+        res = self.client.post(msg_url, data, format='multipart')
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data['data']['message_type'], 'image')
+        self.assertTrue(res.data['data']['image'])
+        self.assertEqual(res.data['data']['content'], '')
+
+        # Check saved message in DB and that dimensions were scaled down
+        msg = DirectMessage.objects.get(id=res.data['data']['id'])
+        self.assertEqual(msg.message_type, 'image')
+        saved_img = Image.open(msg.image)
+        self.assertLessEqual(saved_img.width, 1280)
+        self.assertLessEqual(saved_img.height, 1280)
+
+    def test_direct_messaging_shared_outfit(self):
+        # Create an outfit
+        dummy_image = SimpleUploadedFile("outfit.jpg", b"outfit_bytes", content_type="image/jpeg")
+        outfit = TodayOutfit.objects.create(user=self.user1, image=dummy_image, caption="My Cool Outfit", visibility="public")
+
+        msg_url = '/api/social/messages/'
+        data = {
+            'recipient_id': str(self.user2.id),
+            'outfit_id': outfit.id,
+            'content': 'Check out my outfit!'
+        }
+        res = self.client.post(msg_url, data)
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data['data']['message_type'], 'outfit')
+        self.assertIsNotNone(res.data['data']['outfit_preview'])
+        self.assertEqual(res.data['data']['outfit_preview']['id'], outfit.id)
+        self.assertEqual(res.data['data']['outfit_preview']['caption'], 'My Cool Outfit')
+
     def test_conversations_inbox(self):
         user3 = User.objects.create_user(
             email='user3@example.com',

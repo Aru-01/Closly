@@ -16,6 +16,7 @@ from .media_utils import (
     LOCAL_DEV_HOSTS,
     _normalize_media_url,
     build_absolute_media_url,
+    compress_chat_image,
 )
 from .common_utils import (
     generate_otp,
@@ -36,6 +37,7 @@ __all__ = [
     'LOCAL_DEV_HOSTS',
     '_normalize_media_url',
     'build_absolute_media_url',
+    'compress_chat_image',
     'generate_otp',
     'get_client_ip',
     'get_user_agent',

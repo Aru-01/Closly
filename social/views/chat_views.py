@@ -1,3 +1,4 @@
+import logging
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -16,8 +17,10 @@ from social.serializers import (
 )
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 
+logger = logging.getLogger(__name__)
 User = get_user_model()
 from users.validators import validate_image_file
+from users.utils import compress_chat_image
 from .outfit_views import StandardSocialPagination
 from .story_views import get_active_stories_for_user
 
@@ -117,6 +120,7 @@ class DirectMessageSendView(APIView):
         if image_file:
             try:
                 validate_image_file(image_file, max_mb=30)
+                image_file = compress_chat_image(image_file)
             except ValidationError as e:
                 return Response({
                     'success': False,
@@ -158,6 +162,23 @@ class DirectMessageSendView(APIView):
                 pass
 
         serializer = DirectMessageSerializer(message, context={'request': request})
+
+        # Broadcast in real time to recipient's WebSocket channel group
+        try:
+            from channels.layers import get_channel_layer
+            from asgiref.sync import async_to_sync
+            channel_layer = get_channel_layer()
+            if channel_layer:
+                async_to_sync(channel_layer.group_send)(
+                    f"user_{recipient.id}",
+                    {
+                        "type": "chat_message_handler",
+                        "data": serializer.data
+                    }
+                )
+        except Exception as ws_err:
+            logger.warning(f"Failed to broadcast chat message via WebSocket: {ws_err}")
+
         return Response({
             'success': True,
             'message': 'Message sent successfully.',
