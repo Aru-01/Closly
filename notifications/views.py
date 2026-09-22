@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
 
 from .models import Notification
 from .serializers import NotificationSerializer
@@ -24,6 +25,17 @@ class StandardNotificationPagination(PageNumberPagination):
         })
 
 
+@extend_schema(
+    tags=["Push Notifications"],
+    summary="List User Notifications",
+    description="Retrieve paginated in-app notifications for authenticated user, with unread count and unread_only filter.",
+    parameters=[
+        OpenApiParameter('unread_only', bool, description="Filter only unread notifications if true"),
+    ],
+    responses={
+        200: NotificationSerializer(many=True),
+    }
+)
 class NotificationListView(generics.ListAPIView):
     """
     API endpoint to list in-app notifications for the authenticated user.
@@ -49,6 +61,15 @@ class NotificationListView(generics.ListAPIView):
         return response
 
 
+@extend_schema(
+    tags=["Push Notifications"],
+    summary="Mark Notification as Read",
+    description="Mark a specific in-app notification as read.",
+    responses={
+        200: OpenApiResponse(description="Notification marked as read"),
+        404: OpenApiResponse(description="Notification not found"),
+    }
+)
 class NotificationMarkReadView(APIView):
     """
     API endpoint to mark a single notification as read.
@@ -69,6 +90,14 @@ class NotificationMarkReadView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+@extend_schema(
+    tags=["Push Notifications"],
+    summary="Mark All Notifications as Read",
+    description="Mark all unread notifications as read for current user.",
+    responses={
+        200: OpenApiResponse(description="All notifications marked as read"),
+    }
+)
 class NotificationMarkAllReadView(APIView):
     """
     API endpoint to mark all notifications as read for current user.
