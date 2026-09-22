@@ -26,7 +26,7 @@ class StandardNotificationPagination(PageNumberPagination):
 
 
 @extend_schema(
-    tags=["Push Notifications"],
+    tags=["User Notifications"],
     summary="List User Notifications",
     description="Retrieve paginated in-app notifications for authenticated user, with unread count and unread_only filter.",
     parameters=[
@@ -62,7 +62,7 @@ class NotificationListView(generics.ListAPIView):
 
 
 @extend_schema(
-    tags=["Push Notifications"],
+    tags=["User Notifications"],
     summary="Mark Notification as Read",
     description="Mark a specific in-app notification as read.",
     responses={
@@ -91,7 +91,7 @@ class NotificationMarkReadView(APIView):
 
 
 @extend_schema(
-    tags=["Push Notifications"],
+    tags=["User Notifications"],
     summary="Mark All Notifications as Read",
     description="Mark all unread notifications as read for current user.",
     responses={

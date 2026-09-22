@@ -13,6 +13,9 @@ class Notification(models.Model):
         ('points_earned', 'Points Earned'),
         ('points_expired', 'Points Expired'),
         ('tier_upgrade', 'Tier Upgrade'),
+        ('closet_item_added', 'Closet Item Added'),
+        ('outfit_shared', 'Outfit Shared'),
+        ('story_reaction', 'Story Reaction'),
         ('system', 'System Announcement'),
     ]
 
