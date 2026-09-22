@@ -21,12 +21,13 @@ if str(DRESS_ANALYZER_DIR) not in sys.path:
 
 # Directly import the exact AI team service and components from dress-analyzer-ai
 try:
-    import service as ai_service
-    from schemas import DressAnalysisResult
+    import service as ai_service  # type: ignore[import-not-found]
+    from schemas import DressAnalysisResult  # type: ignore[import-not-found]
     AI_TEAM_MODULE_AVAILABLE = True
 except Exception as e:
     logger.warning(f"Could not import dress-analyzer-ai directly: {e}")
     ai_service = None
+    DressAnalysisResult = None  # type: ignore[assignment]
     AI_TEAM_MODULE_AVAILABLE = False
 
 
@@ -209,7 +210,7 @@ def run_direct_dress_analysis(file_or_bytes, mime_type: str = 'image/jpeg') -> d
         raw_json = ai_service._sanitize_price(raw_json)
 
         # Validate through AI team's Pydantic schema
-        validated_result = ai_service.DressAnalysisResult(**raw_json)
+        validated_result = DressAnalysisResult(**raw_json) if DressAnalysisResult else ai_service.DressAnalysisResult(**raw_json)
         out_dict = validated_result.model_dump()
         out_dict["is_garment"] = True
 

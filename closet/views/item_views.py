@@ -66,6 +66,18 @@ class ClosetItemListCreateView(generics.ListCreateAPIView):
         except Exception as e:
             logger.warning(f"Error awarding points for adding closet item: {e}")
 
+        try:
+            from notifications.services import create_notification
+            create_notification(
+                recipient=self.request.user,
+                notification_type='closet_item_added',
+                title='Closet Item Added',
+                message=f"'{item.name}' has been added to your digital wardrobe!",
+                data={'item_id': item.id, 'category': item.category}
+            )
+        except Exception as e:
+            logger.debug(f"Error creating closet item notification: {e}")
+
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
         return Response({
