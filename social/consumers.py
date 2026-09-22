@@ -27,6 +27,9 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         await self.channel_layer.group_add(self.user_group, self.channel_name)
         await self.accept()
 
+        from users.utils import set_user_online
+        set_user_online(str(self.user.id))
+
         await self.send_json({
             "type": "connection_established",
             "message": "Connected to Closly Real-Time Chat.",
@@ -36,9 +39,17 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
     async def disconnect(self, close_code):
         if hasattr(self, "user_group"):
             await self.channel_layer.group_discard(self.user_group, self.channel_name)
+        if hasattr(self, "user") and self.user and self.user.is_authenticated:
+            from users.utils import set_user_offline
+            set_user_offline(str(self.user.id))
 
     async def receive_json(self, content):
         event_type = content.get("type", "chat_message")
+
+        # Refresh online presence on any incoming event
+        if hasattr(self, "user") and self.user and self.user.is_authenticated:
+            from users.utils import set_user_online
+            set_user_online(str(self.user.id))
 
         if event_type in ("chat_message", "send_message"):
             await self.handle_send_message(content)
@@ -52,11 +63,30 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         elif event_type in ("ping", "heartbeat"):
             await self.send_json({"type": "pong", "timestamp": timezone.now().isoformat()})
 
+        elif event_type in ("get_user_status", "user_status"):
+            await self.handle_user_status(content)
+
         else:
             await self.send_json({
                 "type": "error",
                 "message": f"Unknown event type '{event_type}'."
             })
+
+    async def handle_user_status(self, content):
+        target_user_id = content.get("user_id")
+        if not target_user_id:
+            await self.send_json({"type": "error", "message": "user_id is required."})
+            return
+
+        from users.utils import is_user_online, get_user_last_seen
+        online = is_user_online(target_user_id)
+        last_seen = get_user_last_seen(target_user_id)
+        await self.send_json({
+            "type": "user_status",
+            "user_id": str(target_user_id),
+            "is_online": online,
+            "last_seen": last_seen,
+        })
 
     async def handle_send_message(self, content):
         recipient_id = content.get("recipient_id")

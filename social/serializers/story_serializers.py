@@ -118,6 +118,8 @@ class StorySerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         if not request or not request.user.is_authenticated:
             return False
+        if obj.user_id == request.user.id:
+            return False
         loved_story_ids = self.context.get('loved_story_ids')
         if loved_story_ids is not None:
             return obj.id in loved_story_ids
@@ -128,14 +130,14 @@ class StorySerializer(serializers.ModelSerializer):
         if not request or not request.user.is_authenticated or obj.user_id != request.user.id:
             return None
         if 'views' in getattr(obj, '_prefetched_objects_cache', {}):
-            recent_views = list(obj.views.all())[:5]
+            recent_views = [v for v in obj.views.all() if v.viewer_id != obj.user_id][:5]
         else:
-            recent_views = list(obj.views.select_related('viewer')[:5])
+            recent_views = list(obj.views.exclude(viewer=obj.user).select_related('viewer')[:5])
 
         if 'likes' in getattr(obj, '_prefetched_objects_cache', {}):
-            loved_user_ids = {l.user_id for l in obj.likes.all()}
+            loved_user_ids = {l.user_id for l in obj.likes.all() if l.user_id != obj.user_id}
         else:
-            loved_user_ids = set(obj.likes.values_list('user_id', flat=True))
+            loved_user_ids = set(obj.likes.exclude(user=obj.user).values_list('user_id', flat=True))
 
         return [
             {

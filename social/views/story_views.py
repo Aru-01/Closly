@@ -73,10 +73,9 @@ def get_active_stories_for_user(request_user, request=None):
     if request_user.id in grouped:
         user_stories = grouped[request_user.id]
         serialized_stories = StorySerializer(user_stories, many=True, context=serializer_context).data
-        has_unseen = any(s.id not in viewed_story_ids for s in user_stories)
         groups.append({
             'user': UserSimpleSerializer(request_user, context={'request': request}).data,
-            'has_unseen_story': has_unseen,
+            'has_unseen_story': False,
             'total_stories': len(user_stories),
             'stories': serialized_stories,
         })
@@ -298,6 +297,17 @@ class StoryLikeToggleView(APIView):
                 'message': 'This story has expired.'
             }, status=status.HTTP_410_GONE)
 
+        if story.user_id == request.user.id:
+            return Response({
+                'success': False,
+                'message': 'You cannot love or react to your own story.',
+                'data': {
+                    'story_id': story.id,
+                    'has_loved': False,
+                    'loves_count': story.loves_count,
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         like_obj, created = StoryLike.objects.get_or_create(story=story, user=request.user)
         if not created:
             like_obj.delete()
@@ -432,7 +442,7 @@ class StoryViewersListView(generics.ListAPIView):
         if story.user_id != self.request.user.id:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Only the story owner can view viewers.")
-        return StoryView.objects.filter(story=story).select_related('viewer')
+        return StoryView.objects.filter(story=story).exclude(viewer_id=story.user_id).select_related('viewer')
 
     def get_serializer_context(self):
         context = super().get_serializer_context()

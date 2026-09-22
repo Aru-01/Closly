@@ -484,3 +484,65 @@ class SocialApiTests(TestCase):
         error_msg = str(res.data['errors']['images'][0])
         self.assertIn("Maximum 4 images are allowed", error_msg)
         self.assertIn("5", error_msg)
+
+    def test_conversations_does_not_contain_stories(self):
+        # Create a message between user1 and user2
+        DirectMessage.objects.create(sender=self.user2, recipient=self.user1, content='Hey user1')
+
+        res = self.client.get('/api/social/conversations/?page=1')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data['success'])
+        self.assertNotIn('stories', res.data)
+        self.assertIn('data', res.data)
+
+    def test_story_cannot_self_love(self):
+        from social.models import Story, StoryLike
+        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
+        dummy_img = SimpleUploadedFile("story.gif", tiny_gif, content_type="image/gif")
+        story = Story.objects.create(user=self.user1, image=dummy_img, caption="My daily story")
+
+        # user1 attempts to love their own story -> must be rejected with 400
+        res = self.client.post(f'/api/social/stories/{story.id}/like/')
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(res.data['success'])
+        self.assertEqual(res.data['message'], 'You cannot love or react to your own story.')
+        self.assertEqual(story.loves_count, 0)
+        self.assertFalse(StoryLike.objects.filter(story=story, user=self.user1).exists())
+
+    def test_story_self_view_does_not_count(self):
+        from social.models import Story, StoryView, StoryLike
+        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
+        dummy_img = SimpleUploadedFile("story_view.gif", tiny_gif, content_type="image/gif")
+        story = Story.objects.create(user=self.user1, image=dummy_img, caption="View test story")
+
+        # user1 views their own story -> acknowledged but view not recorded
+        res_self = self.client.post(f'/api/social/stories/{story.id}/view/')
+        self.assertEqual(res_self.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_self.data['data']['views_count'], 0)
+        self.assertFalse(res_self.data['data']['is_first_view'])
+        self.assertEqual(story.views_count, 0)
+        self.assertFalse(StoryView.objects.filter(story=story, viewer=self.user1).exists())
+
+        # user2 views story -> recorded as 1 view
+        client2 = APIClient()
+        client2.force_authenticate(user=self.user2)
+        res_other = client2.post(f'/api/social/stories/{story.id}/view/')
+        self.assertEqual(res_other.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_other.data['data']['views_count'], 1)
+        self.assertTrue(res_other.data['data']['is_first_view'])
+        self.assertEqual(story.views_count, 1)
+
+        # user2 loves story -> success
+        love_res = client2.post(f'/api/social/stories/{story.id}/like/')
+        self.assertEqual(love_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(love_res.data['data']['has_loved'])
+        self.assertEqual(story.loves_count, 1)
+
+        # user1 checks viewers list -> only user2 appears
+        viewers_res = self.client.get(f'/api/social/stories/{story.id}/viewers/')
+        self.assertEqual(viewers_res.status_code, status.HTTP_200_OK)
+        viewers_data = viewers_res.data['data']['results']
+        self.assertEqual(len(viewers_data), 1)
+        self.assertEqual(viewers_data[0]['viewer']['id'], str(self.user2.id))
+        self.assertTrue(viewers_data[0]['has_loved'])
+

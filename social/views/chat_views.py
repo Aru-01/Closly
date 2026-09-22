@@ -22,7 +22,6 @@ User = get_user_model()
 from users.validators import validate_image_file
 from users.utils import compress_chat_image
 from .outfit_views import StandardSocialPagination
-from .story_views import get_active_stories_for_user
 
 @extend_schema(
     tags=["Direct Messaging & Chat"],
@@ -53,6 +52,9 @@ class DirectMessageSendView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def post(self, request):
+        from users.utils import set_user_online
+        set_user_online(str(request.user.id))
+
         recipient_id = request.data.get('recipient_id')
         message_type = request.data.get('message_type', 'text')
         content = request.data.get('content', '')
@@ -222,6 +224,9 @@ class DirectMessageConversationView(generics.ListAPIView):
         other_user_id = self.kwargs.get('user_id')
         current_user = self.request.user
         
+        from users.utils import set_user_online
+        set_user_online(str(current_user.id))
+
         # Mark received messages from this user as read
         DirectMessage.objects.filter(sender_id=other_user_id, recipient=current_user, is_read=False).update(is_read=True)
 
@@ -236,17 +241,16 @@ class DirectMessageConversationView(generics.ListAPIView):
 
 @extend_schema(
     tags=["Direct Messaging & Chat"],
-    summary="List Conversations (Inbox) & Active Stories Tray",
-    description="List all active 1-on-1 conversations sorted by recency with unread counters, plus followed users' active 24h stories tray.",
+    summary="List Conversations (Inbox)",
+    description="List all active 1-on-1 conversations sorted by recency with unread counters.",
     responses={
-        200: OpenApiResponse(description="Inbox threads and active stories bar retrieved successfully"),
+        200: OpenApiResponse(description="Inbox threads retrieved successfully"),
     }
 )
 class ConversationListView(APIView):
     """
-    API endpoint to list user's conversation threads (Inbox) + Active Stories Tray.
-    Returns all conversations grouped by partner user, ordered by latest message time,
-    along with active stories of followed users for the top story bar.
+    API endpoint to list user's conversation threads (Inbox).
+    Returns all conversations grouped by partner user, ordered by latest message time.
 
     GET /api/social/conversations/
     GET /api/social/messages/inbox/
@@ -256,6 +260,8 @@ class ConversationListView(APIView):
 
     def get(self, request):
         user = request.user
+        from users.utils import set_user_online
+        set_user_online(str(user.id))
 
         # 1. Fetch unread counts grouped by sender in 1 query
         unread_counts_qs = (
@@ -296,14 +302,10 @@ class ConversationListView(APIView):
             context={'request': request}
         )
 
-        # Fetch active stories for the top horizontal story bar
-        stories_data = get_active_stories_for_user(user, request=request)
-
         return Response({
             'success': True,
-            'message': 'Conversations and stories retrieved successfully.',
+            'message': 'Conversations retrieved successfully.',
             'data': serializer.data,
-            'stories': stories_data,
         }, status=status.HTTP_200_OK)
 
 

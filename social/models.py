@@ -166,8 +166,8 @@ class Story(models.Model):
         if self._state.adding:
             return 0
         if 'views' in getattr(self, '_prefetched_objects_cache', {}):
-            return len(self.views.all())
-        return self.views.count()
+            return len([v for v in self.views.all() if v.viewer_id != self.user_id])
+        return self.views.exclude(viewer=self.user).count()
 
     @property
     def loves_count(self):
@@ -176,8 +176,8 @@ class Story(models.Model):
         if self._state.adding:
             return 0
         if 'likes' in getattr(self, '_prefetched_objects_cache', {}):
-            return len(self.likes.all())
-        return self.likes.count()
+            return len([l for l in self.likes.all() if l.user_id != self.user_id])
+        return self.likes.exclude(user=self.user).count()
 
 
 class StoryView(models.Model):

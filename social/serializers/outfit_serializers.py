@@ -22,10 +22,12 @@ class UserSimpleSerializer(serializers.ModelSerializer):
     Simplified user serializer for author details in feed & social features
     """
     profile_picture = serializers.SerializerMethodField()
+    is_online = serializers.SerializerMethodField()
+    last_seen = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'name', 'country', 'city', 'profile_picture']
+        fields = ['id', 'email', 'name', 'country', 'city', 'profile_picture', 'is_online', 'last_seen']
 
     def get_profile_picture(self, obj):
         if not getattr(obj, 'is_active', True):
@@ -34,6 +36,14 @@ class UserSimpleSerializer(serializers.ModelSerializer):
             return build_absolute_media_url(obj.profile_picture, request=self.context.get('request'))
         return None
 
+    def get_is_online(self, obj):
+        from users.utils import is_user_online
+        return is_user_online(obj.id)
+
+    def get_last_seen(self, obj):
+        from users.utils import get_user_last_seen
+        return get_user_last_seen(obj)
+
     def to_representation(self, instance):
         ret = super().to_representation(instance)
         if not getattr(instance, 'is_active', True):
@@ -41,6 +51,8 @@ class UserSimpleSerializer(serializers.ModelSerializer):
             ret['profile_picture'] = None
             ret['city'] = None
             ret['country'] = None
+            ret['is_online'] = False
+            ret['last_seen'] = None
         return ret
 
 
