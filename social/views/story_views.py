@@ -308,6 +308,20 @@ class StoryLikeToggleView(APIView):
             is_loved = True
             msg = 'Story loved.'
 
+            if story.user != request.user:
+                try:
+                    from notifications.services import create_notification
+                    create_notification(
+                        recipient=story.user,
+                        sender=request.user,
+                        notification_type='story_reaction',
+                        title='Story Reaction ❤️',
+                        message=f"{request.user.name or 'Someone'} loved your story!",
+                        data={'story_id': story.id}
+                    )
+                except Exception:
+                    pass
+
         return Response({
             'success': True,
             'message': msg,
@@ -370,6 +384,20 @@ class StoryReplyView(APIView):
             content=content,
             story_reference=story,
         )
+
+        if story.user != request.user:
+            try:
+                from notifications.services import create_notification
+                create_notification(
+                    recipient=story.user,
+                    sender=request.user,
+                    notification_type='direct_message',
+                    title='New Story Reply',
+                    message=f"{request.user.name or 'Someone'} replied to your story: {content[:60]}",
+                    data={'story_id': story.id, 'sender_id': str(request.user.id)}
+                )
+            except Exception:
+                pass
 
         serializer = DirectMessageSerializer(message, context={'request': request})
         return Response({

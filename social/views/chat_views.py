@@ -149,13 +149,26 @@ class DirectMessageSendView(APIView):
         if recipient != request.user:
             try:
                 from notifications.services import create_notification
-                preview_text = content[:60] if content else f"Shared a {message_type}"
+                if message_type == 'outfit':
+                    notif_type = 'outfit_shared'
+                    notif_title = 'Outfit Shared'
+                    notif_msg = f"{request.user.name or 'Someone'} shared an outfit with you!"
+                elif message_type == 'image':
+                    notif_type = 'direct_message'
+                    notif_title = 'New Photo Message'
+                    notif_msg = f"{request.user.name or 'Someone'} sent you a photo."
+                else:
+                    notif_type = 'direct_message'
+                    notif_title = 'New Message'
+                    preview_text = content[:60] if content else f"Sent you a {message_type}"
+                    notif_msg = f"{request.user.name or 'A user'}: {preview_text}"
+
                 create_notification(
                     recipient=recipient,
                     sender=request.user,
-                    notification_type='direct_message',
-                    title='New Message',
-                    message=f"{request.user.name or 'A user'}: {preview_text}",
+                    notification_type=notif_type,
+                    title=notif_title,
+                    message=notif_msg,
                     data={'sender_id': str(request.user.id), 'deep_link': f"closly://chat/{request.user.id}"}
                 )
             except Exception:
