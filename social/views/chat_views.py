@@ -271,33 +271,52 @@ class ConversationListView(APIView):
         )
         unread_map = {item['sender_id']: item['count'] for item in unread_counts_qs}
 
-        # 2. Fetch all messages involving user, ordered newest first with related users
-        messages = (
+        # 2. Find the latest message ID for each conversation partner using a DB-level
+        #    Max aggregation. This avoids loading ALL messages into Python memory — we
+        #    only pull N rows (one per conversation partner) instead of the full history.
+        from django.db.models import Max, Case, When, F, UUIDField
+        from django.db.models import Subquery as _Subquery
+
+        partner_latest_ids = (
             DirectMessage.objects.filter(Q(sender=user) | Q(recipient=user))
+            .annotate(
+                partner_id=Case(
+                    When(sender=user, then=F('recipient_id')),
+                    default=F('sender_id'),
+                    output_field=UUIDField()
+                )
+            )
+            .values('partner_id')
+            .annotate(latest_id=Max('id'))
+            .values_list('latest_id', flat=True)
+        )
+
+        # 3. Fetch only the latest messages (one per partner) with related users
+        latest_messages = (
+            DirectMessage.objects.filter(id__in=list(partner_latest_ids))
             .select_related('sender', 'recipient')
             .order_by('-created_at', '-id')
         )
 
-        # 3. Deduplicate by conversation partner while preserving latest message
-        conversations = {}
-        for msg in messages:
+        # 4. Build conversation list — already one-per-partner from the query above
+        conversations = []
+        for msg in latest_messages:
             partner = msg.recipient if msg.sender_id == user.id else msg.sender
-            if partner.id not in conversations:
-                conversations[partner.id] = {
-                    'other_user': partner,
-                    'last_message': {
-                        'id': msg.id,
-                        'message_type': msg.message_type,
-                        'content': msg.content,
-                        'sender_id': str(msg.sender_id),
-                        'created_at': msg.created_at,
-                        'is_read': msg.is_read,
-                    },
-                    'unread_count': unread_map.get(partner.id, 0),
-                }
+            conversations.append({
+                'other_user': partner,
+                'last_message': {
+                    'id': msg.id,
+                    'message_type': msg.message_type,
+                    'content': msg.content,
+                    'sender_id': str(msg.sender_id),
+                    'created_at': msg.created_at,
+                    'is_read': msg.is_read,
+                },
+                'unread_count': unread_map.get(partner.id, 0),
+            })
 
         serializer = ConversationSummarySerializer(
-            list(conversations.values()),
+            conversations,
             many=True,
             context={'request': request}
         )
