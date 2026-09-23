@@ -97,7 +97,6 @@ class AIScanUserRateThrottle(SimpleRateThrottle):
     """
     Limits AI wardrobe garment scanning to 15 requests per minute per authenticated user
     to protect OpenAI API credits, GPU compute, and prevent resource exhaustion.
-    Only applies to authenticated users — see AIScanAnonRateThrottle for anonymous IPs.
     """
     scope = 'ai_scan'
     rate = '15/min'
@@ -105,20 +104,5 @@ class AIScanUserRateThrottle(SimpleRateThrottle):
     def get_cache_key(self, request, view):
         if request.user and request.user.is_authenticated:
             return f"throttle_ai_scan_user_{request.user.id}"
-        # Unauthenticated — let AIScanAnonRateThrottle handle it
-        return None
+        return f"throttle_ai_scan_ip_{self.get_ident(request)}"
 
-
-class AIScanAnonRateThrottle(SimpleRateThrottle):
-    """
-    Strictly limits unauthenticated (IP-based) AI scan requests to 3 per minute.
-    Prevents anonymous actors from draining AI credits without an account.
-    """
-    scope = 'ai_scan_anon'
-    rate = '3/min'
-
-    def get_cache_key(self, request, view):
-        if request.user and request.user.is_authenticated:
-            # Authenticated users are handled by AIScanUserRateThrottle
-            return None
-        return f"throttle_ai_scan_anon_{self.get_ident(request)}"

@@ -44,22 +44,9 @@ class TranslationMiddleware(MiddlewareMixin):
         content_type = response.get('Content-Type', '')
         if 'application/json' in content_type:
             try:
-                raw_bytes = response.content
-                # Build a short cache key from (language, url, status, body_hash) so we
-                # don't re-translate identical endpoint responses on every single request.
-                body_hash = hashlib.md5(raw_bytes).hexdigest()
-                response_cache_key = f'translated_response:{language}:{request.path}:{response.status_code}:{body_hash}'
-                cached_translated = cache.get(response_cache_key)
-                if cached_translated is not None:
-                    response.content = cached_translated
-                    return response
-
-                content = json.loads(raw_bytes.decode('utf-8'))
+                content = json.loads(response.content.decode('utf-8'))
                 translated_content = self.translate_content(content, language)
-                translated_bytes = json.dumps(translated_content).encode('utf-8')
-                # Cache the fully-translated response body for 24 hours
-                cache.set(response_cache_key, translated_bytes, timeout=86400)
-                response.content = translated_bytes
+                response.content = json.dumps(translated_content).encode('utf-8')
             except (json.JSONDecodeError, TypeError, UnicodeDecodeError) as e:
                 logger.debug(f"TranslationMiddleware skipped non-JSON or decode error: {e}")
 

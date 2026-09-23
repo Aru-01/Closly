@@ -72,7 +72,6 @@ class PasswordResetRequestView(APIView):
                 
                 # Generate and send password reset OTP
                 otp = generate_otp()
-                # Clear any previous OTP and save the fresh one
                 user.otp = otp
                 user.otp_created_at = timezone.now()
                 user.password_reset_verified = False

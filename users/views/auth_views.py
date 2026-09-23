@@ -18,6 +18,7 @@ from users.serializers import (
     VerifyOTPSerializer,
     ResendOTPSerializer,
 )
+import secrets
 from users.utils import (
     verify_firebase_token,
     send_welcome_email,
@@ -445,7 +446,8 @@ class VerifyOTPView(APIView):
             otp = serializer.validated_data['otp']
             try:
                 user = User.objects.get(email=email)
-                if user.otp == otp and user.is_otp_valid():
+                # Constant-time comparison
+                if user.otp and secrets.compare_digest(str(user.otp), str(otp)) and user.is_otp_valid():
                     user.is_active = True
                     user.is_email_verified = True
                     user.clear_otp()

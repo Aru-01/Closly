@@ -249,9 +249,8 @@ class AccountDeletionRequestAdmin(ModelAdmin):
                     outfits_count = TodayOutfit.objects.filter(user=u).count()
                     stories_count = Story.objects.filter(user=u).count()
 
-                    from social.models import UserFollow as _UserFollow
-                    followers_count = _UserFollow.objects.filter(following=u).count()
-                    following_count = _UserFollow.objects.filter(follower=u).count()
+                    followers_count = getattr(u, 'followers_set', None).count() if hasattr(u, 'followers_set') else 0
+                    following_count = getattr(u, 'following_set', None).count() if hasattr(u, 'following_set') else 0
 
                     from rewards.models import UserRewardProfile
                     closet_points = (

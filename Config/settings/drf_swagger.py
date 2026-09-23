@@ -22,7 +22,6 @@ REST_FRAMEWORK = {
         "otp_resend": "3/120s",
         "password_reset": "5/120s",
         "ai_scan": "15/min",
-        "ai_scan_anon": "3/min",
     },
 }
 
