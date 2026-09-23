@@ -524,17 +524,21 @@ class OutfitLikersListView(APIView):
             UserFollow.objects.filter(follower=request.user, following__in=likers).values_list('following_id', flat=True)
         )
 
+        from users.utils import is_user_online, get_user_last_seen
         likers_data = []
         for u in likers:
             pic_url = u.profile_picture.url if u.profile_picture else None
             if pic_url and not pic_url.startswith(('http://', 'https://')):
                 pic_url = request.build_absolute_uri(pic_url)
+            is_self = (request.user.id == u.id)
             likers_data.append({
                 'id': str(u.id),
                 'name': u.name,
                 'email': u.email,
                 'profile_picture': pic_url,
                 'is_following': (u.id in following_user_ids),
+                'is_online': True if is_self else is_user_online(u.id),
+                'last_seen': timezone.now().isoformat() if is_self else get_user_last_seen(u),
             })
 
         return Response({

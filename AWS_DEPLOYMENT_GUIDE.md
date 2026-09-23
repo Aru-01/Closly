@@ -271,22 +271,24 @@ python manage.py collectstatic --noinput
 python manage.py createsuperuser
 ```
 
-### 5. Setup Daphne Systemd Service
-Create `/etc/systemd/system/closly_daphne.service`:
+### 5. Setup Daphne Multi-Worker Systemd Service (High-Concurrency)
+Daphne is single-threaded async. To utilize all CPU cores for 5,000+ users, run **4 Daphne workers** load-balanced by Nginx:
+
+Create `/etc/systemd/system/closly_daphne@.service`:
 ```bash
-sudo nano /etc/systemd/system/closly_daphne.service
+sudo nano /etc/systemd/system/closly_daphne@.service
 ```
 Paste the following:
 ```ini
 [Unit]
-Description=Closly Daphne ASGI Server
-After=network.target redis-server.service
+Description=Closly Daphne ASGI Server on Port %i
+After=network.target redis-server.service postgresql.service
 
 [Service]
 User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/closly
-ExecStart=/home/ubuntu/closly/.venv/bin/daphne -b 127.0.0.1 -p 8000 Config.asgi:application
+ExecStart=/home/ubuntu/closly/.venv/bin/daphne -b 127.0.0.1 -p %i Config.asgi:application
 Restart=always
 RestartSec=3
 
@@ -302,7 +304,7 @@ Paste:
 ```ini
 [Unit]
 Description=Closly Celery Worker
-After=network.target redis-server.service
+After=network.target redis-server.service postgresql.service
 
 [Service]
 User=ubuntu
@@ -324,7 +326,7 @@ Paste:
 ```ini
 [Unit]
 Description=Closly Celery Beat Scheduler
-After=network.target redis-server.service
+After=network.target redis-server.service postgresql.service
 
 [Service]
 User=ubuntu
@@ -338,22 +340,29 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-### 8. Enable & Start Services
+### 8. Enable & Start Services (4 Daphne Workers)
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now closly_daphne
+
+# Start 4 parallel Daphne worker processes on ports 8001, 8002, 8003, 8004
+sudo systemctl enable --now closly_daphne@8001
+sudo systemctl enable --now closly_daphne@8002
+sudo systemctl enable --now closly_daphne@8003
+sudo systemctl enable --now closly_daphne@8004
+
+# Start Celery tasks
 sudo systemctl enable --now closly_celery
 sudo systemctl enable --now closly_celery_beat
 
-# Verify status
-sudo systemctl status closly_daphne
+# Verify all 4 workers are active
+sudo systemctl status "closly_daphne@*"
 ```
 
 ---
 
 ## Step 5: Configure Nginx & WebSocket Reverse Proxy
 
-Nginx acts as the front gateway, terminating SSL, proxying REST API calls, and upgrading WebSocket connections.
+Nginx acts as the front gateway, terminating SSL, load-balancing traffic across the 4 Daphne workers, proxying REST API calls, and upgrading WebSocket connections.
 
 1. Install Nginx (if not already installed):
 ```bash
@@ -368,7 +377,11 @@ sudo nano /etc/nginx/sites-available/closly
 3. Paste the following configuration (replace `api.yourdomain.com` with your domain or EC2 Public IP):
 ```nginx
 upstream daphne_backend {
-    server 127.0.0.1:8000;
+    # Load balances requests across 4 Daphne worker processes
+    server 127.0.0.1:8001;
+    server 127.0.0.1:8002;
+    server 127.0.0.1:8003;
+    server 127.0.0.1:8004;
 }
 
 server {

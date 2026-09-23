@@ -79,6 +79,7 @@ MIDDLEWARE = [
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "users.middleware.TranslationMiddleware",
+    "users.middleware.UserActivityMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -144,12 +145,23 @@ else:
     }
 
 # Cache Configuration
-CACHES = {
-    "default": {
-        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-        "LOCATION": "closly-fast-cache",
+USE_REDIS_CACHE = config("USE_REDIS_CACHE", default=False, cast=bool)
+if USE_REDIS_CACHE:
+    redis_cache_host = config("REDIS_HOST", default="127.0.0.1")
+    redis_cache_port = config("REDIS_PORT", default="6379")
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.redis.RedisCache",
+            "LOCATION": f"redis://{redis_cache_host}:{redis_cache_port}/1",
+        }
     }
-}
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "closly-fast-cache",
+        }
+    }
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [

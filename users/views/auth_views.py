@@ -24,6 +24,8 @@ from users.utils import (
     get_client_ip,
     get_user_agent,
     build_absolute_media_url,
+    set_user_online,
+    set_user_offline,
 )
 from users.throttling import (
     LoginRateThrottle,
@@ -154,6 +156,7 @@ class UserLoginView(APIView):
             ) or False
 
             profile_picture_url = build_absolute_media_url(user.profile_picture, request=request)
+            set_user_online(str(user.id))
 
             # Return success response with tokens
             return standard_response(
@@ -167,6 +170,8 @@ class UserLoginView(APIView):
                         'is_email_verified': user.is_email_verified,
                         'profile_picture': profile_picture_url,
                         'onboarding_completed': onboarding_completed,
+                        'is_online': True,
+                        'last_seen': timezone.now().isoformat(),
                     },
                     'tokens': {
                         'access': access_token,
@@ -225,6 +230,8 @@ class UserLogoutView(APIView):
             # Blacklist the refresh token
             token = RefreshToken(refresh_token)
             token.blacklist()
+            if request.user and request.user.is_authenticated:
+                set_user_offline(str(request.user.id))
             
             return standard_response(
                 success=True,
@@ -364,6 +371,7 @@ class FirebaseAuthView(APIView):
                 ) or False
 
                 profile_picture_url = build_absolute_media_url(user.profile_picture, request=request)
+                set_user_online(str(user.id))
 
                 # Return success response
                 return standard_response(
@@ -378,6 +386,8 @@ class FirebaseAuthView(APIView):
                             'auth_provider': user.auth_provider,
                             'profile_picture': profile_picture_url,
                             'onboarding_completed': onboarding_completed,
+                            'is_online': True,
+                            'last_seen': timezone.now().isoformat(),
                         },
                         'tokens': {
                             'access': access_token,

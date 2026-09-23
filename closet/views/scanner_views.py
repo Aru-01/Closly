@@ -11,6 +11,7 @@ from closet.models import ClosetItem
 from closet.serializers import ClosetItemSerializer
 from closet.ai_scanner import scan_clothing_image
 from users.validators import validate_image_file
+from users.throttling import AIScanUserRateThrottle
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,7 @@ class ClosetAIScanView(APIView):
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
+    throttle_classes = [AIScanUserRateThrottle]
     parser_classes = [MultiPartParser, FormParser]
 
     def post(self, request):

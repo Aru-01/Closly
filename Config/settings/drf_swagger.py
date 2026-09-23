@@ -10,6 +10,10 @@ REST_FRAMEWORK = {
         "rest_framework_simplejwt.authentication.JWTAuthentication",
         "users.authentication.FirebaseAuthentication",
     ),
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
     "DEFAULT_THROTTLE_RATES": {
         "anon": "120/min",
         "user": "300/min",
@@ -17,6 +21,7 @@ REST_FRAMEWORK = {
         "otp_verify": "5/120s",
         "otp_resend": "3/120s",
         "password_reset": "5/120s",
+        "ai_scan": "15/min",
     },
 }
 

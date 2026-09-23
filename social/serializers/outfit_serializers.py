@@ -37,10 +37,16 @@ class UserSimpleSerializer(serializers.ModelSerializer):
         return None
 
     def get_is_online(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated and str(request.user.id) == str(obj.id):
+            return True
         from users.utils import is_user_online
         return is_user_online(obj.id)
 
     def get_last_seen(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated and str(request.user.id) == str(obj.id):
+            return timezone.now().isoformat()
         from users.utils import get_user_last_seen
         return get_user_last_seen(obj)
 

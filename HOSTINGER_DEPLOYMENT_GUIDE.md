@@ -199,21 +199,21 @@ python manage.py collectstatic --noinput
 python manage.py createsuperuser
 ```
 
-### 4. Create Systemd Services for Daphne & Celery
+### 4. Create Systemd Services for Daphne (Multi-Worker) & Celery
 
-**Daphne ASGI Service**:
+**Daphne ASGI Multi-Worker Service Template**:
 ```bash
-nano /etc/systemd/system/closly_daphne.service
+nano /etc/systemd/system/closly_daphne@.service
 ```
 ```ini
 [Unit]
-Description=Closly Daphne ASGI Server
-After=network.target redis-server.service
+Description=Closly Daphne ASGI Server on Port %i
+After=network.target redis-server.service postgresql.service
 
 [Service]
 User=root
 WorkingDirectory=/var/www/closly
-ExecStart=/var/www/closly/.venv/bin/daphne -b 127.0.0.1 -p 8000 Config.asgi:application
+ExecStart=/var/www/closly/.venv/bin/daphne -b 127.0.0.1 -p %i Config.asgi:application
 Restart=always
 RestartSec=3
 
@@ -261,10 +261,17 @@ RestartSec=5
 WantedBy=multi-user.target
 ```
 
-Enable and start:
+Enable and start 4 Daphne worker processes (ports 8001 to 8004) + Celery:
 ```bash
 systemctl daemon-reload
-systemctl enable --now closly_daphne closly_celery closly_celery_beat
+systemctl enable --now closly_daphne@8001
+systemctl enable --now closly_daphne@8002
+systemctl enable --now closly_daphne@8003
+systemctl enable --now closly_daphne@8004
+systemctl enable --now closly_celery closly_celery_beat
+
+# Verify all 4 workers are active
+systemctl status "closly_daphne@*"
 ```
 
 ---
@@ -298,7 +305,11 @@ nano /etc/nginx/sites-available/closly
 3. Paste this optimized Nginx configuration:
 ```nginx
 upstream daphne_app {
-    server 127.0.0.1:8000;
+    # Load balances across 4 parallel Daphne worker processes
+    server 127.0.0.1:8001;
+    server 127.0.0.1:8002;
+    server 127.0.0.1:8003;
+    server 127.0.0.1:8004;
 }
 
 server {

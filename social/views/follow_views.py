@@ -307,6 +307,10 @@ class OtherUserProfileView(APIView):
         pref_target = getattr(target_user, 'preferences', None)
         target_styles = pref_target.style_match if pref_target and pref_target.style_match else []
 
+        from users.utils import is_user_online, get_user_last_seen
+        is_online = True if is_self else is_user_online(target_user.id)
+        last_seen = timezone.now().isoformat() if is_self else get_user_last_seen(target_user)
+
         return Response({
             'success': True,
             'message': f"Profile of {target_user.name or 'User'} retrieved successfully.",
@@ -330,6 +334,8 @@ class OtherUserProfileView(APIView):
                 'style_dna': target_styles,
                 'style_match': target_styles,
                 'dna_match': dna,
+                'is_online': is_online,
+                'last_seen': last_seen,
             }
         }, status=status.HTTP_200_OK)
 

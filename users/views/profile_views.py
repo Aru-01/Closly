@@ -43,6 +43,8 @@ class UserProfileView(APIView):
     
     def get(self, request):
         """Get user profile with preloaded preferences and reward profile"""
+        from users.utils import set_user_online
+        set_user_online(str(request.user.id))
         user = User.objects.select_related('preferences', 'reward_profile').get(pk=request.user.pk)
         serializer = UserProfileSerializer(user, context={'request': request})
         
@@ -304,6 +306,10 @@ class PublicProfileWebView(APIView):
         followers_count = profile_user.followers_set.count()
         recent_outfits = profile_user.today_outfits.filter(visibility='public')[:6]
 
+        from users.utils import is_user_online, get_user_last_seen
+        is_online = is_user_online(profile_user.id)
+        last_seen = get_user_last_seen(profile_user)
+
         context = {
             'profile_user': profile_user,
             'tier': tier,
@@ -311,5 +317,7 @@ class PublicProfileWebView(APIView):
             'outfit_count': outfit_count,
             'followers_count': followers_count,
             'recent_outfits': recent_outfits,
+            'is_online': is_online,
+            'last_seen': last_seen,
         }
         return render(request, 'users/public_profile.html', context)

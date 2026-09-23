@@ -28,6 +28,8 @@ class UserPreferenceAndLoginTestCase(TestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn('onboarding_completed', response.data['data']['user'])
         self.assertEqual(response.data['data']['user']['onboarding_completed'], False)
+        self.assertTrue(response.data['data']['user']['is_online'])
+        self.assertIn('last_seen', response.data['data']['user'])
 
     def test_preferences_dress_for_get_and_post(self):
         self.client.force_authenticate(user=self.user)
@@ -301,6 +303,9 @@ class UserPreferenceAndLoginTestCase(TestCase):
         self.assertIn('style_dna', data)
         self.assertIn('style_match', data)
         self.assertIn('current_tier', data)
+        self.assertIn('is_online', data)
+        self.assertTrue(data['is_online'])
+        self.assertIn('last_seen', data)
 
         # Verify style_dna content
         self.assertEqual(data['style_dna'], ['minimalist', 'nordic', 'streetwear'])

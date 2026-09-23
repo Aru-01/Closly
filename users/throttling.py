@@ -91,3 +91,18 @@ class PasswordResetRateThrottle(TwoMinuteRateThrottle):
         if email:
             return f"throttle_pw_reset_{ident}_{email}"
         return f"throttle_pw_reset_{ident}"
+
+
+class AIScanUserRateThrottle(SimpleRateThrottle):
+    """
+    Limits AI wardrobe garment scanning to 15 requests per minute per authenticated user
+    to protect OpenAI API credits, GPU compute, and prevent resource exhaustion.
+    """
+    scope = 'ai_scan'
+    rate = '15/min'
+
+    def get_cache_key(self, request, view):
+        if request.user and request.user.is_authenticated:
+            return f"throttle_ai_scan_user_{request.user.id}"
+        return f"throttle_ai_scan_ip_{self.get_ident(request)}"
+

@@ -324,9 +324,16 @@ def suggest_daily_outfit(user, weather, request=None):
             "total_pieces_selected": 0,
         }
 
+    now = timezone.now()
+    cache_key = f"daily_outfit_suggestion:{user.id}:{now.strftime('%Y-%m-%d')}"
+    cached_suggestion = cache.get(cache_key)
+    if cached_suggestion:
+        return cached_suggestion
+
     # 1. Try OpenAI GPT-4o AI Personal Stylist
     ai_suggestion = get_ai_daily_outfit_recommendation(user, user_items, weather, request=request)
     if ai_suggestion:
+        cache.set(cache_key, ai_suggestion, timeout=43200)  # 12 hours
         return ai_suggestion
 
     # 2. Fallback to deterministic temperature-specific wardrobe logic with daily rotation
@@ -475,9 +482,11 @@ def suggest_daily_outfit(user, weather, request=None):
                 "image": build_absolute_media_url(fallback_item.image, request=request)
             })
 
-    return {
+    result = {
         "pieces": outfit_pieces,
         "styling_description": style_reason,
         "item_ids_for_wear_today": items_to_record,
         "total_pieces_selected": len(outfit_pieces),
     }
+    cache.set(cache_key, result, timeout=43200)  # 12 hours
+    return result

@@ -546,3 +546,27 @@ class SocialApiTests(TestCase):
         self.assertEqual(viewers_data[0]['viewer']['id'], str(self.user2.id))
         self.assertTrue(viewers_data[0]['has_loved'])
 
+    def test_other_user_profile_returns_is_online_and_last_seen(self):
+        profile_url = f'/api/social/users/{self.user2.id}/profile/'
+        res = self.client.get(profile_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data['success'])
+        data = res.data['data']
+        self.assertIn('is_online', data)
+        self.assertIn('last_seen', data)
+
+    def test_outfit_likers_returns_is_online_and_last_seen(self):
+        dummy_image = SimpleUploadedFile("outfit.jpg", b"file_content", content_type="image/jpeg")
+        outfit = TodayOutfit.objects.create(user=self.user1, image=dummy_image, caption="Liker test", visibility="public")
+        from social.models import OutfitLike
+        OutfitLike.objects.create(outfit=outfit, user=self.user2)
+
+        likes_url = f'/api/social/outfits/{outfit.id}/likes/'
+        res = self.client.get(likes_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        likers = res.data['data']
+        self.assertEqual(len(likers), 1)
+        self.assertIn('is_online', likers[0])
+        self.assertIn('last_seen', likers[0])
+
+
