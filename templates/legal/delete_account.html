@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Delete Your Closly Account | Official Deletion Portal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #0F172A;
+            --primary-light: #1E293B;
+            --accent: #4F46E5;
+            --accent-glow: rgba(79, 70, 229, 0.15);
+            --danger: #DC2626;
+            --danger-hover: #B91C1C;
+            --danger-glow: rgba(220, 38, 38, 0.12);
+            --success: #16A34A;
+            --success-glow: rgba(22, 163, 74, 0.12);
+            --text-main: #0F172A;
+            --text-muted: #475569;
+            --bg-page: #F8FAFC;
+            --bg-card: #FFFFFF;
+            --border-subtle: #E2E8F0;
+            --border-highlight: #CBD5E1;
+            --radius-lg: 24px;
+            --radius-md: 16px;
+            --radius-sm: 10px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-page);
+            color: var(--text-main);
+            line-height: 1.7;
+            padding: 24px 16px 60px;
+            min-height: 100vh;
+        }
+
+        .wrapper {
+            max-width: 680px;
+            margin: 0 auto;
+        }
+
+        /* Top Brand Header */
+        .brand-nav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+            padding: 12px 6px;
+        }
+
+        .brand-logo {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.6rem;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            color: var(--primary);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .brand-logo span {
+            color: var(--accent);
+        }
+
+        .doc-badge {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--danger);
+            background: var(--danger-glow);
+            padding: 6px 14px;
+            border-radius: 999px;
+            border: 1px solid rgba(220, 38, 38, 0.2);
+        }
+
+        /* Hero Header */
+        .hero-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+
+        .hero-header h1 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 2.2rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            margin-bottom: 8px;
+            color: var(--primary);
+        }
+
+        .hero-header p {
+            font-size: 0.95rem;
+            color: var(--text-muted);
+            max-width: 520px;
+            margin: 0 auto;
+        }
+
+        /* Card */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-lg);
+            padding: 36px 32px;
+            box-shadow: 0 8px 30px -6px rgba(0, 0, 0, 0.06);
+            margin-bottom: 24px;
+        }
+
+        /* Alert Boxes */
+        .alert-error {
+            background: #FEF2F2;
+            border: 1px solid #FECACA;
+            color: #991B1B;
+            border-radius: var(--radius-sm);
+            padding: 14px 16px;
+            font-size: 0.92rem;
+            font-weight: 500;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .alert-warning {
+            background: #FFFBEB;
+            border: 1px solid #FDE68A;
+            color: #92400E;
+            border-radius: var(--radius-sm);
+            padding: 16px 18px;
+            font-size: 0.92rem;
+            margin-bottom: 24px;
+            line-height: 1.6;
+        }
+
+        .alert-success {
+            background: #F0FDF4;
+            border: 1px solid #BBF7D0;
+            color: #166534;
+            border-radius: var(--radius-sm);
+            padding: 24px;
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .user-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: #F1F5F9;
+            padding: 8px 16px;
+            border-radius: 999px;
+            font-size: 0.9rem;
+            color: var(--primary);
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+
+        /* Form Controls */
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.92rem;
+            font-weight: 600;
+            color: var(--text-main);
+            margin-bottom: 6px;
+        }
+
+        .form-input, .form-select {
+            width: 100%;
+            padding: 12px 14px;
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-sm);
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-size: 0.95rem;
+            color: var(--text-main);
+            background: #FFFFFF;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .form-input:focus, .form-select:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px var(--accent-glow);
+        }
+
+        .checkbox-group {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            margin-bottom: 24px;
+            background: #FFF5F5;
+            padding: 16px;
+            border-radius: var(--radius-sm);
+            border: 1px solid #FED7D7;
+        }
+
+        .checkbox-group input {
+            margin-top: 4px;
+            width: 18px;
+            height: 18px;
+            accent-color: var(--danger);
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .checkbox-group label {
+            font-size: 0.9rem;
+            color: #742A2A;
+            line-height: 1.5;
+            cursor: pointer;
+            font-weight: 500;
+        }
+
+        /* Data Purge List */
+        .purge-list {
+            list-style: none;
+            margin-top: 12px;
+            margin-bottom: 20px;
+        }
+
+        .purge-list li {
+            position: relative;
+            padding-left: 26px;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        .purge-list li::before {
+            content: '✕';
+            position: absolute;
+            left: 0;
+            top: 1px;
+            color: var(--danger);
+            font-weight: 700;
+            font-size: 0.95rem;
+        }
+
+        .preserve-list {
+            list-style: none;
+            margin-top: 8px;
+            margin-bottom: 20px;
+        }
+
+        .preserve-list li {
+            position: relative;
+            padding-left: 26px;
+            margin-bottom: 8px;
+            font-size: 0.9rem;
+            color: var(--text-muted);
+        }
+
+        .preserve-list li::before {
+            content: '✓';
+            position: absolute;
+            left: 0;
+            top: 1px;
+            color: var(--success);
+            font-weight: 700;
+            font-size: 0.95rem;
+        }
+
+        /* Buttons */
+        .btn-danger {
+            width: 100%;
+            background: var(--danger);
+            color: #FFFFFF;
+            border: none;
+            border-radius: var(--radius-sm);
+            padding: 14px 24px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.05rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s ease, transform 0.1s ease;
+        }
+
+        .btn-danger:hover {
+            background: var(--danger-hover);
+            transform: translateY(-1px);
+        }
+
+        .btn-primary {
+            width: 100%;
+            background: var(--primary);
+            color: #FFFFFF;
+            border: none;
+            border-radius: var(--radius-sm);
+            padding: 14px 24px;
+            font-family: 'Outfit', sans-serif;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s ease, transform 0.1s ease;
+        }
+
+        .btn-primary:hover {
+            background: var(--primary-light);
+            transform: translateY(-1px);
+        }
+
+        .btn-logout {
+            display: inline-block;
+            margin-top: 16px;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .btn-logout:hover {
+            color: var(--primary);
+            text-decoration: underline;
+        }
+
+        /* Footer */
+        .footer-nav {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            margin-top: 32px;
+            font-size: 0.88rem;
+        }
+
+        .footer-nav a {
+            color: var(--text-muted);
+            text-decoration: none;
+        }
+
+        .footer-nav a:hover {
+            color: var(--accent);
+            text-decoration: underline;
+        }
+
+        .footer-copy {
+            text-align: center;
+            font-size: 0.82rem;
+            color: #94A3B8;
+            margin-top: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <!-- Brand Nav -->
+        <header class="brand-nav">
+            <a href="/" class="brand-logo">
+                Closly<span>.</span>
+            </a>
+            <div class="doc-badge">Account Portal</div>
+        </header>
+
+        {% if state == 'login' %}
+        <!-- State 1: Unauthenticated Login Form -->
+        <div class="hero-header">
+            <h1>Sign In to Request Deletion</h1>
+            <p>To protect user privacy and avoid unauthorized account tampering, you must authenticate with your Closly credentials before submitting an account deletion request.</p>
+        </div>
+
+        <div class="card">
+            {% if error %}
+            <div class="alert-error">
+                <span>⚠️</span>
+                <span>{{ error }}</span>
+            </div>
+            {% endif %}
+
+            <form method="POST" action="">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="login">
+
+                <div class="form-group">
+                    <label class="form-label" for="email">Email Address</label>
+                    <input type="email" id="email" name="email" class="form-input" placeholder="Your registered Closly email" required>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="password">Password</label>
+                    <input type="password" id="password" name="password" class="form-input" placeholder="Your Closly account password" required>
+                </div>
+
+                <button type="submit" class="btn-primary">Verify & Proceed to Deletion</button>
+            </form>
+        </div>
+
+        <div class="card" style="background: #F8FAFC; border: 1px dashed var(--border-highlight); text-align: center;">
+            <h3 style="font-family: 'Outfit', sans-serif; font-size: 1.05rem; margin-bottom: 6px;">Prefer In-App Deletion?</h3>
+            <p style="font-size: 0.88rem; color: var(--text-muted); margin-bottom: 12px;">You can also delete your account directly inside the mobile app without logging in here:</p>
+            <p style="font-size: 0.9rem; font-weight: 600; color: var(--primary);">Open Closly App &rarr; Profile Tab &rarr; Settings &rarr; Delete Account</p>
+        </div>
+
+        {% elif state == 'submitted' %}
+        <!-- State 3: Request Already Submitted / Under Review -->
+        <div class="hero-header">
+            <h1>Deletion Request Submitted</h1>
+            <p>Your request has been forwarded to the Closly administration team.</p>
+        </div>
+
+        <div class="card" style="text-align: center;">
+            <div style="width: 64px; height: 64px; border-radius: 50%; background: var(--success-glow); color: var(--success); font-size: 2rem; display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;">
+                ✓
+            </div>
+            
+            <h2 style="font-family: 'Outfit', sans-serif; font-size: 1.4rem; color: var(--primary); margin-bottom: 12px;">Request Under Review</h2>
+            
+            <p style="font-size: 0.95rem; color: var(--text-muted); margin-bottom: 20px; line-height: 1.7;">
+                Your account deletion request for <strong>{{ user.email }}</strong> is currently pending administrator approval.
+            </p>
+
+            <div class="alert-warning" style="text-align: left;">
+                <strong>What happens next?</strong>
+                <p style="margin-top: 6px; font-size: 0.88rem;">1. An administrator will review and accept your deletion request.</p>
+                <p style="font-size: 0.88rem;">2. A comprehensive account data export summary will be emailed to <strong>{{ user.email }}</strong>.</p>
+                <p style="font-size: 0.88rem;">3. All your wardrobe photos, outfit looks, stories, and points will be permanently erased from our databases.</p>
+            </div>
+
+            <a href="{% url 'legal_pages:delete_account_logout' %}" class="btn-logout">&larr; Sign Out from Deletion Portal</a>
+        </div>
+
+        {% else %}
+        <!-- State 2: Authenticated Deletion Form -->
+        <div class="hero-header">
+            <h1>Confirm Account Deletion</h1>
+            <p>Please review the terms and consequences below before submitting your permanent account erasure request.</p>
+        </div>
+
+        <div class="card">
+            <div class="user-pill">
+                <span>👤</span>
+                <span>Logged in as: {{ user.name|default:"User" }} ({{ user.email }})</span>
+            </div>
+
+            {% if error %}
+            <div class="alert-error">
+                <span>⚠️</span>
+                <span>{{ error }}</span>
+            </div>
+            {% endif %}
+
+            <div class="alert-warning">
+                <strong>⚠️ Warning: This action cannot be reversed once approved by admin!</strong>
+                <p style="margin-top: 6px;">Once the administrator accepts your request, your account will be permanently decommissioned and all your private digital wardrobe assets will be unrecoverable.</p>
+            </div>
+
+            <h3 style="font-family: 'Outfit', sans-serif; font-size: 1.05rem; font-weight: 700; margin-bottom: 8px;">What will be permanently deleted:</h3>
+            <ul class="purge-list">
+                <li>All uploaded wardrobe clothes and AI scanned clothing pictures.</li>
+                <li>All Today's Outfit posts, styling tags, and high-resolution look photos.</li>
+                <li>All active 24-hour stories, loves/hearts, and viewer records.</li>
+                <li>All social following connections and follower lists.</li>
+                <li>All earned Closet Points, lifetime achievement scores, and tier statuses.</li>
+                <li>Personal identifiers (full name, phone, bio, birthday, city, country).</li>
+            </ul>
+
+            <h3 style="font-family: 'Outfit', sans-serif; font-size: 1.05rem; font-weight: 700; margin-bottom: 8px;">Conversation & Data Integrity:</h3>
+            <ul class="preserve-list">
+                <li>To avoid breaking conversation threads for people you've chatted with, past messages are retained with your author name anonymized as <strong>"Deleted User"</strong>. No one can message this account.</li>
+                <li>A final data export and GDPR deletion confirmation summary will be delivered to <strong>{{ user.email }}</strong>.</li>
+            </ul>
+
+            <form method="POST" action="">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label class="form-label" for="reason">Why are you leaving? (Optional)</label>
+                    <select id="reason" name="reason" class="form-select">
+                        <option value="I no longer need digital wardrobe management">I no longer need digital wardrobe management</option>
+                        <option value="Privacy or data security concerns">Privacy or data security concerns</option>
+                        <option value="I have another account">I have another account</option>
+                        <option value="Technical difficulties with the app">Technical difficulties with the app</option>
+                        <option value="Other reason">Other reason</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label" for="details">Additional Details or Feedback (Optional)</label>
+                    <textarea id="details" name="details" class="form-input" rows="3" placeholder="Tell us more about your experience or specific reasons..."></textarea>
+                </div>
+
+                <div class="checkbox-group">
+                    <input type="checkbox" id="confirmation" name="confirmation" required>
+                    <label for="confirmation">
+                        I confirm that I understand this request is irreversible. I request the Closly administrator to permanently delete my account, digital closet items, and all associated personal data.
+                    </label>
+                </div>
+
+                <button type="submit" class="btn-danger">Submit Request to Admin for Permanent Deletion</button>
+            </form>
+
+            <div style="text-align: center; margin-top: 18px;">
+                <a href="{% url 'legal_pages:delete_account_logout' %}" class="btn-logout">Cancel & Sign Out</a>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Footer -->
+        <div class="footer-nav">
+            <a href="/legal/support/">Support & Help Center</a>
+            <a href="/legal/privacy-policy/">Privacy Policy</a>
+            <a href="/legal/terms-and-conditions/">Terms & Conditions</a>
+        </div>
+        <p class="footer-copy">&copy; 2026 Closly. All rights reserved. Google Play Compliance Account Deletion Portal.</p>
+    </div>
+</body>
+</html>

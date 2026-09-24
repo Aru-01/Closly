@@ -1,0 +1,155 @@
+from datetime import timedelta
+from django.utils import timezone
+from rest_framework import generics, status
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework.pagination import PageNumberPagination
+from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
+
+from .models import Notification
+from .serializers import NotificationSerializer
+
+
+class StandardNotificationPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = 'page_size'
+    max_page_size = 50
+
+    def get_paginated_response(self, data):
+        return Response({
+            'success': True,
+            'message': 'Notifications retrieved successfully.',
+            'total': self.page.paginator.count,
+            'data': data
+        })
+
+
+@extend_schema(
+    tags=["User Notifications"],
+    summary="List User Notifications",
+    description="Retrieve paginated in-app notifications for authenticated user, with unread count and unread_only filter. Only notifications within the last 60 days are retained.",
+    parameters=[
+        OpenApiParameter('unread_only', bool, description="Filter only unread notifications if true"),
+    ],
+    responses={
+        200: NotificationSerializer(many=True),
+    }
+)
+class NotificationListView(generics.ListAPIView):
+    """
+    API endpoint to list in-app notifications for the authenticated user.
+    
+    GET /api/notifications/?unread_only=true
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = NotificationSerializer
+    pagination_class = StandardNotificationPagination
+
+    def get_queryset(self):
+        cutoff = timezone.now() - timedelta(days=60)
+        qs = Notification.objects.filter(recipient=self.request.user, created_at__gte=cutoff).select_related('sender')
+        unread_only = self.request.query_params.get('unread_only')
+        if unread_only and unread_only.lower() in ['true', '1']:
+            qs = qs.filter(is_read=False)
+        return qs
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        cutoff = timezone.now() - timedelta(days=60)
+        unread_count = Notification.objects.filter(recipient=request.user, is_read=False, created_at__gte=cutoff).count()
+        response.data['unread_count'] = unread_count
+        return response
+
+
+@extend_schema(
+    tags=["User Notifications"],
+    summary="Delete Single Notification",
+    description="Permanently delete a specific in-app notification by ID for the authenticated user.",
+    responses={
+        200: OpenApiResponse(description="Notification deleted successfully"),
+        404: OpenApiResponse(description="Notification not found"),
+    }
+)
+class NotificationDeleteView(APIView):
+    """
+    API endpoint to delete a single notification.
+    
+    DELETE /api/notifications/<id>/
+    POST /api/notifications/<id>/delete/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def delete(self, request, pk):
+        notification = get_object_or_404(Notification, pk=pk, recipient=request.user)
+        notification_id = notification.id
+        notification.delete()
+        return Response({
+            'success': True,
+            'message': 'Notification deleted successfully.',
+            'data': {'id': notification_id}
+        }, status=status.HTTP_200_OK)
+
+    def post(self, request, pk):
+        return self.delete(request, pk)
+
+
+@extend_schema(
+    tags=["User Notifications"],
+    summary="Mark Notification as Read",
+    description="Mark a specific in-app notification as read.",
+    responses={
+        200: OpenApiResponse(description="Notification marked as read"),
+        404: OpenApiResponse(description="Notification not found"),
+    }
+)
+class NotificationMarkReadView(APIView):
+    """
+    API endpoint to mark a single notification as read.
+    
+    POST /api/notifications/<id>/read/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request, pk):
+        notification = get_object_or_404(Notification, pk=pk, recipient=request.user)
+        notification.is_read = True
+        notification.save(update_fields=['is_read'])
+        return Response({
+            'success': True,
+            'message': 'Notification marked as read.',
+            'data': {'id': notification.id, 'is_read': True}
+        }, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    tags=["User Notifications"],
+    summary="Mark All Notifications as Read",
+    description="Mark all unread notifications as read for current user.",
+    responses={
+        200: OpenApiResponse(description="All notifications marked as read"),
+    }
+)
+class NotificationMarkAllReadView(APIView):
+    """
+    API endpoint to mark all notifications as read for current user.
+    
+    POST /api/notifications/mark-all-read/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        cutoff = timezone.now() - timedelta(days=60)
+        updated_count = Notification.objects.filter(recipient=request.user, is_read=False, created_at__gte=cutoff).update(is_read=True)
+        return Response({
+            'success': True,
+            'message': f'Marked {updated_count} notifications as read.',
+            'data': {'updated_count': updated_count}
+        }, status=status.HTTP_200_OK)
+

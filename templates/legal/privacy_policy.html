@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Privacy Policy | Closly</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #0F172A;
+            --primary-light: #1E293B;
+            --accent: #4F46E5;
+            --accent-glow: rgba(79, 70, 229, 0.15);
+            --text-main: #0F172A;
+            --text-muted: #475569;
+            --bg-page: #F8FAFC;
+            --bg-card: #FFFFFF;
+            --border-subtle: #E2E8F0;
+            --border-highlight: #CBD5E1;
+            --radius-lg: 24px;
+            --radius-md: 16px;
+            --radius-sm: 10px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+            background-color: var(--bg-page);
+            color: var(--text-main);
+            line-height: 1.7;
+            padding: 24px 16px 60px;
+            min-height: 100vh;
+        }
+
+        .wrapper {
+            max-width: 820px;
+            margin: 0 auto;
+        }
+
+        /* Top Brand Header */
+        .brand-nav {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+            padding: 12px 6px;
+        }
+
+        .brand-logo {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.6rem;
+            font-weight: 800;
+            letter-spacing: -0.04em;
+            color: var(--primary);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .brand-logo span {
+            color: var(--accent);
+        }
+
+        .doc-badge {
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--accent);
+            background: var(--accent-glow);
+            padding: 6px 14px;
+            border-radius: 999px;
+            border: 1px solid rgba(79, 70, 229, 0.2);
+        }
+
+        /* Hero Banner */
+        .hero-banner {
+            background: linear-gradient(135deg, #0F172A 0%, #1E1B4B 100%);
+            color: #FFFFFF;
+            border-radius: var(--radius-lg);
+            padding: 44px 32px;
+            margin-bottom: 28px;
+            box-shadow: 0 16px 36px -12px rgba(15, 23, 42, 0.35);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .hero-banner::after {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -20%;
+            width: 300px;
+            height: 300px;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.35) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .hero-banner h1 {
+            font-family: 'Outfit', sans-serif;
+            font-size: 2.3rem;
+            font-weight: 700;
+            letter-spacing: -0.03em;
+            margin-bottom: 10px;
+            line-height: 1.2;
+        }
+
+        .hero-banner .meta-date {
+            font-size: 0.88rem;
+            color: #94A3B8;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* Glass Content Container */
+        .content-card {
+            background: var(--bg-card);
+            border-radius: var(--radius-lg);
+            border: 1px solid var(--border-subtle);
+            padding: 40px 36px;
+            box-shadow: 0 4px 20px -4px rgba(0, 0, 0, 0.05);
+        }
+
+        .intro-lead {
+            font-size: 1.05rem;
+            color: var(--text-muted);
+            margin-bottom: 36px;
+            padding: 20px 24px;
+            background: #F1F5F9;
+            border-left: 4px solid var(--accent);
+            border-radius: var(--radius-sm);
+            line-height: 1.75;
+        }
+
+        .policy-section {
+            margin-bottom: 36px;
+            padding-bottom: 28px;
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        .policy-section:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .section-num {
+            width: 32px;
+            height: 32px;
+            border-radius: 10px;
+            background: var(--primary);
+            color: #FFFFFF;
+            font-family: 'Outfit', sans-serif;
+            font-size: 0.85rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .section-title {
+            font-family: 'Outfit', sans-serif;
+            font-size: 1.3rem;
+            font-weight: 700;
+            color: var(--primary);
+            letter-spacing: -0.02em;
+        }
+
+        .section-body {
+            padding-left: 44px;
+            color: var(--text-muted);
+            font-size: 0.96rem;
+        }
+
+        .section-body p {
+            margin-bottom: 14px;
+        }
+
+        .data-list {
+            list-style: none;
+            display: grid;
+            gap: 10px;
+            margin: 16px 0;
+        }
+
+        .data-list li {
+            position: relative;
+            padding-left: 24px;
+            color: #334155;
+            font-weight: 500;
+        }
+
+        .data-list li::before {
+            content: '✓';
+            position: absolute;
+            left: 0;
+            color: var(--accent);
+            font-weight: 800;
+            font-size: 0.9rem;
+        }
+
+        .highlight-card {
+            background: #EEF2FF;
+            border: 1px solid #C7D2FE;
+            border-radius: var(--radius-md);
+            padding: 18px 22px;
+            margin: 18px 0;
+            font-size: 0.92rem;
+            color: #3730A3;
+        }
+
+        .warning-card {
+            background: #FFFBEB;
+            border: 1px solid #FDE68A;
+            border-radius: var(--radius-md);
+            padding: 18px 22px;
+            margin: 18px 0;
+            font-size: 0.92rem;
+            color: #92400E;
+        }
+
+        .contact-card {
+            background: #F8FAFC;
+            border: 1px dashed var(--border-highlight);
+            border-radius: var(--radius-md);
+            padding: 22px 26px;
+            margin-top: 16px;
+        }
+
+        .contact-card a {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .contact-card a:hover {
+            text-decoration: underline;
+        }
+
+        /* Footer */
+        .footer-wrap {
+            text-align: center;
+            margin-top: 40px;
+            color: #94A3B8;
+            font-size: 0.85rem;
+        }
+
+        @media (max-width: 640px) {
+            body {
+                padding: 16px 12px 40px;
+            }
+
+            .hero-banner {
+                padding: 32px 20px;
+            }
+
+            .hero-banner h1 {
+                font-size: 1.75rem;
+            }
+
+            .content-card {
+                padding: 28px 18px;
+            }
+
+            .section-body {
+                padding-left: 0;
+            }
+
+            .section-header {
+                gap: 10px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="wrapper">
+        <header class="brand-nav">
+            <div class="brand-logo">Closly<span>.</span></div>
+            <div class="doc-badge">Legal Privacy Policy</div>
+        </header>
+
+        <section class="hero-banner">
+            <h1>Privacy Policy</h1>
+            <div class="meta-date">
+                <span>Last Updated: September 2026</span>
+            </div>
+        </section>
+
+        <main class="content-card">
+            <div class="intro-lead">
+                Closly ("we", "our", or "us") is dedicated to protecting your privacy. This Privacy Policy explains how we collect, use, store, share, and protect your personal information when you use our mobile application and related fashion styling services. By using Closly, you acknowledge that you have read and consent to the data practices described in this Privacy Policy.
+            </div>
+
+            <!-- Section 1 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">01</div>
+                    <h2 class="section-title">Introduction & Overview</h2>
+                </div>
+                <div class="section-body">
+                    <p>Closly ("we", "our", or "us") is dedicated to protecting your privacy. This Privacy Policy explains how we collect, use, store, share, and protect your personal information when you use our mobile application and related fashion styling services.</p>
+                    <p>By using Closly, you acknowledge that you have read and consent to the data practices described in this Privacy Policy.</p>
+                </div>
+            </div>
+
+            <!-- Section 2 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">02</div>
+                    <h2 class="section-title">Information We Collect</h2>
+                </div>
+                <div class="section-body">
+                    <p>We collect information you provide directly to us, as well as data gathered automatically when you interact with the app:</p>
+                    <ul class="data-list">
+                        <li><strong>Account Information:</strong> Name, email address, password, profile picture, gender preferences, and optional bio/country details.</li>
+                        <li><strong>Wardrobe & Fashion Content:</strong> Photos of your clothing items, category tags, colors, patterns, brands, outfit logs, style DNA quiz answers, and stories.</li>
+                        <li><strong>Social & Messaging Data:</strong> Outfits you like or save, comments, followers, following connections, and direct messages exchanged with other fashion community members.</li>
+                        <li><strong>Device & Technical Information:</strong> Operating system version, device model, IP address, unique app installation identifiers, crash reports, and app performance analytics.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Section 3 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">03</div>
+                    <h2 class="section-title">Device Permissions & Purpose</h2>
+                </div>
+                <div class="section-body">
+                    <p>To enable core functionality, Closly requests specific device permissions. We access these hardware features strictly with your explicit consent:</p>
+                    <ul class="data-list">
+                        <li><strong>Camera:</strong> Used exclusively when you choose to scan clothes using our AI smart scanner, take a profile picture, or photograph your daily outfit (OOTD).</li>
+                        <li><strong>Photo Library:</strong> Used to allow you to select and upload existing images of your wardrobe pieces and save outfit collages back to your device.</li>
+                        <li><strong>Microphone:</strong> Used only if you record video stories or outfit video reels with audio inside the app.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Section 4 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">04</div>
+                    <h2 class="section-title">How We Use Your Information</h2>
+                </div>
+                <div class="section-body">
+                    <p>We use the collected information for the following legitimate purposes:</p>
+                    <ul class="data-list">
+                        <li>To manage your digital closet, calculate your wardrobe sustainability score, and organize your clothing items.</li>
+                        <li>To generate personalized daily outfit suggestions and weather-informed styling recommendations.</li>
+                        <li>To power our community newsfeed, stories, and real-time chat between users.</li>
+                        <li>To curate tailored product recommendations in the "For You" shopping tab.</li>
+                        <li>To maintain system security, detect fraudulent activities, and troubleshoot application performance.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Section 5 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">05</div>
+                    <h2 class="section-title">AI Image Scanning & Computer Vision</h2>
+                </div>
+                <div class="section-body">
+                    <p>When you use the AI Camera Scanner, images of your clothing are analyzed by our computer vision models to identify garment categories, colors, patterns, and seasons. Photos uploaded for wardrobe scanning are stored securely and are never sold to external data brokers or used for facial recognition.</p>
+                </div>
+            </div>
+
+            <!-- Section 6 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">06</div>
+                    <h2 class="section-title">Affiliate Links & Third-Party Partners</h2>
+                </div>
+                <div class="section-body">
+                    <p>Closly features curated fashion pieces from partner retailers and affiliate networks (such as Awin and independent brands). If you tap an affiliate product link and purchase on an external merchant website, the merchant or network may place cookies or track the referral to credit the affiliate purchase. We do not share your private wardrobe photos or personal chat history with these third-party merchants.</p>
+                </div>
+            </div>
+
+            <!-- Section 7 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">07</div>
+                    <h2 class="section-title">Data Sharing & Disclosure</h2>
+                </div>
+                <div class="section-body">
+                    <p>We respect your personal wardrobe data and do not sell or rent your personal information. We may share data only under the following limited circumstances:</p>
+                    <ul class="data-list">
+                        <li>With service providers who assist in hosting, cloud storage, database management, and error monitoring under strict confidentiality agreements.</li>
+                        <li>With other Closly users according to your privacy settings (e.g., your public profile, shared outfits, and stories).</li>
+                        <li>If required by law, subpoena, or to protect the vital rights, property, and safety of our users or the public.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Section 8 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">08</div>
+                    <h2 class="section-title">Data Retention & Direct Account Deletion</h2>
+                </div>
+                <div class="section-body">
+                    <p>We retain your information for as long as your account remains active. You maintain complete control over your data:</p>
+                    <ul class="data-list">
+                        <li>You can edit or delete individual clothing items and outfits at any time directly in your closet view.</li>
+                        <li>You can permanently delete your entire account, profile, wardrobe photos, and messages at any time by going to <strong>Settings &gt; Delete Account</strong>. Upon entering your password, your account and associated personal data are permanently deleted from our active databases.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Section 9 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">09</div>
+                    <h2 class="section-title">Data Security</h2>
+                </div>
+                <div class="section-body">
+                    <p>We implement robust industry-standard technical and organizational security measures—including TLS/SSL transport encryption, token-based authentication, and restricted database access—to protect your personal information against unauthorized access, alteration, or disclosure.</p>
+                </div>
+            </div>
+
+            <!-- Section 10 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">10</div>
+                    <h2 class="section-title">International Privacy Rights (GDPR & CCPA)</h2>
+                </div>
+                <div class="section-body">
+                    <p>Depending on your location, you may have statutory rights regarding your personal data, including the right to access, rectify, port, or request erasure of your data, or to restrict or object to certain processing activities. You may exercise these rights directly within the app settings or by contacting our Data Protection team.</p>
+                </div>
+            </div>
+
+            <!-- Section 11 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">11</div>
+                    <h2 class="section-title">Children's Privacy</h2>
+                </div>
+                <div class="section-body">
+                    <p>Closly is not directed to individuals under the age of 13. We do not knowingly collect personal information from children under 13. If we become aware that a child under 13 has provided us with personal information, we will take immediate steps to delete such data.</p>
+                </div>
+            </div>
+
+            <!-- Section 12 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">12</div>
+                    <h2 class="section-title">Updates to Privacy Policy</h2>
+                </div>
+                <div class="section-body">
+                    <p>We may revise this Privacy Policy from time to time. Any changes will be posted on this screen with an updated "Last updated" date. We encourage you to review this Privacy Policy periodically.</p>
+                </div>
+            </div>
+
+            <!-- Section 13 -->
+            <div class="policy-section">
+                <div class="section-header">
+                    <div class="section-num">13</div>
+                    <h2 class="section-title">Contact Us</h2>
+                </div>
+                <div class="section-body">
+                    <p>If you have questions, concerns, or requests regarding this Privacy Policy or our data handling practices, please contact us at <a href="mailto:privacy@myclosely.com">privacy@myclosely.com</a> or through the Help & Support section in Settings.</p>
+                    <div class="contact-card">
+                        <strong>Privacy Team:</strong> <a href="mailto:privacy@myclosely.com">privacy@myclosely.com</a><br>
+                        <strong>In-App:</strong> Settings &gt; Help &amp; Support
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="footer-wrap">
+            <p>© 2026 Closly. All rights reserved. Designed for digital wardrobe elegance.</p>
+        </footer>
+    </div>
+</body>
+</html>

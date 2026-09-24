@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ profile_user.name }} - Closly Wardrobe & Style</title>
+  <meta name="description" content="Explore {{ profile_user.name }}'s digital closet, daily outfit looks, and personal styling on Closly." />
+  <meta property="og:title" content="{{ profile_user.name }} on Closly" />
+  <meta property="og:description" content="Check out my digital wardrobe and outfit inspirations on Closly!" />
+  {% if profile_user.profile_picture %}
+  <meta property="og:image" content="{{ profile_user.profile_picture.url }}" />
+  {% endif %}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Playfair+Display:ital,wght@0,600;1,400&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #09090b;
+      --card-bg: rgba(24, 24, 27, 0.75);
+      --card-border: rgba(255, 255, 255, 0.1);
+      --accent: #d4af37;
+      --accent-gradient: linear-gradient(135deg, #e5c158 0%, #b8932b 100%);
+      --text: #f4f4f5;
+      --text-muted: #a1a1aa;
+      --radius: 20px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 32px 16px 64px;
+      position: relative;
+      overflow-x: hidden;
+    }
+
+    /* Ambient glow */
+    body::before {
+      content: "";
+      position: fixed;
+      top: -100px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 600px;
+      height: 600px;
+      background: radial-gradient(circle, rgba(212, 175, 55, 0.12) 0%, rgba(0,0,0,0) 70%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 520px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .brand-header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .brand-header .logo {
+      font-family: 'Playfair Display', serif;
+      font-size: 28px;
+      font-weight: 600;
+      letter-spacing: 2px;
+      color: var(--text);
+      text-transform: uppercase;
+    }
+
+    .profile-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      padding: 32px 24px;
+      text-align: center;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+      margin-bottom: 24px;
+    }
+
+    .avatar-wrapper {
+      position: relative;
+      width: 108px;
+      height: 108px;
+      margin: 0 auto 18px;
+    }
+
+    .avatar {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      object-fit: cover;
+      border: 3px solid var(--accent);
+      background: #18181b;
+    }
+
+    .avatar-placeholder {
+      width: 100%;
+      height: 100%;
+      border-radius: 50%;
+      background: var(--accent-gradient);
+      color: #000;
+      font-size: 38px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: 3px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .tier-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      background: rgba(212, 175, 55, 0.15);
+      border: 1px solid rgba(212, 175, 55, 0.35);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      border-radius: 999px;
+      margin-bottom: 10px;
+    }
+
+    .name {
+      font-size: 24px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 4px;
+    }
+
+    .bio {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      margin-bottom: 20px;
+    }
+
+    .stats-row {
+      display: flex;
+      justify-content: space-around;
+      border-top: 1px solid var(--card-border);
+      border-bottom: 1px solid var(--card-border);
+      padding: 16px 0;
+      margin-bottom: 24px;
+    }
+
+    .stat-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .stat-val {
+      font-size: 20px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .stat-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .cta-btn {
+      display: block;
+      width: 100%;
+      padding: 14px 20px;
+      border-radius: 14px;
+      background: var(--accent-gradient);
+      color: #09090b;
+      font-size: 15px;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+      box-shadow: 0 8px 24px rgba(212, 175, 55, 0.3);
+      transition: transform 0.18s ease, box-shadow 0.18s ease;
+      margin-bottom: 12px;
+    }
+
+    .cta-btn:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 30px rgba(212, 175, 55, 0.45);
+    }
+
+    .referral-box {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px dashed rgba(212, 175, 55, 0.4);
+      border-radius: 12px;
+      padding: 12px;
+      font-size: 13px;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+    }
+
+    .referral-code {
+      font-weight: 800;
+      font-size: 15px;
+      color: var(--accent);
+      letter-spacing: 1px;
+      display: inline-block;
+      margin-top: 4px;
+    }
+
+    .section-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: #fff;
+      margin-bottom: 12px;
+      text-align: left;
+    }
+
+    .outfits-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+
+    .outfit-thumb {
+      aspect-ratio: 1 / 1;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #18181b;
+      border: 1px solid var(--card-border);
+    }
+
+    .outfit-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .footer {
+      text-align: center;
+      font-size: 12px;
+      color: #52525b;
+      margin-top: 32px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="brand-header">
+      <div class="logo">Closly</div>
+    </div>
+
+    <div class="profile-card">
+      <div class="avatar-wrapper">
+        {% if profile_user.profile_picture %}
+        <img class="avatar" src="{{ profile_user.profile_picture.url }}" alt="{{ profile_user.name }}" />
+        {% else %}
+        <div class="avatar-placeholder">{{ profile_user.name|default:"U"|slice:":1"|upper }}</div>
+        {% endif %}
+      </div>
+
+      <div class="tier-badge">{{ tier }} Tier</div>
+      <h1 class="name">{{ profile_user.name }}</h1>
+      {% if profile_user.bio %}
+      <p class="bio">{{ profile_user.bio }}</p>
+      {% endif %}
+
+      <div class="stats-row">
+        <div class="stat-item">
+          <span class="stat-val">{{ closet_count }}</span>
+          <span class="stat-label">Closet Items</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-val">{{ outfit_count }}</span>
+          <span class="stat-label">Outfits</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-val">{{ followers_count }}</span>
+          <span class="stat-label">Followers</span>
+        </div>
+      </div>
+
+      {% if profile_user.referral_code %}
+      <div class="referral-box">
+        Join Closly with this referral code for <strong>+200 Bonus Points</strong>:
+        <div><span class="referral-code">{{ profile_user.referral_code }}</span></div>
+      </div>
+      {% endif %}
+
+      <a href="closly://user/{{ profile_user.id }}?ref={{ profile_user.referral_code }}" class="cta-btn" id="open-app-btn">
+        Open in Closly App
+      </a>
+
+      <div style="font-size: 12px; color: var(--text-muted);">
+        Don't have the app? <a href="#" style="color: var(--accent); text-decoration: none; font-weight: 600;">Download Closly</a>
+      </div>
+    </div>
+
+    {% if recent_outfits %}
+    <div class="section-title">Recent Style Looks</div>
+    <div class="outfits-grid">
+      {% for outfit in recent_outfits %}
+      <div class="outfit-thumb">
+        {% if outfit.image %}
+        <img src="{{ outfit.image.url }}" alt="Outfit" loading="lazy" />
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="footer">
+      &copy; Closly Technologies Inc. Luxury wardrobe & personal styling platform.
+    </div>
+  </div>
+
+  <script>
+    // Optional fallback: if clicking Open in Closly doesn't open the scheme, suggest download
+    document.getElementById('open-app-btn').addEventListener('click', function(e) {
+      setTimeout(function() {
+        console.log("Deep link triggered.");
+      }, 1000);
+    });
+  </script>
+</body>
+</html>

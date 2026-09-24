@@ -1,0 +1,409 @@
+from rest_framework import generics, status
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from django.shortcuts import get_object_or_404
+from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from django.db.models import Q, Count
+from django.utils import timezone
+
+from social.models import UserFollow, TodayOutfit, OutfitLike
+from social.serializers import UserFollowSerializer, TodayOutfitSerializer
+from .outfit_views import StandardSocialPagination
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
+
+User = get_user_model()
+from social.dna import calculate_dna_match
+
+
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="Follow or Unfollow User",
+    description="Toggle following relationship for another user profile.",
+    responses={
+        200: OpenApiResponse(description="Follow status updated successfully"),
+        400: OpenApiResponse(description="Cannot follow self or invalid user ID"),
+        404: OpenApiResponse(description="User not found"),
+    }
+)
+class UserFollowToggleView(APIView):
+    """
+    API endpoint to follow or unfollow another user.
+    
+    POST /api/social/users/<user_id>/follow/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request, user_id):
+        if str(request.user.id) == str(user_id):
+            return Response({
+                'success': False,
+                'message': 'You cannot follow yourself.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            target_user = get_object_or_404(User, pk=user_id)
+        except (ValidationError, ValueError):
+            return Response({
+                'success': False,
+                'message': 'Invalid user ID format.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        follow, created = UserFollow.objects.get_or_create(follower=request.user, following=target_user)
+
+        if not created:
+            # Unfollow
+            follow.delete()
+            is_following = False
+            message = f"Unfollowed {target_user.name}."
+        else:
+            is_following = True
+            message = f"Now following {target_user.name}."
+            try:
+                from notifications.services import create_notification
+                create_notification(
+                    recipient=target_user,
+                    sender=request.user,
+                    notification_type='new_follower',
+                    title='New Follower',
+                    message=f"{request.user.name or 'A user'} started following you.",
+                    data={'user_id': str(request.user.id), 'deep_link': f"closly://user/{request.user.id}"}
+                )
+            except Exception:
+                pass
+
+        return Response({
+            'success': True,
+            'message': message,
+            'data': {
+                'user_id': str(target_user.id),
+                'is_following': is_following
+            }
+        }, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="List User Followers",
+    description="Retrieve paginated list of users following a specified user with DNA styling match scores.",
+    parameters=[
+        OpenApiParameter('tab', str, description="Filter tab: 'all', 'dna_match', 'new_followers', 'same_location'"),
+    ],
+    responses={
+        200: UserFollowSerializer(many=True),
+    }
+)
+class UserFollowersListView(generics.ListAPIView):
+    """
+    API endpoint to list followers of a user.
+    Supports tab filtering:
+    - ?tab=all (default, all followers with DNA match scores)
+    - ?tab=dna_match (sorted descending by DNA match score %)
+    - ?tab=new_followers (followed within the last 14 days)
+    - ?tab=same_location (same city, district, or country)
+    
+    GET /api/social/users/<user_id>/followers/?tab=dna_match
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = UserFollowSerializer
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['view_type'] = 'followers'
+        return ctx
+
+    def get_queryset(self):
+        user_id = self.kwargs.get('user_id')
+        if not user_id or str(user_id) == 'me':
+            user_id = self.request.user.id
+
+        qs = UserFollow.objects.filter(following_id=user_id).select_related(
+            'follower', 'following', 'follower__preferences', 'following__preferences'
+        )
+        tab = self.request.query_params.get('tab', 'all').lower()
+
+        if tab == 'new_followers':
+            cutoff = timezone.now() - timezone.timedelta(days=14)
+            qs = qs.filter(created_at__gte=cutoff)
+        elif tab == 'same_location':
+            u = self.request.user
+            q_loc = Q()
+            if u.city:
+                q_loc |= Q(follower__city__iexact=u.city.strip())
+            if u.country:
+                q_loc |= Q(follower__country__iexact=u.country.strip())
+            if q_loc:
+                qs = qs.filter(q_loc)
+
+        return qs.order_by('-created_at')
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        tab = request.query_params.get('tab', 'all').lower()
+        if tab == 'dna_match' and isinstance(response.data, list):
+            response.data.sort(
+                key=lambda x: (x.get('dna_match') or {}).get('score', 0),
+                reverse=True
+            )
+        return response
+
+
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="List User Following",
+    description="Retrieve paginated list of creators that a specified user is following.",
+    parameters=[
+        OpenApiParameter('tab', str, description="Filter tab: 'all', 'dna_match', 'new_followers', 'same_location'"),
+    ],
+    responses={
+        200: UserFollowSerializer(many=True),
+    }
+)
+class UserFollowingListView(generics.ListAPIView):
+    """
+    API endpoint to list users followed by a user.
+    Supports tab filtering:
+    - ?tab=all
+    - ?tab=dna_match (sorted descending by DNA match score %)
+    - ?tab=new_followers (followed within last 14 days)
+    - ?tab=same_location (same city, district, or country)
+    
+    GET /api/social/users/<user_id>/following/?tab=all
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = UserFollowSerializer
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['view_type'] = 'following'
+        return ctx
+
+    def get_queryset(self):
+        user_id = self.kwargs.get('user_id')
+        if not user_id or str(user_id) == 'me':
+            user_id = self.request.user.id
+
+        qs = UserFollow.objects.filter(follower_id=user_id).select_related(
+            'follower', 'following', 'follower__preferences', 'following__preferences'
+        )
+        tab = self.request.query_params.get('tab', 'all').lower()
+
+        if tab == 'new_followers':
+            cutoff = timezone.now() - timezone.timedelta(days=14)
+            qs = qs.filter(created_at__gte=cutoff)
+        elif tab == 'same_location':
+            u = self.request.user
+            q_loc = Q()
+            if u.city:
+                q_loc |= Q(following__city__iexact=u.city.strip())
+            if u.country:
+                q_loc |= Q(following__country__iexact=u.country.strip())
+            if q_loc:
+                qs = qs.filter(q_loc)
+
+        return qs.order_by('-created_at')
+
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        tab = request.query_params.get('tab', 'all').lower()
+        if tab == 'dna_match' and isinstance(response.data, list):
+            response.data.sort(
+                key=lambda x: (x.get('dna_match') or {}).get('score', 0),
+                reverse=True
+            )
+        return response
+
+
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="List My Following",
+    description="Retrieve creators that the authenticated user is currently following.",
+    parameters=[
+        OpenApiParameter('tab', str, description="Filter tab: 'all', 'dna_match', 'new_followers', 'same_location'"),
+    ],
+    responses={
+        200: UserFollowSerializer(many=True),
+    }
+)
+class MyFollowingListView(UserFollowingListView):
+    """
+    Direct endpoint for authenticated user to see who they follow (Self Profile).
+    
+    GET /api/social/following/?tab=all|dna_match|new_followers|same_location
+    """
+    def get_queryset(self):
+        self.kwargs['user_id'] = self.request.user.id
+        return super().get_queryset()
+
+
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="List My Followers",
+    description="Retrieve users currently following the authenticated user.",
+    parameters=[
+        OpenApiParameter('tab', str, description="Filter tab: 'all', 'dna_match', 'new_followers', 'same_location'"),
+    ],
+    responses={
+        200: UserFollowSerializer(many=True),
+    }
+)
+class MyFollowersListView(UserFollowersListView):
+    """
+    Direct endpoint for authenticated user to see their followers (Self Profile).
+    
+    GET /api/social/followers/?tab=all|dna_match|new_followers|same_location
+    """
+    def get_queryset(self):
+        self.kwargs['user_id'] = self.request.user.id
+        return super().get_queryset()
+
+
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="View Other User Profile",
+    description="View another creator's profile, follow status, fashion style DNA match percentage, and stats.",
+    responses={
+        200: OpenApiResponse(description="Profile details and DNA style match score"),
+        404: OpenApiResponse(description="User not found"),
+    }
+)
+class OtherUserProfileView(APIView):
+    """
+    API endpoint to view another user's profile with real-time Style DNA match percentage.
+    
+    GET /api/social/users/<user_id>/profile/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request, user_id):
+        target_user = get_object_or_404(
+            User.objects.select_related('preferences', 'reward_profile'),
+            pk=user_id
+        )
+        is_following = UserFollow.objects.filter(follower=request.user, following=target_user).exists()
+        is_self = (request.user.id == target_user.id)
+
+        from social.dna import calculate_dna_match
+        dna = calculate_dna_match(request.user, target_user)
+
+        reward_profile = getattr(target_user, 'reward_profile', None)
+        tier = reward_profile.current_tier if reward_profile else 'Bronze'
+
+        followers_count = UserFollow.objects.filter(following=target_user).count()
+        following_count = UserFollow.objects.filter(follower=target_user).count()
+        outfit_count = TodayOutfit.objects.filter(user=target_user, visibility='public').count()
+        closet_count = target_user.closet_items.count()
+
+        pic_url = target_user.profile_picture.url if target_user.profile_picture else None
+        if pic_url and not pic_url.startswith(('http://', 'https://')):
+            pic_url = request.build_absolute_uri(pic_url)
+
+        pref_target = getattr(target_user, 'preferences', None)
+        target_styles = pref_target.style_match if pref_target and pref_target.style_match else []
+
+        from users.utils import is_user_online, get_user_last_seen
+        is_online = True if is_self else is_user_online(target_user.id)
+        last_seen = timezone.now().isoformat() if is_self else get_user_last_seen(target_user)
+
+        return Response({
+            'success': True,
+            'message': f"Profile of {target_user.name or 'User'} retrieved successfully.",
+            'data': {
+                'id': str(target_user.id),
+                'name': target_user.name,
+                'email': target_user.email,
+                'bio': target_user.bio or '',
+                'country': target_user.country or '',
+                'city': target_user.city or '',
+                'profile_picture': pic_url,
+                'current_tier': tier,
+                'is_self': is_self,
+                'is_following': is_following,
+                'followers_count': followers_count,
+                'following_count': following_count,
+                'outfit_count': outfit_count,
+                'outfits_count': outfit_count,
+                'looks_count': outfit_count,
+                'closet_count': closet_count,
+                'style_dna': target_styles,
+                'style_match': target_styles,
+                'dna_match': dna,
+                'is_online': is_online,
+                'last_seen': last_seen,
+            }
+        }, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="List User Public Outfits",
+    description="Paginated list of public outfits published by a specific user.",
+    responses={
+        200: TodayOutfitSerializer(many=True),
+    }
+)
+class UserOutfitsListView(generics.ListAPIView):
+    """
+    API endpoint to view another user's public outfits grid (e.g. from their profile).
+    
+    GET /api/social/users/<user_id>/outfits/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+    serializer_class = TodayOutfitSerializer
+    pagination_class = StandardSocialPagination
+
+    def _get_target_user(self):
+        if not hasattr(self, '_target_user'):
+            user_id = self.kwargs.get('user_id')
+            try:
+                self._target_user = get_object_or_404(User, pk=user_id)
+            except (ValidationError, ValueError):
+                self._target_user = None
+        return self._target_user
+
+    def get_queryset(self):
+        target_user = self._get_target_user()
+        if not target_user:
+            return TodayOutfit.objects.none()
+
+        # If viewing own profile, show all; if viewing others, show public only
+        if self.request.user.id == target_user.id:
+            qs = TodayOutfit.objects.filter(user=target_user)
+        else:
+            qs = TodayOutfit.objects.filter(user=target_user, visibility='public')
+
+        return (
+            qs.select_related('user')
+            .prefetch_related('tagged_items', 'images')
+            .annotate(_likes_count=Count('likes', distinct=True))
+            .order_by('-created_at')
+        )
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            page_ids = [o.id for o in page]
+            context = super().get_serializer_context()
+            context['liked_outfit_ids'] = set(
+                OutfitLike.objects.filter(user=request.user, outfit_id__in=page_ids).values_list('outfit_id', flat=True)
+            )
+            serializer = self.get_serializer(page, many=True, context=context)
+            return self.get_paginated_response(serializer.data)
+
+        context = super().get_serializer_context()
+        if request.user.is_authenticated:
+            context['liked_outfit_ids'] = set(
+                OutfitLike.objects.filter(user=request.user, outfit_id__in=[o.id for o in queryset]).values_list('outfit_id', flat=True)
+            )
+        serializer = self.get_serializer(queryset, many=True, context=context)
+        return Response(serializer.data)
+
+
