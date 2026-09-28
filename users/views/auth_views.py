@@ -335,12 +335,21 @@ class FirebaseAuthView(APIView):
                         status_code=status.HTTP_400_BAD_REQUEST
                     )
                 
+                # Extract photo URL from Firebase token or request payload
+                photo_url = (
+                    serializer.validated_data.get('photo_url')
+                    or decoded_token.get('picture')
+                    or decoded_token.get('photo_url')
+                    or decoded_token.get('photoURL')
+                )
+
                 # Create or get user
                 user = User.objects.create_firebase_user(
                     email=email,
                     name=name,
                     firebase_uid=firebase_uid,
-                    auth_provider=auth_provider
+                    auth_provider=auth_provider,
+                    photo_url=photo_url
                 )
                 
                 # Update date of birth if provided
@@ -371,6 +380,7 @@ class FirebaseAuthView(APIView):
                     hasattr(user, 'preferences') and user.preferences.onboarding_completed
                 ) or False
 
+                user.refresh_from_db()
                 profile_picture_url = build_absolute_media_url(user.profile_picture, request=request)
                 set_user_online(str(user.id))
 

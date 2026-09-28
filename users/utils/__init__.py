@@ -17,6 +17,7 @@ from .media_utils import (
     _normalize_media_url,
     build_absolute_media_url,
     compress_chat_image,
+    save_profile_picture_from_url,
 )
 from .common_utils import (
     generate_otp,
@@ -45,6 +46,7 @@ __all__ = [
     '_normalize_media_url',
     'build_absolute_media_url',
     'compress_chat_image',
+    'save_profile_picture_from_url',
     'generate_otp',
     'get_client_ip',
     'get_user_agent',
