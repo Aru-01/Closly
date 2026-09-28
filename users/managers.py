@@ -91,17 +91,18 @@ class UserManager(BaseUserManager):
         # Create superuser using create_user method
         return self.create_user(email, name, password, **extra_fields)
     
-    def create_firebase_user(self, email, name, firebase_uid, auth_provider='google', **extra_fields):
+    def create_firebase_user(self, email, name, firebase_uid, auth_provider='google', photo_url=None, **extra_fields):
         """
         Create or retrieve user from Firebase authentication (Google, Apple, etc.)
         Prevents duplicate accounts by checking firebase_uid first, then linking
-        existing accounts with the same email.
+        existing accounts with the same email. Also captures social profile pictures.
         
         Args:
             email (str): User's email from Firebase or client payload
             name (str): User's name from Firebase or client payload
             firebase_uid (str): Firebase UID
             auth_provider (str): Authentication provider ('google', 'apple')
+            photo_url (str): Profile picture URL from Firebase or client payload
             **extra_fields: Additional fields
             
         Returns:
@@ -115,6 +116,10 @@ class UserManager(BaseUserManager):
                 if name and (not user.name or user.name.startswith('user_')):
                     user.name = name
                     user.save(update_fields=['name'])
+                # Download and set profile picture if user doesn't have one yet
+                if photo_url and not user.profile_picture:
+                    from .utils import save_profile_picture_from_url
+                    save_profile_picture_from_url(user, photo_url)
                 return user
         
         # 2. If not found by firebase_uid, check if account exists with this email
@@ -135,6 +140,10 @@ class UserManager(BaseUserManager):
                     update_fields.append('name')
                 if update_fields:
                     user.save(update_fields=update_fields)
+                # Download and set profile picture if user doesn't have one yet
+                if photo_url and not user.profile_picture:
+                    from .utils import save_profile_picture_from_url
+                    save_profile_picture_from_url(user, photo_url)
                 return user
         
         # 3. If neither exists, create a new user
@@ -150,6 +159,11 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault('is_active', True)
         
         new_user = self.create_user(email, name, password=None, **extra_fields)
+
+        # Download social avatar if provided
+        if photo_url:
+            from .utils import save_profile_picture_from_url
+            save_profile_picture_from_url(new_user, photo_url)
         
         # Send welcome email for newly created social user
         try:

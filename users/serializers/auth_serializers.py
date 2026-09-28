@@ -253,6 +253,12 @@ class FirebaseAuthSerializer(serializers.Serializer):
         help_text="User's date of birth (optional)"
     )
 
+    photo_url = serializers.URLField(
+        required=False,
+        allow_blank=True,
+        help_text="User's profile picture URL from Firebase (optional)"
+    )
+
 
 class VerifyOTPSerializer(serializers.Serializer):
     """

@@ -142,3 +142,42 @@ def compress_chat_image(image_file, max_size=(1280, 1280), quality=75):
             pass
         return image_file
 
+
+def save_profile_picture_from_url(user, url):
+    """
+    Downloads avatar image from an external URL (e.g. Google photo URL)
+    and saves it to user.profile_picture if the user doesn't already have one.
+    Does NOT overwrite if the user already uploaded a custom profile picture.
+    """
+    if not url or not user:
+        return False
+
+    # Check if user already has a custom profile picture uploaded
+    if getattr(user, 'profile_picture', None) and bool(user.profile_picture.name):
+        return False
+
+    import uuid
+    import requests
+    from django.core.files.base import ContentFile
+
+    try:
+        # Standard timeout so external latency never blocks login
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200 and response.content:
+            content_type = response.headers.get('content-type', '').lower()
+            ext = '.jpg'
+            if 'png' in content_type:
+                ext = '.png'
+            elif 'webp' in content_type:
+                ext = '.webp'
+            filename = f"google_{uuid.uuid4().hex[:12]}{ext}"
+            user.profile_picture.save(filename, ContentFile(response.content), save=True)
+            logger.info(f"Successfully saved social profile picture for user {user.email}")
+            return True
+        else:
+            logger.warning(f"Failed to fetch profile picture from {url}: status {response.status_code}")
+    except Exception as e:
+        logger.warning(f"Could not download profile picture from {url} for user {user.email}: {e}")
+
+    return False
+

@@ -20,6 +20,31 @@ def get_wardrobe_analytics(user, items):
     now = timezone.now()
     fifteen_days_ago = now - timedelta(days=15)
 
+    # Empty wardrobe handling: accurate 0% metrics without fake ratings
+    if total_items == 0:
+        return {
+            'total_pieces': 0,
+            'active_pieces': 0,
+            'ghost_pieces': 0,
+            'utilization_rate': 0.0,
+            'status': {
+                'grade': 'N/A',
+                'title': 'Empty Closet',
+                'badge': 'Starting Out',
+                'feedback': 'Your wardrobe is currently empty. Add clothes to start tracking rotation, sustainability, and efficiency.'
+            },
+            'impact': {
+                'wasted_carbon_kg': 0.0,
+                'wasted_investment_cost': 0.0,
+                'space_waste_percentage': 0.0,
+                'co2_saved_kg': 0.0,
+                'summary': 'Your wardrobe is currently empty. Add clothes to start tracking environmental impact and cost efficiency.'
+            },
+            'ghost_items': [],
+            'ghost_items_qs': items if hasattr(items, 'filter') else ClosetItem.objects.none(),
+            'items_list': []
+        }
+
     # Ghost pieces: never worn (times_worn == 0) OR not worn in the last 15 days
     ghost_items = [
         it for it in items_list
@@ -28,7 +53,7 @@ def get_wardrobe_analytics(user, items):
     ghost_count = len(ghost_items)
     active_count = max(0, total_items - ghost_count)
 
-    utilization_rate = (active_count / total_items * 100) if total_items > 0 else 100.0
+    utilization_rate = (active_count / total_items * 100)
 
     # Dynamic wardrobe health grades & titles
     if utilization_rate >= 85:
@@ -65,7 +90,7 @@ def get_wardrobe_analytics(user, items):
     # Environmental & Space Waste Impact of Ghost Pieces
     wasted_carbon_kg = round(ghost_count * 12.5, 2)
     wasted_investment = float(sum((it.price or 0.0) for it in ghost_items))
-    space_waste_pct = round((ghost_count / total_items * 100), 1) if total_items > 0 else 0.0
+    space_waste_pct = round((ghost_count / total_items * 100), 1)
     co2_saved = round(sum(max(0, it.times_worn - 1) for it in items_list) * 0.85, 2)
 
     return {
@@ -104,8 +129,8 @@ class ClosetScoreDashboardView(APIView):
     """
     Dedicated Closet Score Dashboard API.
     Returns:
-    - closet_score: e.g. 74/100
-    - category: "Above Average"
+    - closet_score: e.g. 74/100 (0/100 for brand new users with empty wardrobe)
+    - category: "Above Average" / "Starting Out"
     - cost_wear: average cost per wear
     - closet_points: available points from rewards
     - achieve_rank: current tier from rewards
@@ -121,63 +146,10 @@ class ClosetScoreDashboardView(APIView):
         items = list(ClosetItem.objects.filter(user=user))
         analytics = get_wardrobe_analytics(user, items)
 
-        # 1. Cost per wear (average across worn pieces)
-        worn_items = [it for it in items if it.times_worn > 0]
-        if worn_items:
-            avg_cpw = round(sum(it.per_wear_cost for it in worn_items) / len(worn_items), 2)
-        elif items:
-            avg_cpw = round(float(sum((it.price or 0.0) for it in items) / len(items)), 2)
-        else:
-            avg_cpw = 0.0
-
-        # 2. Closet Points & Achievement Rank
         from rewards.models import UserRewardProfile
         reward_profile, _ = UserRewardProfile.objects.get_or_create(user=user)
         closet_pts = reward_profile.available_points
         achieve_rank = reward_profile.current_tier
-
-        # 3. Closet Score Calculation (0 - 100)
-        util_pts = (analytics['utilization_rate'] / 100.0) * 40.0
-        if avg_cpw <= 3.0:
-            cpw_pts = 30.0
-        elif avg_cpw <= 8.0:
-            cpw_pts = 24.0
-        elif avg_cpw <= 15.0:
-            cpw_pts = 18.0
-        elif avg_cpw <= 30.0:
-            cpw_pts = 12.0
-        else:
-            cpw_pts = 6.0
-
-        from social.models import TodayOutfit
-        thirty_days_ago = timezone.now() - timedelta(days=30)
-        looks_count = TodayOutfit.objects.filter(user=user, created_at__gte=thirty_days_ago).count()
-        if looks_count >= 5:
-            look_pts = 20.0
-        elif looks_count >= 3:
-            look_pts = 16.0
-        elif looks_count >= 1:
-            look_pts = 12.0
-        else:
-            look_pts = 6.0
-
-        cat_count = len(set(it.category for it in items))
-        cat_pts = min(10.0, cat_count * 2.5)
-
-        raw_score = util_pts + cpw_pts + look_pts + cat_pts
-        closet_score = int(round(raw_score))
-        closet_score = max(25, min(99, closet_score))
-
-        if closet_score >= 85:
-            category = "Excellent"
-        elif closet_score >= 70:
-            category = "Above Average"
-        elif closet_score >= 55:
-            category = "Average"
-        elif closet_score >= 40:
-            category = "Needs Attention"
-        else:
-            category = "Starting Out"
 
         pref = getattr(user, 'preferences', None)
         styles = pref.style_match if pref and pref.style_match else []
@@ -190,6 +162,89 @@ class ClosetScoreDashboardView(APIView):
             'streetwear': 65 if 'streetwear' in styles else 52,
             'sporty': 68 if 'sporty' in styles or 'active-gym' in vibes else 48,
         }
+
+        # 0 pieces in wardrobe: return realistic 0 score with guidance
+        if not items:
+            return Response({
+                'success': True,
+                'message': 'Closet score dashboard metrics calculated successfully.',
+                'data': {
+                    'closet_score': "0/100",
+                    'score_num': 0,
+                    'category': "Starting Out",
+                    'cost_wear': 0.0,
+                    'closet_points': closet_pts,
+                    'achieve_rank': achieve_rank,
+                    'all_pieces': 0,
+                    'ghost_pieces': 0,
+                    'wardrobe_audit': {
+                        'grade': 'N/A',
+                        'title': 'Empty Closet',
+                        'badge': 'Starting Out',
+                        'active_pieces': 0,
+                        'feedback': 'Your wardrobe is currently empty. Add clothes to start tracking rotation, sustainability, and efficiency.'
+                    },
+                    'style_dna': style_dna
+                }
+            }, status=status.HTTP_200_OK)
+
+        # 1. Cost per wear (average across worn pieces)
+        worn_items = [it for it in items if it.times_worn > 0]
+        if worn_items:
+            avg_cpw = round(sum(it.per_wear_cost for it in worn_items) / len(worn_items), 2)
+        else:
+            avg_cpw = round(float(sum((it.price or 0.0) for it in items) / len(items)), 2)
+
+        # 2. Closet Score Calculation (0 - 100)
+        # Utilization points (up to 40 pts)
+        util_pts = (analytics['utilization_rate'] / 100.0) * 40.0
+
+        # Cost per wear efficiency points (up to 30 pts)
+        if worn_items:
+            if avg_cpw <= 3.0:
+                cpw_pts = 30.0
+            elif avg_cpw <= 8.0:
+                cpw_pts = 24.0
+            elif avg_cpw <= 15.0:
+                cpw_pts = 18.0
+            elif avg_cpw <= 30.0:
+                cpw_pts = 12.0
+            else:
+                cpw_pts = 6.0
+        else:
+            cpw_pts = 6.0
+
+        # Looks activity points (up to 20 pts)
+        from social.models import TodayOutfit
+        thirty_days_ago = timezone.now() - timedelta(days=30)
+        looks_count = TodayOutfit.objects.filter(user=user, created_at__gte=thirty_days_ago).count()
+        if looks_count >= 5:
+            look_pts = 20.0
+        elif looks_count >= 3:
+            look_pts = 16.0
+        elif looks_count >= 1:
+            look_pts = 10.0
+        else:
+            look_pts = 0.0
+
+        # Category diversity points (up to 10 pts)
+        cat_count = len(set(it.category for it in items))
+        cat_pts = min(10.0, cat_count * 2.5)
+
+        raw_score = util_pts + cpw_pts + look_pts + cat_pts
+        closet_score = int(round(raw_score))
+        closet_score = max(0, min(100, closet_score))
+
+        if closet_score >= 85:
+            category = "Excellent"
+        elif closet_score >= 70:
+            category = "Above Average"
+        elif closet_score >= 50:
+            category = "Average"
+        elif closet_score >= 30:
+            category = "Needs Attention"
+        else:
+            category = "Starting Out"
 
         return Response({
             'success': True,
