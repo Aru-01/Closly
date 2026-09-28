@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: ${DB_USER:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -22,7 +22,7 @@ services:
     container_name: closly_redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -35,7 +35,10 @@ services:
     build: .
     container_name: closly_web
     restart: unless-stopped
-    command: daphne -b 0.0.0.0 -p 8000 Config.asgi:application
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             daphne -b 0.0.0.0 -p 8000 Config.asgi:application"
     env_file:
       - .env
     volumes:
