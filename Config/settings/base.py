@@ -19,6 +19,9 @@ ALLOWED_HOSTS = [
     if h.strip()
 ]
 for host in [
+    "api.myclosly.com",
+    ".myclosly.com",
+    "188.34.176.78",
     "charissa-intuitable-corroboratorily.ngrok-free.dev",
     ".ngrok-free.dev",
     ".ngrok.io",
@@ -31,6 +34,11 @@ for host in [
         ALLOWED_HOSTS.append(host)
 
 CSRF_TRUSTED_ORIGINS = [
+    "https://api.myclosly.com",
+    "https://*.myclosly.com",
+    "http://api.myclosly.com",
+    "http://188.34.176.78",
+    "http://188.34.176.78:8000",
     "https://charissa-intuitable-corroboratorily.ngrok-free.dev",
     "https://*.ngrok-free.dev",
     "https://*.ngrok.io",
@@ -38,6 +46,11 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:8000",
     "http://10.0.2.2:8000",
 ]
+raw_csrf_origins = config("CSRF_TRUSTED_ORIGINS", default="")
+for origin in raw_csrf_origins.split(","):
+    origin = origin.strip()
+    if origin and origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(origin)
 
 # Application definition
 INSTALLED_APPS = [
