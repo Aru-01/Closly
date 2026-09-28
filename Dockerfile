@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Create dedicated non-root user
 RUN adduser --disabled-password --gecos "" appuser \
-    && mkdir -p /app/media \
+    && mkdir -p /app/media /app/staticfiles \
     && chown -R appuser:appuser /app
 
 # Copy project code
