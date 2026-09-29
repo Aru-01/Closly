@@ -89,7 +89,7 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
     is_liked = serializers.SerializerMethodField()
     tagged_items = serializers.PrimaryKeyRelatedField(
         many=True,
-        queryset=ClosetItem.objects.none(),
+        queryset=ClosetItem.objects.all(),
         required=False
     )
     tagged_items_details = ClosetItemSerializer(source='tagged_items', many=True, read_only=True)
@@ -99,13 +99,22 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         request = self.context.get('request')
-        if request and request.method in ('POST', 'PUT', 'PATCH'):
-            if request.user and request.user.is_authenticated:
-                self.fields['tagged_items'].queryset = ClosetItem.objects.filter(user=request.user)
-            else:
-                self.fields['tagged_items'].queryset = ClosetItem.objects.all()
-        else:
-            self.fields['tagged_items'].queryset = ClosetItem.objects.none()
+        field = self.fields.get('tagged_items')
+        if field:
+            target_qs = ClosetItem.objects.all()
+            if request and getattr(request, 'user', None) and request.user.is_authenticated:
+                target_qs = ClosetItem.objects.filter(user=request.user)
+            field.queryset = target_qs
+            if hasattr(field, 'child_relation'):
+                field.child_relation.queryset = target_qs
+
+    def validate_tagged_items(self, value):
+        request = self.context.get('request')
+        if request and getattr(request, 'user', None) and request.user.is_authenticated:
+            for item in value:
+                if item.user_id != request.user.id:
+                    raise serializers.ValidationError(f"Item #{item.id} does not belong to your closet.")
+        return value
 
     class Meta:
         model = TodayOutfit
