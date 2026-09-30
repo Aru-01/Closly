@@ -29,6 +29,9 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = config("CORS_ALLOW_ALL_ORIGINS", default=True, cast=bool)
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
+    "https://api.myclosly.com",
+    "https://myclosly.com",
+    "https://www.myclosly.com",
     "https://charissa-intuitable-corroboratorily.ngrok-free.dev",
     "http://localhost:3000",
     "http://localhost:8000",
