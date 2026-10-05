@@ -4,16 +4,17 @@ from django.db import transaction
 from .email_utils import send_account_deletion_email
 
 
-def generate_otp(length=4):
+def generate_otp(length=6):
     """
-    Generate a random OTP of a given length.
+    Generate a cryptographically secure numeric OTP of a given length (default 6 digits).
     """
-    return ''.join([str(secrets.randbelow(10)) for _ in range(length)])
+    return f"{secrets.randbelow(10**length):0{length}d}"
 
 
 def get_client_ip(request):
     """
     Get client IP address from request.
+    Picks the last untrusted proxy hop when behind reverse proxies (NUM_PROXIES=1).
     
     Args:
         request: Django request object
@@ -23,10 +24,32 @@ def get_client_ip(request):
     """
     x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
     if x_forwarded_for:
-        ip = x_forwarded_for.split(',')[0]
+        proxies = [ip.strip() for ip in x_forwarded_for.split(',') if ip.strip()]
+        ip = proxies[-1] if proxies else request.META.get('REMOTE_ADDR')
     else:
         ip = request.META.get('REMOTE_ADDR')
-    return ip
+    return ip or '127.0.0.1'
+
+
+def get_truncated_ip(ip_address):
+    """
+    Truncates an IP address for GDPR data minimization / Art. 5(1)(c) (U-25).
+    IPv4: keeps /24 (e.g., '192.0.2.14' -> '192.0.2.0')
+    IPv6: keeps /48 prefix
+    """
+    if not ip_address:
+        return ''
+    ip_str = ip_address.strip()
+    if ':' in ip_str:
+        # IPv6
+        parts = ip_str.split(':')
+        return ':'.join(parts[:3]) + '::/48'
+    elif '.' in ip_str:
+        # IPv4
+        parts = ip_str.split('.')
+        if len(parts) == 4:
+            return f"{parts[0]}.{parts[1]}.{parts[2]}.0"
+    return ip_str
 
 
 def get_user_agent(request):
@@ -40,6 +63,40 @@ def get_user_agent(request):
         str: User agent string
     """
     return request.META.get('HTTP_USER_AGENT', '')
+
+
+def get_minimized_user_agent(user_agent):
+    """
+    Returns a privacy-minimized SHA-256 hash prefix (16 chars) of the User-Agent (U-25).
+    Prevents long-term browser fingerprint PII storage.
+    """
+    import hashlib
+    if not user_agent:
+        return ''
+    return hashlib.sha256(user_agent.encode('utf-8')).hexdigest()[:16]
+
+
+def record_user_consent(user, kind, granted=True, request=None):
+    """
+    Records an auditable Consent event (ToS, privacy, photo AI processing, push notifications).
+    Does not rely on a boolean field on User (U-21, Consent System).
+    """
+    from django.utils import timezone
+    from users.models import Consent
+    ip = ''
+    ua = ''
+    if request:
+        ip = get_truncated_ip(get_client_ip(request))
+        ua = get_minimized_user_agent(get_user_agent(request))
+    return Consent.objects.create(
+        user=user,
+        kind=kind,
+        granted=granted,
+        occurred_at=timezone.now(),
+        ip_address=ip,
+        user_agent=ua
+    )
+
 
 
 def calculate_age(date_of_birth):
@@ -66,22 +123,24 @@ def calculate_age(date_of_birth):
     return age
 
 
-def validate_age(date_of_birth, min_age=13):
+def validate_age(date_of_birth, min_age=None):
     """
     Validate if user meets minimum age requirement.
     
     Args:
         date_of_birth (date): Date of birth
-        min_age (int): Minimum age required (default 13)
+        min_age (int, optional): Minimum age required (defaults to settings.MYC_MIN_AGE or 16)
         
     Returns:
         bool: True if user meets age requirement, False otherwise
     """
+    if min_age is None:
+        from django.conf import settings
+        min_age = getattr(settings, 'MYC_MIN_AGE', 16)
+
     age = calculate_age(date_of_birth)
-    
     if age is None:
         return False
-    
     return age >= min_age
 
 
@@ -156,8 +215,8 @@ def purge_and_anonymize_user(user):
             pass
 
         try:
-            from users.models import UserPreferences, UserLoginHistory
-            UserPreferences.objects.filter(user=user).delete()
+            from users.models import UserPreference, UserLoginHistory
+            UserPreference.objects.filter(user=user).delete()
             UserLoginHistory.objects.filter(user=user).delete()
         except Exception:
             pass
@@ -188,5 +247,26 @@ def purge_and_anonymize_user(user):
         user.otp = None
         user.referral_code = None
         user.save()
+
+        # 6. Purge external identity records & clear cache
+        if user.firebase_uid:
+            try:
+                from .firebase import delete_firebase_user
+                delete_firebase_user(user.firebase_uid)
+            except Exception:
+                pass
+
+        try:
+            from .apple_auth import revoke_apple_token
+            revoke_apple_token(user)
+        except Exception:
+            pass
+
+        try:
+            from django.core.cache import cache
+            cache.delete(f"user_online_{user.id}")
+            cache.delete(f"user_last_seen_{user.id}")
+        except Exception:
+            pass
 
     return True

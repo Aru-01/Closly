@@ -217,3 +217,113 @@ def award_points(user, action_type, description=None, reference_id='', points_ov
     except Exception as e:
         logger.error(f"Failed to award points to {user.email}: {e}")
         return None
+
+
+def record_pending_referral_reward(referrer, referred_user):
+    """
+    Records a PENDING referral reward in the ledger.
+    Does NOT increment available_points or lifetime_points yet (U-09).
+    DB-level UniqueConstraint on (action_type='invite_friend', reference_id) prevents duplicates.
+    """
+    from django.conf import settings
+    points = getattr(settings, 'MYC_REFERRAL_POINTS', 200)
+    try:
+        tx, created = RewardPointTransaction.objects.get_or_create(
+            action_type='invite_friend',
+            reference_id=str(referred_user.id),
+            defaults={
+                'user': referrer,
+                'points': points,
+                'status': 'pending',
+                'description': f"Pending referral reward for {referred_user.name or referred_user.email}",
+                'expires_at': timezone.now() + timedelta(days=POINT_VALIDITY_DAYS),
+            }
+        )
+        return tx
+    except Exception as e:
+        logger.warning(f"Failed to record pending referral reward: {e}")
+        return None
+
+
+def activate_referral_reward(referred_user):
+    """
+    Activates a pending referral reward once the referred user verifies email and/or completes onboarding (U-09).
+    Checks monthly cap (MYC_REFERRAL_MONTHLY_CAP).
+    Idempotent: will not double-credit if already completed.
+    """
+    referrer = getattr(referred_user, 'referred_by', None)
+    if not referrer:
+        return None
+
+    from django.conf import settings
+    monthly_cap = getattr(settings, 'MYC_REFERRAL_MONTHLY_CAP', 10)
+    now = timezone.now()
+    start_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+    try:
+        with transaction.atomic():
+            completed_this_month = RewardPointTransaction.objects.filter(
+                user=referrer,
+                action_type='invite_friend',
+                status='completed',
+                created_at__gte=start_of_month
+            ).count()
+
+            tx = RewardPointTransaction.objects.select_for_update().filter(
+                action_type='invite_friend',
+                reference_id=str(referred_user.id)
+            ).first()
+
+            if not tx:
+                if completed_this_month >= monthly_cap:
+                    logger.info(f"Referral monthly cap ({monthly_cap}) reached for {referrer.email}")
+                    return None
+                points = getattr(settings, 'MYC_REFERRAL_POINTS', 200)
+                expires_at = now + timedelta(days=POINT_VALIDITY_DAYS)
+                tx = RewardPointTransaction.objects.create(
+                    user=referrer,
+                    action_type='invite_friend',
+                    points=points,
+                    status='pending',
+                    reference_id=str(referred_user.id),
+                    description=f"Referral reward for {referred_user.name or referred_user.email}",
+                    expires_at=expires_at
+                )
+
+            if tx.status == 'completed':
+                return tx
+
+            if completed_this_month >= monthly_cap:
+                tx.status = 'cancelled'
+                tx.description += f" (Monthly cap of {monthly_cap} reached)"
+                tx.save(update_fields=['status', 'description'])
+                return tx
+
+            tx.status = 'completed'
+            tx.save(update_fields=['status'])
+
+            profile, _ = UserRewardProfile.objects.select_for_update().get_or_create(user=referrer)
+            old_tier = profile.current_tier
+            profile.available_points += tx.points
+            profile.lifetime_points += tx.points
+            new_tier = get_tier_for_lifetime_points(profile.lifetime_points)
+            profile.current_tier = new_tier
+            profile.save(update_fields=['available_points', 'lifetime_points', 'current_tier', 'tier_updated_at'])
+
+            try:
+                from notifications.services import create_notification
+                create_notification(
+                    recipient=referrer,
+                    notification_type='points_earned',
+                    title=f'+{tx.points} Referral Points Earned!',
+                    message=f"Your invited friend {referred_user.name or 'a friend'} verified their account! You earned {tx.points} points.",
+                    data={'points': tx.points, 'available_points': profile.available_points}
+                )
+            except Exception as e:
+                logger.debug(f"Failed to dispatch referral notification: {e}")
+
+            return tx
+    except Exception as e:
+        logger.error(f"Failed to activate referral reward: {e}")
+        return None
+

@@ -80,3 +80,6 @@ scratch
 
 # Local deployment guide
 DEPLOYMENT_GUIDE.md
+01_users_auth_gdpr.md
+
+docs

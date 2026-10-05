@@ -5,6 +5,13 @@ Users utility package. Re-exports all utilities to maintain 100% backward compat
 from .firebase import (
     initialize_firebase,
     verify_firebase_token,
+    delete_firebase_user,
+)
+from .apple_auth import (
+    revoke_apple_token,
+)
+from .auth_utils import (
+    revoke_all_user_tokens,
 )
 from .email_utils import (
     send_otp_email,
@@ -38,6 +45,9 @@ from .user_activity import (
 __all__ = [
     'initialize_firebase',
     'verify_firebase_token',
+    'delete_firebase_user',
+    'revoke_apple_token',
+    'revoke_all_user_tokens',
     'send_otp_email',
     'send_password_reset_email',
     'send_welcome_email',

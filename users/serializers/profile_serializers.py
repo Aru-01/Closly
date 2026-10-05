@@ -99,6 +99,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'email',
+            'username',
             'name',
             'date_of_birth',
             'gender',
@@ -172,12 +173,14 @@ class UserProfileSerializer(serializers.ModelSerializer):
         return build_absolute_media_url(obj.profile_picture, request=self.context.get('request'))
 
     def get_share_url(self, obj):
-        """Build full public profile share URL using email handle"""
-        handle = obj.email.split('@')[0] if obj.email and '@' in obj.email else str(obj.id)
+        """Build full public profile share URL using username or UUID handle (U-13, U-32)"""
+        handle = obj.username or str(obj.id)
+        from django.conf import settings
+        base_url = getattr(settings, 'MYC_PUBLIC_BASE_URL', 'https://myclosly.com').rstrip('/')
         request = self.context.get('request')
         if request is not None:
             return request.build_absolute_uri(f"/u/{handle}/")
-        return f"https://closly.app/u/{handle}/"
+        return f"{base_url}/u/{handle}/"
 
     def get_points_summary(self, obj):
         """Get points balance and tier info"""
@@ -316,7 +319,7 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
     """
     class Meta:
         model = User
-        fields = ['name', 'date_of_birth', 'gender', 'occupation', 'country', 'city', 'bio', 'profile_picture']
+        fields = ['name', 'username', 'date_of_birth', 'gender', 'occupation', 'country', 'city', 'bio', 'profile_picture']
     
     def validate_name(self, value):
         """Validate name"""
@@ -325,13 +328,32 @@ class UserProfileUpdateSerializer(serializers.ModelSerializer):
             return value
         except DjangoValidationError as e:
             raise serializers.ValidationError(str(e))
+
+    def validate_username(self, value):
+        """Validate username uniqueness and format (U-13)"""
+        if not value:
+            return None
+        val = value.strip()
+        import re
+        if not re.match(r'^[a-zA-Z0-9_]{3,30}$', val):
+            raise serializers.ValidationError("Username must be 3-30 characters long and contain only letters, numbers, and underscores.")
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+        qs = User.objects.filter(username__iexact=val)
+        if self.instance:
+            qs = qs.exclude(id=self.instance.id)
+        if qs.exists():
+            raise serializers.ValidationError("This username is already taken.")
+        return val
     
     def validate_date_of_birth(self, value):
-        """Validate date of birth"""
+        """Validate date of birth against 16+ age gate (U-10)"""
         try:
             validate_date_of_birth(value)
-            if not validate_age(value, min_age=13):
-                raise serializers.ValidationError("You must be at least 13 years old.")
+            from django.conf import settings
+            min_age = getattr(settings, 'MYC_MIN_AGE', 16)
+            if not validate_age(value, min_age=min_age):
+                raise serializers.ValidationError(f"You must be at least {min_age} years old.")
             return value
         except DjangoValidationError as e:
             raise serializers.ValidationError(str(e))
@@ -372,7 +394,7 @@ class AccountDeleteSerializer(serializers.Serializer):
 
 
 class LanguagePreferenceSerializer(serializers.Serializer):
-    language = serializers.ChoiceField(choices=[('en', 'English'), ('hi', 'Hindi'), ('pt', 'Portuguese')])
+    language = serializers.ChoiceField(choices=[('de', 'German'), ('en', 'English'), ('hi', 'Hindi'), ('pt', 'Portuguese')])
 
 
 class UserPreferenceSerializer(serializers.ModelSerializer):
@@ -385,6 +407,7 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
     skin_tone_options = serializers.SerializerMethodField(read_only=True)
     clothing_category_options = serializers.SerializerMethodField(read_only=True)
     brand_options = serializers.SerializerMethodField(read_only=True)
+    price_band_options = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = UserPreference
@@ -403,6 +426,10 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
             'color_palette',
             'clothing_categories',
             'preferred_brands',
+            'price_band',
+            'gender_prefs',
+            'clothing_sizes',
+            'blocked_brands',
             'onboarding_completed',
             'created_at',
             'updated_at',
@@ -412,6 +439,7 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
             'skin_tone_options',
             'clothing_category_options',
             'brand_options',
+            'price_band_options',
         ]
         read_only_fields = [
             'onboarding_completed',
@@ -423,6 +451,14 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
             'skin_tone_options',
             'clothing_category_options',
             'brand_options',
+            'price_band_options',
+        ]
+
+    def get_price_band_options(self, obj):
+        """Returns list of {key, label} for price band options (U-21)."""
+        return [
+            {'key': key, 'label': label}
+            for key, label in UserPreference.PRICE_BAND_CHOICES
         ]
 
     def get_style_match_options(self, obj):
@@ -521,12 +557,40 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Must be a list of brand name strings.")
         return [b.lower().strip() for b in value if isinstance(b, str)]
 
+    def validate_blocked_brands(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Must be a list of brand name strings.")
+        return [b.lower().strip() for b in value if isinstance(b, str)]
+
+    def validate_price_band(self, value):
+        if value:
+            valid_bands = [k for k, _ in UserPreference.PRICE_BAND_CHOICES]
+            if value not in valid_bands:
+                raise serializers.ValidationError(f"Invalid price band '{value}'. Valid: {valid_bands}")
+        return value
+
     def update(self, instance, validated_data):
         for field, val in validated_data.items():
             setattr(instance, field, val)
         instance.onboarding_completed = True
         instance.save()
         return instance
+
+
+class DeviceSerializer(serializers.ModelSerializer):
+    """
+    Serializer for push notification device registration (U-29).
+    """
+    class Meta:
+        from users.models import Device
+        model = Device
+        fields = ['apns_token', 'platform', 'prefs', 'last_seen', 'created_at']
+        read_only_fields = ['last_seen', 'created_at']
+
+    def validate_apns_token(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("APNs device token cannot be empty.")
+        return value.strip()
 
 
 # Backward-compatibility aliases

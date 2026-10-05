@@ -1,5 +1,7 @@
 import logging
 from django.utils import timezone
+from django.db import transaction
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.views import APIView
@@ -27,6 +29,11 @@ from users.utils import (
     build_absolute_media_url,
     set_user_online,
     set_user_offline,
+)
+from users.utils.common_utils import (
+    get_truncated_ip,
+    get_minimized_user_agent,
+    record_user_consent,
 )
 from users.throttling import (
     LoginRateThrottle,
@@ -71,7 +78,7 @@ class UserRegistrationView(APIView):
     
     def post(self, request):
         """Handle user registration"""
-        serializer = self.serializer_class(data=request.data)
+        serializer = self.serializer_class(data=request.data, context={'request': request})
         
         if serializer.is_valid():
             user = serializer.save()
@@ -90,11 +97,24 @@ class UserRegistrationView(APIView):
                 status_code=status.HTTP_201_CREATED
             )
         
+        code = "BAD_REQUEST"
+        if 'invite_code' in serializer.errors:
+            err_msg = str(serializer.errors['invite_code'])
+            if 'required' in err_msg.lower():
+                code = "INVITE_REQUIRED"
+            else:
+                code = "INVALID_INVITE"
+        elif 'date_of_birth' in serializer.errors:
+            err_msg = str(serializer.errors['date_of_birth'])
+            if 'years old' in err_msg.lower() or 'underage' in err_msg.lower():
+                code = "UNDERAGE"
+
         return standard_response(
             success=False,
             message="Registration failed",
             errors=serializer.errors,
-            status_code=status.HTTP_400_BAD_REQUEST
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code=code
         )
 
 
@@ -143,11 +163,11 @@ class UserLoginView(APIView):
             user.last_login = timezone.now()
             user.save(update_fields=['last_login'])
             
-            # Log login history
+            # Log login history with truncated IP and minimized UA (U-25)
             UserLoginHistory.objects.create(
                 user=user,
-                ip_address=get_client_ip(request),
-                user_agent=get_user_agent(request),
+                ip_address=get_truncated_ip(get_client_ip(request)),
+                user_agent=get_minimized_user_agent(get_user_agent(request)),
                 auth_method='email'
             )
             
@@ -289,75 +309,132 @@ class FirebaseAuthView(APIView):
     
     def post(self, request):
         """Authenticate user with Firebase token"""
-        logger.info(f"FirebaseAuthView POST request received. Headers: {request.headers}")
         serializer = self.serializer_class(data=request.data)
         
         if serializer.is_valid():
             try:
                 # Verify Firebase token
                 firebase_token = serializer.validated_data['firebase_token']
-                logger.info(f"Verifying Firebase token: {firebase_token[:30]}...")
                 decoded_token = verify_firebase_token(firebase_token)
-                logger.info(f"Firebase token verified successfully. Decoded token: {decoded_token}")
                 
-                # Extract user data from token and request
+                # Extract user data strictly from token (U-02)
                 firebase_uid = decoded_token.get('uid')
-                email = decoded_token.get('email') or serializer.validated_data.get('email')
-                raw_name = serializer.validated_data.get('name') or decoded_token.get('name')
-                if raw_name:
-                    name = raw_name
-                elif email:
-                    name = email.split('@')[0]
-                else:
-                    name = f"user_{firebase_uid[:8]}" if firebase_uid else "Closly User"
-                
-                # Determine auth provider
-                firebase_provider = decoded_token.get('firebase', {}).get('sign_in_provider', 'google')
-                auth_provider_map = {
-                    'google.com': 'google',
-                    'apple.com': 'apple',
-                }
-                auth_provider = auth_provider_map.get(firebase_provider, 'google')
-                
-                # Validate UID
+                email = decoded_token.get('email')
+                email_verified = decoded_token.get('email_verified', False)
+
+                # Validate UID, email and email_verified
                 if not firebase_uid:
                     return standard_response(
                         success=False,
                         message="Invalid token: missing UID",
                         status_code=status.HTTP_400_BAD_REQUEST
                     )
-                
-                # If new user and email is missing from both token and payload, require email
-                if not email and not User.objects.filter(firebase_uid=firebase_uid).exists():
+
+                if not email or not email_verified:
                     return standard_response(
                         success=False,
-                        message="Email is required to complete registration with Closly.",
+                        message="Firebase identity provider must provide a verified email address.",
                         status_code=status.HTTP_400_BAD_REQUEST
                     )
-                
-                # Extract photo URL from Firebase token or request payload
-                photo_url = (
-                    serializer.validated_data.get('photo_url')
-                    or decoded_token.get('picture')
-                    or decoded_token.get('photo_url')
-                    or decoded_token.get('photoURL')
-                )
 
-                # Create or get user
-                user = User.objects.create_firebase_user(
-                    email=email,
-                    name=name,
-                    firebase_uid=firebase_uid,
-                    auth_provider=auth_provider,
-                    photo_url=photo_url
-                )
+                # Determine auth provider with strict allowlist
+                firebase_provider = decoded_token.get('firebase', {}).get('sign_in_provider')
+                auth_provider_map = {
+                    'google.com': 'google',
+                    'apple.com': 'apple',
+                }
+                if firebase_provider not in auth_provider_map:
+                    return standard_response(
+                        success=False,
+                        message="Unsupported authentication provider. Only Google and Apple are permitted.",
+                        status_code=status.HTTP_400_BAD_REQUEST
+                    )
+                auth_provider = auth_provider_map[firebase_provider]
+                # Determine if user is new for invite gate and consent (U-08, U-21)
+                is_new_user = not User.objects.filter(firebase_uid=firebase_uid).exists() and not User.objects.filter(email__iexact=email).exists()
+
+                # Enforce invite gating on new registrations if invite mode is enabled (U-08)
+                registration_mode = getattr(settings, 'MYC_REGISTRATION_MODE', 'open')
+                invite_code = (serializer.validated_data.get('invite_code') or '').strip().upper()
+                valid_invite = None
+                if is_new_user and registration_mode == 'invite':
+                    if not invite_code:
+                        return standard_response(
+                            success=False,
+                            message="An invite code is required to register.",
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            code="INVITE_REQUIRED"
+                        )
+                    bypass_codes = [c.strip().upper() for c in getattr(settings, 'MYC_INVITE_BYPASS_CODES', '').split(',') if c.strip()]
+                    if invite_code not in bypass_codes:
+                        from users.models import Invite
+                        invite = Invite.objects.filter(code=invite_code).first()
+                        if not invite or not invite.is_valid():
+                            return standard_response(
+                                success=False,
+                                message="Invalid or expired invite code.",
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                code="INVALID_INVITE"
+                            )
+                        valid_invite = invite
+
+                raw_name = serializer.validated_data.get('name') or decoded_token.get('name')
+                if raw_name:
+                    name = raw_name
+                elif email:
+                    name = email.split('@')[0]
+                else:
+                    name = f"user_{firebase_uid[:8]}"
                 
-                # Update date of birth if provided
+                # Validate date of birth against 16+ age gate (U-10)
                 dob = serializer.validated_data.get('date_of_birth')
-                if dob and not user.date_of_birth:
-                    user.date_of_birth = dob
-                    user.save(update_fields=['date_of_birth'])
+                min_age = getattr(settings, 'MYC_MIN_AGE', 16)
+                if dob:
+                    from users.utils import validate_age
+                    if not validate_age(dob, min_age=min_age):
+                        return standard_response(
+                            success=False,
+                            message=f"You must be at least {min_age} years old to register.",
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            code="UNDERAGE"
+                        )
+
+                # Extract avatar URL strictly from token picture claim (U-07)
+                photo_url = decoded_token.get('picture')
+
+                # Create or get user atomically with invite consumption and consent recording (U-08, U-21)
+                with transaction.atomic():
+                    user = User.objects.create_firebase_user(
+                        email=email,
+                        name=name,
+                        firebase_uid=firebase_uid,
+                        auth_provider=auth_provider,
+                        photo_url=photo_url,
+                        email_verified=True
+                    )
+                    
+                    if is_new_user:
+                        if valid_invite:
+                            valid_invite.used_by = user
+                            valid_invite.used_at = timezone.now()
+                            valid_invite.save(update_fields=['used_by', 'used_at'])
+                        
+                        record_user_consent(user, 'tos_privacy', granted=True, request=request)
+                    
+                    # Update date of birth if provided
+                    if dob and not user.date_of_birth:
+                        user.date_of_birth = dob
+                        user.save(update_fields=['date_of_birth'])
                 
+                # Validate user active state before issuing tokens (U-22)
+                if not user.is_active:
+                    return standard_response(
+                        success=False,
+                        message="User account is disabled.",
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        code="ACCOUNT_DISABLED"
+                    )
+
                 # Generate JWT tokens
                 refresh = RefreshToken.for_user(user)
                 access_token = str(refresh.access_token)
@@ -367,11 +444,11 @@ class FirebaseAuthView(APIView):
                 user.last_login = timezone.now()
                 user.save(update_fields=['last_login'])
                 
-                # Log login history
+                # Log login history with truncated IP and minimized UA (U-25)
                 UserLoginHistory.objects.create(
                     user=user,
-                    ip_address=get_client_ip(request),
-                    user_agent=get_user_agent(request),
+                    ip_address=get_truncated_ip(get_client_ip(request)),
+                    user_agent=get_minimized_user_agent(get_user_agent(request)),
                     auth_method=auth_provider
                 )
                 
@@ -454,6 +531,15 @@ class VerifyOTPView(APIView):
         if serializer.is_valid():
             email = serializer.validated_data['email']
             otp = serializer.validated_data['otp']
+            
+            from users.throttling import check_lockout, record_failed_attempt, clear_failed_attempts
+            if check_lockout(email, scope='otp'):
+                return standard_response(
+                    success=False,
+                    message="Too many failed attempts. This account is locked for 15 minutes.",
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS
+                )
+
             try:
                 user = User.objects.get(email=email)
                 # Constant-time comparison
@@ -462,25 +548,55 @@ class VerifyOTPView(APIView):
                     user.is_email_verified = True
                     user.clear_otp()
                     user.save()
+                    clear_failed_attempts(email, scope='otp')
                     
+                    # Award deferred referral points if user was invited (U-09)
+                    if getattr(user, 'referred_by', None):
+                        try:
+                            from rewards.services import activate_referral_reward
+                            activate_referral_reward(user)
+                        except Exception as e:
+                            logger.warning(f"Deferred referral points award error: {e}")
+
                     # Send welcome email upon successful account verification
                     try:
                         send_welcome_email(user)
                     except Exception as e:
                         logger.error(f"Failed to send welcome email: {e}")
                         
-                    return standard_response(success=True, message="OTP verified successfully. Your account is now active.")
+                    return standard_response(
+                        success=True,
+                        message="OTP verified successfully. Your account is now active.",
+                        code="OTP_VERIFIED"
+                    )
                 else:
-                    # Expired OTP is automatically cleared from the DB by is_otp_valid()
-                    return standard_response(success=False, message="Invalid or expired OTP.", status_code=status.HTTP_400_BAD_REQUEST)
+                    record_failed_attempt(email, scope='otp')
+                    return standard_response(
+                        success=False,
+                        message="Invalid email or verification code.",
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        code="INVALID_OTP"
+                    )
             except User.DoesNotExist:
-                return standard_response(success=False, message="User not found.", status_code=status.HTTP_404_NOT_FOUND)
-        return standard_response(success=False, message="Invalid data.", errors=serializer.errors, status_code=status.HTTP_400_BAD_REQUEST)
+                # Anti-enumeration (U-12): Uniform response preventing user enumeration
+                return standard_response(
+                    success=False,
+                    message="Invalid email or verification code.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    code="INVALID_OTP"
+                )
+        return standard_response(
+            success=False,
+            message="Invalid data.",
+            errors=serializer.errors,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="VALIDATION_ERROR"
+        )
 
 @extend_schema(
     tags=["Authentication & Security"],
     summary="Resend Registration OTP",
-    description="Resends a fresh 4-digit activation OTP to the specified email address (throttled to once per 2 minutes).",
+    description="Resends a fresh 6-digit activation OTP to the specified email address (throttled to once per 2 minutes).",
     request=ResendOTPSerializer,
     responses={
         200: OpenApiResponse(description="OTP resent to email"),
@@ -493,7 +609,7 @@ class ResendOTPView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
     """
-    API endpoint to resend OTP with 30-second rate limiting
+    API endpoint to resend OTP with 2-minute rate limiting
     """
     permission_classes = [AllowAny]
     throttle_classes = [OTPResendRateThrottle]
@@ -503,6 +619,14 @@ class ResendOTPView(APIView):
         serializer = self.serializer_class(data=request.data)
         if serializer.is_valid():
             email = serializer.validated_data['email']
+            from users.throttling import check_lockout
+            if check_lockout(email, scope='otp'):
+                return standard_response(
+                    success=False,
+                    message="Too many failed attempts. This account is locked for 15 minutes.",
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    code="ACCOUNT_LOCKED"
+                )
             try:
                 user = User.objects.get(email=email)
                 if not user.is_active:
@@ -514,21 +638,42 @@ class ResendOTPView(APIView):
                             return standard_response(
                                 success=False,
                                 message=f"Please wait {retry_after} seconds before requesting another OTP.",
-                                status_code=status.HTTP_429_TOO_MANY_REQUESTS
+                                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                                code="RATE_LIMITED"
                             )
                     
                     from users.utils import generate_otp, send_otp_email
-                    otp = generate_otp()
+                    otp = generate_otp(6)
                     user.otp = otp
                     user.otp_created_at = timezone.now()
                     user.save(update_fields=['otp', 'otp_created_at'])
                     send_otp_email(user, otp)
-                    return standard_response(success=True, message="OTP has been resent to your email.")
+                    return standard_response(
+                        success=True,
+                        message="If an account exists with that email and requires verification, a verification code has been sent.",
+                        code="OTP_SENT"
+                    )
                 else:
-                    return standard_response(success=False, message="User is already active.", status_code=status.HTTP_400_BAD_REQUEST)
+                    # Anti-enumeration (U-12): Uniform response for already active accounts
+                    return standard_response(
+                        success=True,
+                        message="If an account exists with that email and requires verification, a verification code has been sent.",
+                        code="OTP_SENT"
+                    )
             except User.DoesNotExist:
-                return standard_response(success=False, message="User not found.", status_code=status.HTTP_404_NOT_FOUND)
-        return standard_response(success=False, message="Invalid data.", errors=serializer.errors, status_code=status.HTTP_400_BAD_REQUEST)
+                # Anti-enumeration (U-12): Uniform response for nonexistent accounts
+                return standard_response(
+                    success=True,
+                    message="If an account exists with that email and requires verification, a verification code has been sent.",
+                    code="OTP_SENT"
+                )
+        return standard_response(
+            success=False,
+            message="Invalid data.",
+            errors=serializer.errors,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="VALIDATION_ERROR"
+        )
 
 
 

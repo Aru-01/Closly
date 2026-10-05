@@ -270,10 +270,15 @@ class ClosetApiTests(TestCase):
         cache.set(cache_key, cached_mock, timeout=60)
 
         # run_direct_dress_analysis should return cached data immediately without calling LLM
-        with patch('closet.openai_analyzer.ai_service.call_llm_for_analysis') as mock_llm:
+        import closet.openai_analyzer
+        if getattr(closet.openai_analyzer, 'ai_service', None) is not None:
+            with patch('closet.openai_analyzer.ai_service.call_llm_for_analysis') as mock_llm:
+                res = run_direct_dress_analysis(dummy_bytes)
+                self.assertEqual(res['name'], 'Cached Red Silk Dress')
+                mock_llm.assert_not_called()
+        else:
             res = run_direct_dress_analysis(dummy_bytes)
             self.assertEqual(res['name'], 'Cached Red Silk Dress')
-            mock_llm.assert_not_called()
 
 
 

@@ -75,6 +75,17 @@ class RewardPointTransaction(models.Model):
     points = models.IntegerField(_('points'))
     description = models.CharField(_('description'), max_length=255)
     reference_id = models.CharField(_('reference id'), max_length=100, blank=True, default='')
+    STATUS_CHOICES = [
+        ('pending', 'Pending Activation'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+    ]
+    status = models.CharField(
+        _('status'),
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='completed'
+    )
     expires_at = models.DateTimeField(_('expires at'), null=True, blank=True)
     is_expired = models.BooleanField(_('is expired'), default=False)
     created_at = models.DateTimeField(_('created at'), auto_now_add=True)
@@ -83,6 +94,13 @@ class RewardPointTransaction(models.Model):
         verbose_name = _('reward point transaction')
         verbose_name_plural = _('reward point transactions')
         ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['action_type', 'reference_id'],
+                condition=models.Q(action_type='invite_friend') & ~models.Q(reference_id=''),
+                name='unique_invite_friend_reward_reference'
+            )
+        ]
 
     def __str__(self):
         return f"{self.user.email}: {self.points:+d} pts ({self.action_type})"

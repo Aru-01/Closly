@@ -2,6 +2,7 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
+from django.db.models.functions import Lower
 from .managers import UserManager
 import uuid
 
@@ -173,7 +174,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     )
     
     # OTP fields
-    otp = models.CharField(max_length=4, null=True, blank=True)
+    otp = models.CharField(max_length=6, null=True, blank=True)
     otp_created_at = models.DateTimeField(null=True, blank=True)
     password_reset_verified = models.BooleanField(
         _('password reset verified'),
@@ -198,6 +199,25 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text=_("Unique referral code for sharing profile and inviting friends")
     )
 
+    username = models.CharField(
+        _('username'),
+        max_length=30,
+        unique=True,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text=_("Unique public username for handles and share links")
+    )
+
+    referred_by = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='referrals',
+        help_text=_("User who referred this account")
+    )
+
     # Set email as the unique identifier
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['name']  # Required when creating superuser
@@ -213,6 +233,17 @@ class User(AbstractBaseUser, PermissionsMixin):
             models.Index(fields=['email']),
             models.Index(fields=['firebase_uid']),
             models.Index(fields=['is_active', 'is_email_verified']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                Lower('email'),
+                name='unique_lower_user_email'
+            ),
+            models.UniqueConstraint(
+                Lower('username'),
+                name='unique_lower_username',
+                condition=models.Q(username__isnull=False)
+            ),
         ]
     
     def __str__(self):
@@ -445,6 +476,40 @@ class UserPreference(models.Model):
         help_text=_("List of brand name strings the user prefers"),
     )
 
+    # Added per Audit U-21: Targeted styling, pricing & fit filters
+    PRICE_BAND_CHOICES = [
+        ('budget', 'Budget / Affordable'),
+        ('mid_range', 'Mid-Range / High Street'),
+        ('premium', 'Premium & Contemporary'),
+        ('luxury', 'Luxury & Designer'),
+    ]
+    price_band = models.CharField(
+        _('price band'),
+        max_length=20,
+        choices=PRICE_BAND_CHOICES,
+        default='mid_range',
+        blank=True,
+        help_text=_("Target price tier for feeds and recommendations")
+    )
+    gender_prefs = models.JSONField(
+        _('gender preferences'),
+        default=list,
+        blank=True,
+        help_text=_("Target gender categories for styling (e.g. ['womenswear'], ['menswear'], ['all'])")
+    )
+    clothing_sizes = models.JSONField(
+        _('clothing sizes'),
+        default=list,
+        blank=True,
+        help_text=_("List of clothing sizes (e.g. ['S', 'M'], ['38', '40'])")
+    )
+    blocked_brands = models.JSONField(
+        _('blocked brands'),
+        default=list,
+        blank=True,
+        help_text=_("List of brand names the user dislikes or wishes to exclude")
+    )
+
     # Meta
     onboarding_completed = models.BooleanField(
         _('onboarding completed'),
@@ -489,6 +554,12 @@ class AccountDeletionRequest(models.Model):
     def __str__(self):
         return f"Deletion request for {self.email} ({self.status})"
 
+    def is_valid(self, max_hours=24):
+        """Returns True if the deletion request is within the 24-hour TTL."""
+        if not self.created_at:
+            return True
+        return timezone.now() - self.created_at <= timezone.timedelta(hours=max_hours)
+
 class ProfileDataDeletionRequest(models.Model):
     STATUS_CHOICES = [
         ('pending', 'Pending'),
@@ -504,6 +575,12 @@ class ProfileDataDeletionRequest(models.Model):
 
     def __str__(self):
         return f"Profile data deletion request for {self.email}"
+
+    def is_valid(self, max_hours=24):
+        """Returns True if the profile data deletion request is within the 24-hour TTL."""
+        if not self.created_at:
+            return True
+        return timezone.now() - self.created_at <= timezone.timedelta(hours=max_hours)
 
 class UserLoginHistory(models.Model):
     """
@@ -549,4 +626,184 @@ class UserLoginHistory(models.Model):
     
     def __str__(self):
         return f"{self.user.email} - {self.login_time}"
+
+
+# ==============================================================================
+# AUDIT ARCHITECTURE MODELS: Invites, Consents, GDPR Deletion, and Push Devices
+# ==============================================================================
+
+class Invite(models.Model):
+    """
+    Invite model controlling gated access (U-08).
+    """
+    KIND_CHOICES = [
+        ('standard', 'Standard Invite'),
+        ('founding_member', 'Founding Member'),
+        ('beta', 'Beta Access'),
+        ('review', 'App Review / TestFlight'),
+    ]
+
+    code = models.CharField(max_length=32, unique=True, db_index=True)
+    kind = models.CharField(max_length=30, choices=KIND_CHOICES, default='standard')
+    owner_user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='owned_invites',
+        help_text=_("User who created or owns this invite code")
+    )
+    used_by = models.OneToOneField(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='claimed_invite',
+        help_text=_("User who redeemed this invite")
+    )
+    used_at = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = _('invite')
+        verbose_name_plural = _('invites')
+
+    def __str__(self):
+        return f"Invite {self.code} ({self.kind}) - Used: {bool(self.used_by)}"
+
+    def is_valid(self):
+        if self.used_by_id is not None or self.used_at is not None:
+            return False
+        if self.expires_at and timezone.now() > self.expires_at:
+            return False
+        return True
+
+
+class Consent(models.Model):
+    """
+    Auditable consent trail for GDPR Article 7 compliance.
+    """
+    KIND_CHOICES = [
+        ('tos_privacy', 'Terms of Service & Privacy Policy'),
+        ('photo_ai_processing', 'Photo & AI Styling Processing'),
+        ('push_notification', 'Push Notifications Opt-In'),
+        ('marketing', 'Marketing Communications'),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='consents',
+        verbose_name=_('user')
+    )
+    kind = models.CharField(max_length=40, choices=KIND_CHOICES)
+    granted = models.BooleanField(default=True)
+    occurred_at = models.DateTimeField(default=timezone.now)
+    ip_address = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.CharField(max_length=255, blank=True, default='')
+
+    class Meta:
+        ordering = ['-occurred_at']
+        verbose_name = _('consent')
+        verbose_name_plural = _('consents')
+        indexes = [
+            models.Index(fields=['user', 'kind', '-occurred_at']),
+        ]
+
+    def __str__(self):
+        status_str = "Granted" if self.granted else "Revoked"
+        return f"{self.user.email} - {self.kind} ({status_str} at {self.occurred_at})"
+
+
+class DeletionJob(models.Model):
+    """
+    Asynchronous, resumable GDPR account erasure job (U-04, U-15, U-27).
+    User ID is stored WITHOUT a foreign key constraint to survive user row deletion.
+    """
+    STATUS_CHOICES = [
+        ('queued', 'Queued'),
+        ('running', 'Running'),
+        ('done', 'Done'),
+        ('failed', 'Failed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user_id = models.UUIDField(db_index=True, help_text=_("UUID of the target user"))
+    user_email = models.EmailField(blank=True, default='')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='queued')
+    steps_done = models.JSONField(default=list, blank=True)
+    error_message = models.TextField(blank=True, default='')
+    requested_at = models.DateTimeField(default=timezone.now)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['-requested_at']
+        verbose_name = _('deletion job')
+        verbose_name_plural = _('deletion jobs')
+
+    def __str__(self):
+        return f"DeletionJob {self.id} for user {self.user_id} ({self.status})"
+
+
+class GdprAction(models.Model):
+    """
+    Permanent audit log for data subject rights actions.
+    """
+    ACTION_CHOICES = [
+        ('deletion_requested', 'Deletion Requested'),
+        ('deletion_executed', 'Deletion Executed'),
+        ('export_requested', 'Export Requested'),
+        ('export_delivered', 'Export Delivered'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user_id = models.UUIDField(db_index=True)
+    action_type = models.CharField(max_length=40, choices=ACTION_CHOICES)
+    performed_by = models.CharField(max_length=50, default='user')
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = _('GDPR action')
+        verbose_name_plural = _('GDPR actions')
+
+    def __str__(self):
+        return f"GDPR {self.action_type} for user {self.user_id} at {self.created_at}"
+
+
+class Device(models.Model):
+    """
+    Push notification device registration (U-29).
+    """
+    PLATFORM_CHOICES = [
+        ('ios', 'Apple iOS (APNs)'),
+        ('android', 'Google Android (FCM)'),
+    ]
+
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='devices',
+        verbose_name=_('user')
+    )
+    apns_token = models.CharField(max_length=255, unique=True, db_index=True)
+    platform = models.CharField(max_length=20, choices=PLATFORM_CHOICES, default='ios')
+    prefs = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=_("User notification category preferences and quiet hours")
+    )
+    last_seen = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-last_seen']
+        verbose_name = _('device')
+        verbose_name_plural = _('devices')
+
+    def __str__(self):
+        return f"Device {self.platform} for {self.user.email} (last seen {self.last_seen})"
 

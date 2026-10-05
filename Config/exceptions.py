@@ -38,8 +38,19 @@ def custom_exception_handler(exc, context):
         elif isinstance(errors_data, list) and errors_data:
             message = str(errors_data[0])
 
+        status_code_map = {
+            status.HTTP_400_BAD_REQUEST: "VALIDATION_ERROR",
+            status.HTTP_401_UNAUTHORIZED: "UNAUTHORIZED",
+            status.HTTP_403_FORBIDDEN: "FORBIDDEN",
+            status.HTTP_404_NOT_FOUND: "NOT_FOUND",
+            status.HTTP_429_TOO_MANY_REQUESTS: "RATE_LIMITED",
+            status.HTTP_500_INTERNAL_SERVER_ERROR: "INTERNAL_ERROR",
+        }
+        err_code = status_code_map.get(response.status_code, "ERROR")
+
         response.data = {
             "success": False,
+            "code": err_code,
             "message": message,
             "errors": errors_data if isinstance(errors_data, dict) else {"detail": errors_data}
         }
@@ -53,6 +64,7 @@ def custom_exception_handler(exc, context):
     if isinstance(exc, (ObjectDoesNotExist, Http404)):
         return Response({
             "success": False,
+            "code": "NOT_FOUND",
             "message": "The requested resource was not found.",
             "errors": {"detail": str(exc)}
         }, status=status.HTTP_404_NOT_FOUND)
@@ -61,6 +73,7 @@ def custom_exception_handler(exc, context):
     if isinstance(exc, (TokenError, InvalidToken)):
         return Response({
             "success": False,
+            "code": "TOKEN_INVALID",
             "message": "Authentication token is invalid or expired. Please log in again.",
             "errors": {"detail": str(exc)}
         }, status=status.HTTP_401_UNAUTHORIZED)
@@ -71,6 +84,7 @@ def custom_exception_handler(exc, context):
         friendly_msg = "A record with this information already exists." if "unique constraint" in err_str.lower() else "Database constraint violation."
         return Response({
             "success": False,
+            "code": "RESOURCE_CONFLICT",
             "message": friendly_msg,
             "errors": {"detail": err_str}
         }, status=status.HTTP_400_BAD_REQUEST)
@@ -79,6 +93,7 @@ def custom_exception_handler(exc, context):
     if isinstance(exc, DjangoValidationError):
         return Response({
             "success": False,
+            "code": "VALIDATION_ERROR",
             "message": "Validation error.",
             "errors": {"detail": exc.message_dict if hasattr(exc, 'message_dict') else exc.messages}
         }, status=status.HTTP_400_BAD_REQUEST)
@@ -87,6 +102,7 @@ def custom_exception_handler(exc, context):
     if isinstance(exc, (ValueError, KeyError, TypeError)):
         return Response({
             "success": False,
+            "code": "INVALID_PARAMETER",
             "message": f"Invalid parameter or data format: {str(exc)}",
             "errors": {"detail": str(exc)}
         }, status=status.HTTP_400_BAD_REQUEST)
@@ -94,6 +110,7 @@ def custom_exception_handler(exc, context):
     # F. Absolute Fallback for unexpected 500: Return Clean JSON (Never HTML!)
     return Response({
         "success": False,
+        "code": "INTERNAL_SERVER_ERROR",
         "message": "An unexpected server error occurred. Please try again.",
         "errors": {"detail": str(exc)}
     }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

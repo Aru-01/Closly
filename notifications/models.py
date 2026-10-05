@@ -48,6 +48,9 @@ class Notification(models.Model):
         verbose_name = _('notification')
         verbose_name_plural = _('notifications')
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['recipient', 'is_read', '-created_at'], name='notif_recip_read_created_idx'),
+        ]
 
     def __str__(self):
         return f"{self.notification_type} for {self.recipient.email} - Read: {self.is_read}"

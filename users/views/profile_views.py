@@ -30,7 +30,7 @@ User = get_user_model()
 )
 class UserProfileView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [JWTAuthentication, FirebaseAuthentication]
+    authentication_classes = [JWTAuthentication]
     """
     API endpoint to get and update user profile
     
@@ -38,8 +38,6 @@ class UserProfileView(APIView):
     PUT /api/users/profile/ - Update full profile
     PATCH /api/users/profile/ - Partial update profile
     """
-    
-    permission_classes = [IsAuthenticated]
     
     def get(self, request):
         """Get user profile with preloaded preferences and reward profile"""
@@ -56,12 +54,18 @@ class UserProfileView(APIView):
         )
     
     def put(self, request):
-        """Update full user profile"""
+        """Update full user profile with avatar file cleanup (U-30)"""
         user = request.user
+        old_avatar = user.profile_picture
         serializer = UserProfileUpdateSerializer(user, data=request.data)
         
         if serializer.is_valid():
             serializer.save()
+            if old_avatar and 'profile_picture' in serializer.validated_data and old_avatar != user.profile_picture:
+                try:
+                    old_avatar.delete(save=False)
+                except Exception as e:
+                    logger.warning(f"Error removing old profile picture: {e}")
             
             # Return updated profile
             profile_serializer = UserProfileSerializer(user, context={'request': request})
@@ -81,12 +85,18 @@ class UserProfileView(APIView):
         )
     
     def patch(self, request):
-        """Partial update user profile"""
+        """Partial update user profile with avatar file cleanup (U-30)"""
         user = request.user
+        old_avatar = user.profile_picture
         serializer = UserProfileUpdateSerializer(user, data=request.data, partial=True)
         
         if serializer.is_valid():
             serializer.save()
+            if old_avatar and 'profile_picture' in serializer.validated_data and old_avatar != user.profile_picture:
+                try:
+                    old_avatar.delete(save=False)
+                except Exception as e:
+                    logger.warning(f"Error removing old profile picture: {e}")
             
             # Return updated profile
             profile_serializer = UserProfileSerializer(user, context={'request': request})
@@ -119,7 +129,7 @@ class UserProfileView(APIView):
 )
 class SetLanguageView(APIView):
     permission_classes = [IsAuthenticated]
-    authentication_classes = [JWTAuthentication, FirebaseAuthentication]
+    authentication_classes = [JWTAuthentication]
     serializer_class = LanguagePreferenceSerializer
 
     def post(self, request, *args, **kwargs):
@@ -183,7 +193,7 @@ class UserPreferenceView(APIView):
     }
     """
     permission_classes = [IsAuthenticated]
-    authentication_classes = [JWTAuthentication, FirebaseAuthentication]
+    authentication_classes = [JWTAuthentication]
 
     def get(self, request):
         prefs, _ = UserPreference.objects.get_or_create(user=request.user)
@@ -200,6 +210,16 @@ class UserPreferenceView(APIView):
         serializer = UserPreferenceSerializer(prefs, data=request.data, partial=True)
         if serializer.is_valid():
             serializer.save()
+
+            # Invalidate feed cache upon preference change (U-21)
+            from django.core.cache import cache
+            cache.delete(f"user_feed_{request.user.id}")
+
+            # Activate pending referral reward if onboarding is completed (U-09)
+            if prefs.onboarding_completed:
+                from rewards.services import activate_referral_reward
+                activate_referral_reward(request.user)
+
             return Response({
                 'success': True,
                 'message': 'Preferences saved successfully.',
@@ -235,17 +255,22 @@ class ShareProfileAPIView(APIView):
     GET /api/users/profile/share/
     """
     permission_classes = [IsAuthenticated]
-    authentication_classes = [JWTAuthentication, FirebaseAuthentication]
+    authentication_classes = [JWTAuthentication]
 
     def get(self, request):
         user = request.user
         if not user.referral_code:
             user.save()
 
-        handle = user.email.split('@')[0] if user.email and '@' in user.email else str(user.id)
-        share_url = request.build_absolute_uri(f"/u/{handle}/")
+        # Build share handle from username (fallback to UUID), never email (U-13)
+        handle = user.username or str(user.id)
+        from django.conf import settings
+        backend_url = getattr(settings, "MYC_PUBLIC_BASE_URL", "https://myclosly.com").rstrip("/")
+        scheme = getattr(settings, "MYC_DEEP_LINK_SCHEME", "closly")
+        share_url = f"{backend_url}/u/{handle}/"
         referral_code = user.referral_code
-        share_text = f"Check out my fashion closet and daily styles on Closly! Join using my link: {share_url}?ref={referral_code}"
+        brand_name = getattr(settings, "MYC_BRAND_NAME", "Closly")
+        share_text = f"Check out my fashion closet and daily styles on {brand_name}! Join using my link: {share_url}"
 
         return Response({
             'success': True,
@@ -254,7 +279,7 @@ class ShareProfileAPIView(APIView):
                 'share_url': share_url,
                 'referral_code': referral_code,
                 'share_text': share_text,
-                'deep_link': f"closly://user/{handle}?ref={referral_code}",
+                'deep_link': f"{scheme}://user/{handle}",
             }
         }, status=status.HTTP_200_OK)
 
@@ -273,29 +298,28 @@ class PublicProfileWebView(APIView):
     Public web landing page for a shared profile.
     Renders mobile-first luxury profile view with deep-link into Closly app.
     
-    GET /u/<str:user_id>/ (supports email handle, UUID, or email)
+    GET /u/<str:user_id>/ (UUID or unique username lookup, U-13)
     """
     permission_classes = [AllowAny]
     authentication_classes = []
 
     def get(self, request, user_id):
+        import uuid
+        from django.http import Http404
         profile_user = None
+
         # 1. Try UUID lookup
         try:
-            profile_user = User.objects.filter(pk=user_id).first()
-        except (ValueError, TypeError, Exception):
-            profile_user = None
+            val = uuid.UUID(str(user_id))
+            profile_user = User.objects.filter(pk=val, is_active=True).first()
+        except (ValueError, TypeError, AttributeError):
+            pass
 
-        # 2. Try email handle lookup (e.g. 'fabonin338' for 'fabonin338@blobapps.com')
+        # 2. Try unique case-insensitive username lookup (U-13)
         if not profile_user:
-            profile_user = User.objects.filter(email__istartswith=f"{user_id}@").first()
-
-        # 3. Fallback to exact email match or username
-        if not profile_user:
-            profile_user = User.objects.filter(email__iexact=user_id).first()
+            profile_user = User.objects.filter(username__iexact=str(user_id), is_active=True).first()
 
         if not profile_user:
-            from django.http import Http404
             raise Http404("User profile not found.")
         
         reward_profile = getattr(profile_user, 'reward_profile', None)
@@ -306,10 +330,6 @@ class PublicProfileWebView(APIView):
         followers_count = profile_user.followers_set.count()
         recent_outfits = profile_user.today_outfits.filter(visibility='public')[:6]
 
-        from users.utils import is_user_online, get_user_last_seen
-        is_online = is_user_online(profile_user.id)
-        last_seen = get_user_last_seen(profile_user)
-
         context = {
             'profile_user': profile_user,
             'tier': tier,
@@ -317,7 +337,65 @@ class PublicProfileWebView(APIView):
             'outfit_count': outfit_count,
             'followers_count': followers_count,
             'recent_outfits': recent_outfits,
-            'is_online': is_online,
-            'last_seen': last_seen,
         }
         return render(request, 'users/public_profile.html', context)
+
+
+@extend_schema(
+    tags=["User Profile & Preferences"],
+    summary="Register Push Device Token (U-29)",
+    description="Register or update APNs push notification device token and preferences for the authenticated user.",
+    responses={
+        200: OpenApiResponse(description="Device token registered/updated successfully"),
+        400: OpenApiResponse(description="Validation error"),
+    }
+)
+class DeviceRegistrationView(APIView):
+    """
+    Push device registration endpoint (U-29).
+    POST /devices / POST /api/users/devices/
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        from users.serializers.profile_serializers import DeviceSerializer
+        from users.models import Device
+        from django.utils import timezone
+        from users.utils.common_utils import record_user_consent
+
+        serializer = DeviceSerializer(data=request.data)
+        if serializer.is_valid():
+            apns_token = serializer.validated_data['apns_token']
+            platform = serializer.validated_data.get('platform', 'ios')
+            prefs = serializer.validated_data.get('prefs', {})
+
+            device, created = Device.objects.update_or_create(
+                apns_token=apns_token,
+                defaults={
+                    'user': request.user,
+                    'platform': platform,
+                    'prefs': prefs,
+                    'last_seen': timezone.now(),
+                }
+            )
+
+            # Record consent for push notifications (Consent System, U-21)
+            record_user_consent(request.user, 'push_notification', granted=True, request=request)
+
+            return standard_response(
+                success=True,
+                message="Device registered successfully.",
+                data=DeviceSerializer(device).data,
+                status_code=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+                code="DEVICE_REGISTERED"
+            )
+
+        return standard_response(
+            success=False,
+            message="Device registration failed.",
+            errors=serializer.errors,
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="VALIDATION_ERROR"
+        )
+
