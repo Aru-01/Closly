@@ -12,26 +12,12 @@ SECRET_KEY = config(
 )
 DEBUG = config("DEBUG", default=True, cast=bool)
 
-raw_allowed_hosts = config("ALLOWED_HOSTS", default="*")
+raw_allowed_hosts = config("ALLOWED_HOSTS", default="api.myclosly.com,localhost,127.0.0.1,10.0.2.2")
 ALLOWED_HOSTS = [
     h.strip().replace("https://", "").replace("http://", "").split("/")[0]
     for h in raw_allowed_hosts.split(",")
     if h.strip()
 ]
-for host in [
-    "api.myclosly.com",
-    ".myclosly.com",
-    "188.34.176.78",
-    "charissa-intuitable-corroboratorily.ngrok-free.dev",
-    ".ngrok-free.dev",
-    ".ngrok.io",
-    "localhost",
-    "127.0.0.1",
-    "10.0.2.2",
-    "*",
-]:
-    if host not in ALLOWED_HOSTS:
-        ALLOWED_HOSTS.append(host)
 
 CSRF_TRUSTED_ORIGINS = [
     "https://api.myclosly.com",
@@ -91,7 +77,6 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "users.middleware.TranslationMiddleware",
     "users.middleware.UserActivityMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -268,6 +253,52 @@ EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
 EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER)
+EMAIL_TIMEOUT = config("EMAIL_TIMEOUT", default=10, cast=int)
+
+# ==============================================================================
+# MYC_* Centralized Configuration & Brand Architecture (Audit U-10, U-14, U-32)
+# ==============================================================================
+MYC_BRAND_NAME = config("MYC_BRAND_NAME", default="Closly")
+MYC_COMPANY_NAME = config("MYC_COMPANY_NAME", default="Closly Technologies GmbH")
+MYC_SUPPORT_EMAIL = config("MYC_SUPPORT_EMAIL", default="support@myclosly.com")
+MYC_PRIVACY_EMAIL = config("MYC_PRIVACY_EMAIL", default="privacy@myclosly.com")
+MYC_DEEP_LINK_SCHEME = config("MYC_DEEP_LINK_SCHEME", default="closly")
+MYC_PUBLIC_BASE_URL = config("MYC_PUBLIC_BASE_URL", default="https://myclosly.com")
+MYC_DEFAULT_LANGUAGE = config("MYC_DEFAULT_LANGUAGE", default="de")
+MYC_REGISTRATION_MODE = config("MYC_REGISTRATION_MODE", default="open")  # 'open' or 'invite'
+MYC_INVITE_BYPASS_CODES = [
+    c.strip().upper()
+    for c in config("MYC_INVITE_BYPASS_CODES", default="TESTFLIGHT-REVIEW,APPLE-REVIEW").split(",")
+    if c.strip()
+]
+MYC_MIN_AGE = config("MYC_MIN_AGE", default=16, cast=int)
+MYC_MAX_UPLOAD_MB = config("MYC_MAX_UPLOAD_MB", default=10, cast=int)
+MYC_REFERRAL_MONTHLY_CAP = config("MYC_REFERRAL_MONTHLY_CAP", default=10, cast=int)
+MYC_REFERRAL_POINTS = config("MYC_REFERRAL_POINTS", default=200, cast=int)
+MYC_LOGIN_HISTORY_RETENTION_DAYS = config("MYC_LOGIN_HISTORY_RETENTION_DAYS", default=90, cast=int)
+MYC_GDPR_JOB_RETENTION_DAYS = config("MYC_GDPR_JOB_RETENTION_DAYS", default=30, cast=int)
+
+# Production Cookie & HSTS Security (Audit U-33)
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_HTTPONLY = True
+    CSRF_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = 'Strict'
+    CSRF_COOKIE_SAMESITE = 'Strict'
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_HSTS_SECONDS = config("SECURE_HSTS_SECONDS", default=31536000, cast=int)
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+
+# Production SECRET_KEY verification (Audit U-36)
+if not DEBUG:
+    if not SECRET_KEY or SECRET_KEY.startswith("django-insecure-"):
+        import django.core.exceptions
+        raise django.core.exceptions.ImproperlyConfigured(
+            "CRITICAL SECURITY FAILURE: SECRET_KEY must be securely defined in environment when DEBUG=False!"
+        )
 
 # Firebase Configuration
 FIREBASE_CREDENTIALS_PATH = config(
@@ -286,7 +317,7 @@ RAKUTEN_PUBLISHER_SID = config("RAKUTEN_PUBLISHER_SID", default="4674442")
 
 # Reverse Proxy SSL Headers
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
-USE_X_FORWARDED_HOST = True
+USE_X_FORWARDED_HOST = False
 USE_X_FORWARDED_PORT = True
 
 # Base URLs

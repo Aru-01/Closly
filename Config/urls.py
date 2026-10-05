@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
-from users.views import PublicProfileWebView
+from users.views import PublicProfileWebView, GdprDataExportView, DeviceRegistrationView
 from drf_spectacular.views import (
     SpectacularAPIView,
     SpectacularSwaggerView,
@@ -34,6 +34,10 @@ urlpatterns = [
     # Health Check & Uptime Heartbeat Pings (prevents cold starts)
     path("api/health/", HealthCheckView.as_view(), name="health-check"),
     path("api/health/ping/", PingHeartbeatView.as_view(), name="health-ping"),
+    # Spec root endpoints (#5, #6, #8)
+    path("v1/me/export", GdprDataExportView.as_view(), name="v1-me-export-root"),
+    path("v1/devices", DeviceRegistrationView.as_view(), name="v1-devices-root"),
+    path("devices", DeviceRegistrationView.as_view(), name="devices-root"),
     # Admin & App Modules
     path("admin/", admin.site.urls),
     path("api/users/", include("users.urls")),

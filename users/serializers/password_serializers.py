@@ -30,17 +30,22 @@ class PasswordResetRequestSerializer(serializers.Serializer):
 
 class PasswordResetOTPVerifySerializer(serializers.Serializer):
     """
-    Serializer for verifying OTP for password reset
+    Serializer for verifying 6-digit OTP for password reset
     """
     email = serializers.EmailField()
-    otp = serializers.CharField(max_length=4)
+    otp = serializers.CharField(max_length=6)
 
 
 class PasswordResetConfirmSerializer(serializers.Serializer):
     """
-    Serializer for confirming password reset with OTP
+    Serializer for confirming password reset with single-use reset token
     """
     email = serializers.EmailField()
+    reset_token = serializers.CharField(
+        write_only=True,
+        required=True,
+        help_text="Single-use cryptographic reset token received upon successful OTP verification"
+    )
     password = serializers.CharField(
         write_only=True,
         required=True,

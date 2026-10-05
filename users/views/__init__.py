@@ -13,6 +13,7 @@ from .gdpr_views import (
     AccountDeletionAPIView,
     VerifyAccountDeletionView,
     AccountDeleteView,
+    GdprDataExportView,
 )
 from .auth_views import (
     UserRegistrationView,
@@ -36,6 +37,7 @@ from .profile_views import (
     UserPreferenceView,
     ShareProfileAPIView,
     PublicProfileWebView,
+    DeviceRegistrationView,
 )
 __all__ = [
     'standard_response',
@@ -46,6 +48,7 @@ __all__ = [
     'AccountDeletionAPIView',
     'VerifyAccountDeletionView',
     'AccountDeleteView',
+    'GdprDataExportView',
     'UserRegistrationView',
     'UserLoginView',
     'UserLogoutView',
@@ -63,4 +66,6 @@ __all__ = [
     'UserPreferenceView',
     'ShareProfileAPIView',
     'PublicProfileWebView',
+    'DeviceRegistrationView',
 ]
+

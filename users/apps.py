@@ -33,3 +33,10 @@ class UsersConfig(AppConfig):
             from . import schema
         except ImportError as e:
             logger.warning(f"drf-spectacular schema extensions not found: {str(e)}")
+
+        # Connect pre_delete media file cleanup signals for GDPR storage erasure
+        try:
+            from .signals import register_media_cleanup_signals
+            register_media_cleanup_signals()
+        except Exception as e:
+            logger.warning(f"Failed to register media cleanup signals: {e}")

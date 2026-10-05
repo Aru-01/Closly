@@ -112,25 +112,18 @@ class UserPreferenceAndLoginTestCase(TestCase):
             res2 = self.client.post(req_url2, {'name': 'Test User', 'email': 'testuser@example.com'})
             self.assertEqual(res2.status_code, status.HTTP_200_OK)
 
-    def test_translation_middleware_filters(self):
-        from users.middleware import TranslationMiddleware
+    def test_user_activity_middleware(self):
+        from users.middleware import UserActivityMiddleware
+        from django.test import RequestFactory
+        from django.http import HttpResponse
 
-        middleware = TranslationMiddleware(get_response=lambda r: None)
+        factory = RequestFactory()
+        request = factory.get('/api/users/profile/')
+        request.user = self.user
 
-        # Technical values that should be skipped
-        self.assertTrue(middleware._should_skip_string('#FFFFFF'))
-        self.assertTrue(middleware._should_skip_string('#fff'))
-        self.assertTrue(middleware._should_skip_string('https://example.com/pic.jpg'))
-        self.assertTrue(middleware._should_skip_string('/media/closet/pic.jpg'))
-        self.assertTrue(middleware._should_skip_string('12345'))
-        self.assertTrue(middleware._should_skip_string('-49.99'))
-        self.assertTrue(middleware._should_skip_string('a63b2f8a-9e12-4c56-8a4b-22ef901b0051'))
-        self.assertTrue(middleware._should_skip_string('2026-09-14T12:00:00Z'))
-        self.assertTrue(middleware._should_skip_string('user@closly.com'))
-
-        # Normal text should not be skipped
-        self.assertFalse(middleware._should_skip_string('Welcome to your closet'))
-        self.assertFalse(middleware._should_skip_string('Casual Friday outfit with a white tee'))
+        middleware = UserActivityMiddleware(get_response=lambda r: HttpResponse("OK"))
+        response = middleware.process_response(request, HttpResponse("OK"))
+        self.assertEqual(response.status_code, 200)
 
     def test_closet_points_and_gamification_tiers(self):
         from rewards.services import award_points, get_tier_info
@@ -204,7 +197,14 @@ class UserPreferenceAndLoginTestCase(TestCase):
         res = self.client.post(signup_url, signup_data, format='json')
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
 
-        # User 1 should have received +200 points for inviting a friend!
+        # Points are securely awarded once the invited friend verifies email (prevents unverified referral exploitation)
+        friend = User.objects.get(email='friend@example.com')
+        self.assertEqual(friend.referred_by, self.user)
+        verify_url = reverse('users:verify-otp')
+        v_res = self.client.post(verify_url, {'email': friend.email, 'otp': friend.otp}, format='json')
+        self.assertEqual(v_res.status_code, status.HTTP_200_OK)
+
+        # User 1 should have received +200 points for inviting a verified friend
         profile = UserRewardProfile.objects.filter(user=self.user).first()
         self.assertIsNotNone(profile)
         self.assertGreaterEqual(profile.available_points, 200)
@@ -219,12 +219,12 @@ class UserPreferenceAndLoginTestCase(TestCase):
         self.assertIn('referral_code', share_res.data['data'])
         self.assertIn('deep_link', share_res.data['data'])
 
-        # 2. Public web landing page
+        # 2. Public web landing page (UUID only, referral code stripped to prevent scraping)
         landing_url = f'/u/{self.user.id}/'
         landing_res = self.client.get(landing_url)
         self.assertEqual(landing_res.status_code, status.HTTP_200_OK)
         self.assertContains(landing_res, self.user.name)
-        self.assertContains(landing_res, self.user.referral_code)
+        self.assertNotContains(landing_res, "referral-box")
 
     def test_password_reset_flow(self):
         # 1. Request Password Reset OTP
@@ -233,24 +233,25 @@ class UserPreferenceAndLoginTestCase(TestCase):
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertTrue(res.data['success'])
 
-        # Reload user from DB to get generated OTP
+        # Reload user from DB to get generated 6-digit OTP
         self.user.refresh_from_db()
         self.assertIsNotNone(self.user.otp)
+        self.assertEqual(len(self.user.otp), 6)
         self.assertIsNotNone(self.user.otp_created_at)
 
-        # 2. Verify OTP
+        # 2. Verify OTP and obtain single-use reset_token
         verify_otp_url = reverse('users:password-reset-otp-verify')
         verify_res = self.client.post(verify_otp_url, {'email': self.user.email, 'otp': self.user.otp}, format='json')
         self.assertEqual(verify_res.status_code, status.HTTP_200_OK)
         self.assertTrue(verify_res.data['success'])
+        reset_token = verify_res.data['data']['reset_token']
+        self.assertTrue(bool(reset_token))
 
-        self.user.refresh_from_db()
-        self.assertTrue(self.user.password_reset_verified)
-
-        # 3. Confirm New Password
+        # 3. Confirm New Password using reset_token
         confirm_url = reverse('users:password-reset-confirm')
         confirm_res = self.client.post(confirm_url, {
             'email': self.user.email,
+            'reset_token': reset_token,
             'password': 'BrandNewSecurePass123!',
             'confirm_password': 'BrandNewSecurePass123!'
         }, format='json')

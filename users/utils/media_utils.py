@@ -143,10 +143,49 @@ def compress_chat_image(image_file, max_size=(1280, 1280), quality=75):
         return image_file
 
 
+ALLOWED_AVATAR_DOMAINS = {
+    'lh3.googleusercontent.com',
+    'googleusercontent.com',
+    'appleid.cdn-apple.com',
+    'apple.com',
+}
+
+
+def is_safe_avatar_url(url):
+    """
+    Validate that avatar URL uses HTTPS, belongs to an allowlisted CDN,
+    and does not resolve to a private/loopback/link-local IP address (SSRF mitigation).
+    """
+    import urllib.parse
+    import socket
+    import ipaddress
+
+    try:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme.lower() != 'https':
+            return False
+
+        hostname = (parsed.hostname or '').lower()
+        if not any(hostname == d or hostname.endswith('.' + d) for d in ALLOWED_AVATAR_DOMAINS):
+            return False
+
+        # Resolve IP to detect SSRF targeting metadata (e.g. 169.254.169.254) or local network
+        ip_str = socket.gethostbyname(hostname)
+        ip = ipaddress.ip_address(ip_str)
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            return False
+
+        return True
+    except Exception as e:
+        logger.warning(f"Avatar URL security validation failed for {url}: {e}")
+        return False
+
+
 def save_profile_picture_from_url(user, url):
     """
-    Downloads avatar image from an external URL (e.g. Google photo URL)
-    and saves it to user.profile_picture if the user doesn't already have one.
+    Downloads avatar image from a verified external CDN URL (Google/Apple),
+    validates against SSRF, sanitizes with Pillow (strips EXIF, converts to JPEG),
+    and saves it to user.profile_picture.
     Does NOT overwrite if the user already uploaded a custom profile picture.
     """
     if not url or not user:
@@ -156,24 +195,35 @@ def save_profile_picture_from_url(user, url):
     if getattr(user, 'profile_picture', None) and bool(user.profile_picture.name):
         return False
 
+    if not is_safe_avatar_url(url):
+        logger.warning(f"Rejected unsafe avatar URL for user {getattr(user, 'email', '')}: {url}")
+        return False
+
     import uuid
+    import io
     import requests
+    from PIL import Image, ImageOps
     from django.core.files.base import ContentFile
 
     try:
-        # Standard timeout so external latency never blocks login
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200 and response.content:
-            content_type = response.headers.get('content-type', '').lower()
-            ext = '.jpg'
-            if 'png' in content_type:
-                ext = '.png'
-            elif 'webp' in content_type:
-                ext = '.webp'
-            filename = f"google_{uuid.uuid4().hex[:12]}{ext}"
-            user.profile_picture.save(filename, ContentFile(response.content), save=True)
-            logger.info(f"Successfully saved social profile picture for user {user.email}")
-            return True
+        response = requests.get(url, timeout=5, stream=True)
+        if response.status_code == 200:
+            raw_bytes = io.BytesIO(response.content)
+            # Validate and sanitize using Pillow
+            with Image.open(raw_bytes) as img:
+                # Normalize orientation and strip EXIF
+                img = ImageOps.exif_transpose(img)
+                img = img.convert('RGB')
+                img.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
+
+                output_buffer = io.BytesIO()
+                img.save(output_buffer, format='JPEG', quality=85, optimize=True)
+                output_buffer.seek(0)
+
+                filename = f"social_{uuid.uuid4().hex[:12]}.jpg"
+                user.profile_picture.save(filename, ContentFile(output_buffer.getvalue()), save=True)
+                logger.info(f"Successfully sanitized and saved social avatar for user {user.email}")
+                return True
         else:
             logger.warning(f"Failed to fetch profile picture from {url}: status {response.status_code}")
     except Exception as e:

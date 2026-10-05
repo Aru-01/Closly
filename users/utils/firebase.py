@@ -40,3 +40,20 @@ def verify_firebase_token(id_token):
         return decoded_token
     except Exception as e:
         raise Exception(f"Invalid Firebase token: {str(e)}")
+
+
+def delete_firebase_user(firebase_uid):
+    """
+    Delete a user from Firebase Authentication by UID during GDPR account erasure.
+    """
+    if not firebase_uid:
+        return False
+    try:
+        initialize_firebase()
+        firebase_auth.delete_user(firebase_uid)
+        logger.info(f"Firebase user {firebase_uid} deleted successfully.")
+        return True
+    except Exception as e:
+        logger.warning(f"Could not delete Firebase user {firebase_uid}: {e}")
+        return False
+

@@ -199,25 +199,6 @@
       box-shadow: 0 12px 30px rgba(212, 175, 55, 0.45);
     }
 
-    .referral-box {
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px dashed rgba(212, 175, 55, 0.4);
-      border-radius: 12px;
-      padding: 12px;
-      font-size: 13px;
-      color: var(--text-muted);
-      margin-bottom: 20px;
-    }
-
-    .referral-code {
-      font-weight: 800;
-      font-size: 15px;
-      color: var(--accent);
-      letter-spacing: 1px;
-      display: inline-block;
-      margin-top: 4px;
-    }
-
     .section-title {
       font-size: 16px;
       font-weight: 600;
@@ -290,14 +271,7 @@
         </div>
       </div>
 
-      {% if profile_user.referral_code %}
-      <div class="referral-box">
-        Join Closly with this referral code for <strong>+200 Bonus Points</strong>:
-        <div><span class="referral-code">{{ profile_user.referral_code }}</span></div>
-      </div>
-      {% endif %}
-
-      <a href="closly://user/{{ profile_user.id }}?ref={{ profile_user.referral_code }}" class="cta-btn" id="open-app-btn">
+      <a href="closly://user/{{ profile_user.username|default:profile_user.id }}" class="cta-btn" id="open-app-btn">
         Open in Closly App
       </a>
 
@@ -320,7 +294,7 @@
     {% endif %}
 
     <div class="footer">
-      &copy; Closly Technologies Inc. Luxury wardrobe & personal styling platform.
+      &copy; Closly Technologies GmbH. Luxury wardrobe & personal styling platform.
     </div>
   </div>
 

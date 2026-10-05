@@ -4,11 +4,11 @@ from .base import SECRET_KEY
 
 # Django REST Framework Configuration
 REST_FRAMEWORK = {
+    "NUM_PROXIES": 1,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "Config.exceptions.custom_exception_handler",
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
-        "users.authentication.FirebaseAuthentication",
     ),
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
@@ -51,13 +51,33 @@ CORS_ALLOW_HEADERS = [
     "ngrok-skip-browser-warning",
 ]
 
-# Simple JWT Configuration
+# Simple JWT Configuration (Lifetimes configurable via .env)
+# Default: 30 minutes for access, 30 days for refresh
+ACCESS_TOKEN_LIFETIME_MINUTES = config(
+    "ACCESS_TOKEN_LIFETIME_MINUTES",
+    default=config(
+        "ACCESS_TOKEN_LIFETIME",
+        default=config("JWT_ACCESS_TOKEN_LIFETIME_MINUTES", default=30, cast=int),
+        cast=int,
+    ),
+    cast=int,
+)
+REFRESH_TOKEN_LIFETIME_DAYS = config(
+    "REFRESH_TOKEN_LIFETIME_DAYS",
+    default=config(
+        "REFRESH_TOKEN_LIFETIME",
+        default=config("JWT_REFRESH_TOKEN_LIFETIME_DAYS", default=30, cast=int),
+        cast=int,
+    ),
+    cast=int,
+)
+
 SIMPLE_JWT = {
     # Token lifetime
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=7),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=ACCESS_TOKEN_LIFETIME_MINUTES),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=REFRESH_TOKEN_LIFETIME_DAYS),
     "ROTATE_REFRESH_TOKENS": True,
-    "BLACKLIST_AFTER_ROTATION": False,
+    "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": True,
     # Token claims
     "ALGORITHM": "HS256",

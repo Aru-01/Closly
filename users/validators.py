@@ -122,10 +122,10 @@ def validate_name(name):
             code='name_too_long'
         )
     
-    # Check if name contains only letters, spaces, hyphens, and apostrophes
-    if not re.match(r"^[a-zA-Z\s\-']+$", name):
+    # Check if name contains only letters (including international characters), spaces, hyphens, and apostrophes
+    if not re.match(r"^[^\W\d_]+([ '’\-][^\W\d_]+)*$", name, re.UNICODE):
         raise ValidationError(
-            _('Name can only contain letters, spaces, hyphens, and apostrophes.'),
+            _('Name can only contain letters (including international Unicode characters), spaces, hyphens, and apostrophes.'),
             code='name_invalid_characters'
         )
 
@@ -157,10 +157,12 @@ def validate_date_of_birth(dob):
     if today.month < dob.month or (today.month == dob.month and today.day < dob.day):
         age -= 1
     
-    # Check minimum age (13 years for most platforms)
-    if age < 13:
+    # Check minimum age (GDPR Art. 8 compliant: default 16)
+    from django.conf import settings
+    min_age = getattr(settings, 'MYC_MIN_AGE', 16)
+    if age < min_age:
         raise ValidationError(
-            _('You must be at least 13 years old to register.'),
+            _(f'You must be at least {min_age} years old to register.'),
             code='dob_too_young'
         )
     

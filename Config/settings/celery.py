@@ -1,3 +1,4 @@
+import sys
 from decouple import config
 from .base import TIME_ZONE
 
@@ -43,6 +44,8 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS = True
+CELERY_TASK_ALWAYS_EAGER = config("CELERY_TASK_ALWAYS_EAGER", default=("test" in sys.argv), cast=bool)
+CELERY_TASK_EAGER_PROPAGATES = True
 
 CELERY_BEAT_SCHEDULE = {
     "expire-24h-stories-hourly": {
@@ -60,5 +63,17 @@ CELERY_BEAT_SCHEDULE = {
     "cleanup-old-notifications-daily": {
         "task": "notifications.tasks.cleanup_old_notifications_task",
         "schedule": 86400.0,  # runs once daily (86,400s) to purge notifications older than 60 days
+    },
+    "flush-expired-tokens-daily": {
+        "task": "users.tasks.flush_expired_tokens_task",
+        "schedule": 86400.0,  # runs once daily (86,400s) to purge expired JWT blacklist/outstanding tokens
+    },
+    "purge-old-login-history-daily": {
+        "task": "users.tasks.purge_old_login_history_task",
+        "schedule": 86400.0,  # runs once daily (86,400s) to purge login history older than 90 days (U-25)
+    },
+    "purge-completed-gdpr-jobs-daily": {
+        "task": "users.tasks.purge_completed_gdpr_jobs_task",
+        "schedule": 86400.0,  # runs once daily (86,400s) to purge completed GDPR deletion jobs older than 30 days
     },
 }

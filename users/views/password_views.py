@@ -1,5 +1,8 @@
 import logging
+import secrets
+import hashlib
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.views import APIView
@@ -13,8 +16,14 @@ from users.serializers import (
     PasswordResetConfirmSerializer,
     PasswordChangeSerializer,
 )
-from users.utils import send_password_reset_email, generate_otp
-from users.throttling import PasswordResetRateThrottle, OTPVerifyRateThrottle
+from users.utils import send_password_reset_email, generate_otp, revoke_all_user_tokens
+from users.throttling import (
+    PasswordResetRateThrottle,
+    OTPVerifyRateThrottle,
+    check_lockout,
+    record_failed_attempt,
+    clear_failed_attempts,
+)
 from .base import standard_response
 
 logger = logging.getLogger(__name__)
@@ -23,7 +32,7 @@ User = get_user_model()
 @extend_schema(
     tags=["Authentication & Security"],
     summary="Request Password Reset OTP",
-    description="Sends a 4-digit password reset OTP to user's registered email address (throttled to once per 2 minutes).",
+    description="Sends a 6-digit password reset OTP to user's registered email address (throttled to once per 2 minutes).",
     request=PasswordResetRequestSerializer,
     responses={
         200: OpenApiResponse(description="Password reset OTP dispatched to email"),
@@ -34,17 +43,6 @@ User = get_user_model()
 class PasswordResetRequestView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
-    """
-    API endpoint to request password reset with 30-second rate limiting
-    
-    POST /api/users/password-reset/
-    
-    Request body:
-    {
-        "email": "john@example.com"
-    }
-    """
-    
     permission_classes = [AllowAny]
     throttle_classes = [PasswordResetRateThrottle]
     serializer_class = PasswordResetRequestSerializer
@@ -56,10 +54,17 @@ class PasswordResetRequestView(APIView):
         if serializer.is_valid():
             email = serializer.validated_data['email']
             
+            if check_lockout(email, scope='pw_reset'):
+                return standard_response(
+                    success=False,
+                    message="Too many failed attempts. This account is locked for 15 minutes.",
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS
+                )
+
             try:
                 user = User.objects.get(email=email)
                 
-                # 2-minute (120-second) rate limiting check
+                # 2-minute (120-second) cooldown check
                 if user.otp_created_at:
                     seconds_passed = (timezone.now() - user.otp_created_at).total_seconds()
                     if seconds_passed < 120:
@@ -70,8 +75,8 @@ class PasswordResetRequestView(APIView):
                             status_code=status.HTTP_429_TOO_MANY_REQUESTS
                         )
                 
-                # Generate and send password reset OTP
-                otp = generate_otp()
+                # Generate and send 6-digit password reset OTP
+                otp = generate_otp(6)
                 user.otp = otp
                 user.otp_created_at = timezone.now()
                 user.password_reset_verified = False
@@ -79,10 +84,9 @@ class PasswordResetRequestView(APIView):
                 send_password_reset_email(user, otp)
             
             except User.DoesNotExist:
-                # For security, don't reveal if email exists or not
+                # Anti-enumeration: uniform response for nonexistent emails
                 pass
             
-            # Always return success message
             return standard_response(
                 success=True,
                 message="If an account with that email exists, a password reset OTP has been sent.",
@@ -100,21 +104,17 @@ class PasswordResetRequestView(APIView):
 @extend_schema(
     tags=["Authentication & Security"],
     summary="Verify Password Reset OTP",
-    description="Verifies the 4-digit password reset OTP sent to email. Sets verification flag to authorize password change.",
+    description="Verifies the 6-digit password reset OTP and issues a single-use 15-minute cryptographic reset token.",
     request=PasswordResetOTPVerifySerializer,
     responses={
-        200: OpenApiResponse(description="OTP verified successfully"),
+        200: OpenApiResponse(description="OTP verified; reset token issued"),
         400: OpenApiResponse(description="Invalid or expired OTP"),
-        404: OpenApiResponse(description="User not found"),
+        429: OpenApiResponse(description="Account locked due to too many attempts"),
     }
 )
 class PasswordResetOTPVerifyView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
-    """
-    API endpoint to verify OTP for password reset.
-    On success, sets password_reset_verified=True and clears the OTP from DB.
-    """
     permission_classes = [AllowAny]
     throttle_classes = [OTPVerifyRateThrottle]
     serializer_class = PasswordResetOTPVerifySerializer
@@ -124,29 +124,45 @@ class PasswordResetOTPVerifyView(APIView):
         if serializer.is_valid():
             email = serializer.validated_data['email']
             otp = serializer.validated_data['otp']
+
+            if check_lockout(email, scope='pw_reset'):
+                return standard_response(
+                    success=False,
+                    message="Too many failed attempts. This account is locked for 15 minutes.",
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS
+                )
+
             try:
                 user = User.objects.get(email=email)
-                if user.otp == otp and user.is_otp_valid():
-                    # OTP is valid: allow password reset and remove OTP from database
-                    user.password_reset_verified = True
+                # Constant-time comparison
+                if user.otp and secrets.compare_digest(str(user.otp), str(otp)) and user.is_otp_valid():
                     user.clear_otp()
-                    user.save(update_fields=['password_reset_verified'])
+                    clear_failed_attempts(email, scope='pw_reset')
+
+                    # Generate single-use cryptographic reset token with 15-min TTL (U-16)
+                    raw_reset_token = secrets.token_urlsafe(32)
+                    token_hash = hashlib.sha256(raw_reset_token.encode('utf-8')).hexdigest()
+                    cache.set(f"pw_reset_token_{token_hash}", str(user.id), timeout=900)
+
                     return standard_response(
                         success=True,
-                        message="OTP verified successfully. You can now reset your password."
+                        message="OTP verified successfully. You can now reset your password.",
+                        data={'reset_token': raw_reset_token}
                     )
                 else:
-                    # Expired OTP is automatically cleared from the DB by is_otp_valid()
+                    record_failed_attempt(email, scope='pw_reset')
                     return standard_response(
                         success=False,
-                        message="Invalid or expired OTP.",
-                        status_code=status.HTTP_400_BAD_REQUEST
+                        message="Invalid email or verification code.",
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        code="INVALID_OTP"
                     )
             except User.DoesNotExist:
                 return standard_response(
                     success=False,
-                    message="User not found.",
-                    status_code=status.HTTP_404_NOT_FOUND
+                    message="Invalid email or verification code.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    code="INVALID_OTP"
                 )
         return standard_response(
             success=False,
@@ -159,69 +175,64 @@ class PasswordResetOTPVerifyView(APIView):
 @extend_schema(
     tags=["Authentication & Security"],
     summary="Confirm Password Reset",
-    description="Sets a new password after successful OTP verification.",
+    description="Sets a new password using the verified single-use reset token and revokes all active sessions.",
     request=PasswordResetConfirmSerializer,
     responses={
-        200: OpenApiResponse(description="Password reset successful"),
-        400: OpenApiResponse(description="Unverified OTP, passwords do not match, or validation failed"),
-        404: OpenApiResponse(description="User not found"),
+        200: OpenApiResponse(description="Password reset successful; all active sessions revoked"),
+        400: OpenApiResponse(description="Invalid or expired reset token"),
     }
 )
 class PasswordResetConfirmView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
-    """
-    API endpoint to confirm password reset.
-    Enforces that the user has verified the OTP (password_reset_verified=True).
-    
-    POST /api/users/password-reset-confirm/
-    
-    Request body:
-    {
-        "email": "john@example.com",
-        "password": "NewSecurePass123!",
-        "confirm_password": "NewSecurePass123!"
-    }
-    """
-    
-    permission_classes = [AllowAny]
+    throttle_classes = [PasswordResetRateThrottle]
     serializer_class = PasswordResetConfirmSerializer
     
     def post(self, request):
-        """Confirm password reset"""
+        """Confirm password reset with cryptographic reset token"""
         serializer = self.serializer_class(data=request.data)
         
         if serializer.is_valid():
             email = serializer.validated_data['email']
+            reset_token = serializer.validated_data['reset_token']
             new_password = serializer.validated_data['password']
             
             try:
                 user = User.objects.get(email=email)
                 
-                # Security check: verify that user actually verified OTP
-                if not user.password_reset_verified:
+                # Validate cryptographic reset token from cache (U-16)
+                token_hash = hashlib.sha256(reset_token.encode('utf-8')).hexdigest()
+                cached_user_id = cache.get(f"pw_reset_token_{token_hash}")
+
+                if not cached_user_id or str(cached_user_id) != str(user.id):
                     return standard_response(
                         success=False,
-                        message="Password reset not authorized. Please verify your OTP first.",
+                        message="Invalid, expired, or already-used password reset token. Please request a new OTP.",
                         status_code=status.HTTP_400_BAD_REQUEST
                     )
                 
-                # Set new password and reset verification flag
+                # Invalidate reset token immediately (single-use guarantee)
+                cache.delete(f"pw_reset_token_{token_hash}")
+
+                # Set new password
                 user.set_password(new_password)
                 user.password_reset_verified = False
                 user.save(update_fields=['password', 'password_reset_verified'])
                 
+                # Revoke / blacklist all active user tokens upon password reset (U-06)
+                revoke_all_user_tokens(user)
+
                 return standard_response(
                     success=True,
-                    message="Password has been reset successfully. You can now login with your new password.",
+                    message="Password has been reset successfully. All active sessions have been revoked. Please log in with your new password.",
                     status_code=status.HTTP_200_OK
                 )
             
             except User.DoesNotExist:
                 return standard_response(
                     success=False,
-                    message="User not found",
-                    status_code=status.HTTP_404_NOT_FOUND
+                    message="Invalid password reset request.",
+                    status_code=status.HTTP_400_BAD_REQUEST
                 )
         
         return standard_response(
@@ -238,27 +249,13 @@ class PasswordResetConfirmView(APIView):
     description="Change account password for currently authenticated user by providing old and new password.",
     request=PasswordChangeSerializer,
     responses={
-        200: OpenApiResponse(description="Password changed successfully"),
+        200: OpenApiResponse(description="Password changed successfully; outstanding tokens revoked"),
         400: OpenApiResponse(description="Incorrect current password or invalid new password"),
     }
 )
 class PasswordChangeView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
-    """
-    API endpoint to change password (authenticated user)
-    
-    POST /api/users/password-change/
-    
-    Request body:
-    {
-        "old_password": "OldPass123!",
-        "new_password": "NewSecurePass123!",
-        "confirm_password": "NewSecurePass123!"
-    }
-    """
-    
-    permission_classes = [IsAuthenticated]
     serializer_class = PasswordChangeSerializer
     
     def post(self, request):
@@ -282,10 +279,13 @@ class PasswordChangeView(APIView):
             # Set new password
             user.set_password(new_password)
             user.save()
+
+            # Revoke all outstanding tokens on password change (U-06)
+            revoke_all_user_tokens(user)
             
             return standard_response(
                 success=True,
-                message="Password changed successfully",
+                message="Password changed successfully. Please log in with your new credentials.",
                 status_code=status.HTTP_200_OK
             )
         
