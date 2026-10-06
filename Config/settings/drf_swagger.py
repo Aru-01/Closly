@@ -22,6 +22,8 @@ REST_FRAMEWORK = {
         "otp_resend": "3/120s",
         "password_reset": "5/120s",
         "ai_scan": "15/min",
+        "product_click": config("MYC_CLICK_THROTTLE_RATE", default="30/h"),
+        "events_batch": "120/min",
     },
 }
 

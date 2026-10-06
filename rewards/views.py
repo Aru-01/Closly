@@ -153,7 +153,7 @@ class ClaimPurchaseRewardView(APIView):
                 'message': 'order_id is required to claim purchase points.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Check for duplicate claim
+        # Check for duplicate claim via transactions or conversion
         existing = RewardPointTransaction.objects.filter(
             user=request.user,
             action_type='make_purchase',
@@ -161,6 +161,19 @@ class ClaimPurchaseRewardView(APIView):
         ).first()
 
         if existing:
+            return Response({
+                'success': False,
+                'message': 'Reward points for this order have already been claimed.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check for existing affiliate conversion
+        from affiliate.models import Conversion
+        conversion = Conversion.objects.filter(
+            order_reference=str(order_id),
+            user=request.user,
+        ).first()
+
+        if conversion and conversion.reward_claimed:
             return Response({
                 'success': False,
                 'message': 'Reward points for this order have already been claimed.'
@@ -175,6 +188,11 @@ class ClaimPurchaseRewardView(APIView):
             points_override=200
         )
 
+        if conversion:
+            conversion.reward_claimed = True
+            conversion.reward_transaction = tx
+            conversion.save(update_fields=['reward_claimed', 'reward_transaction'])
+
         return Response({
             'success': True,
             'message': 'Successfully claimed 200 reward points for your purchase!',
@@ -182,6 +200,7 @@ class ClaimPurchaseRewardView(APIView):
                 'points_awarded': 200,
                 'validity': '60 days',
                 'order_id': order_id,
-                'transaction_id': tx.id
+                'transaction_id': tx.id,
+                'verified_conversion': bool(conversion),
             }
         }, status=status.HTTP_200_OK)

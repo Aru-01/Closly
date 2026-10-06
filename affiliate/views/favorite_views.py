@@ -1,9 +1,10 @@
+from django.db import transaction, IntegrityError
+from django.db.models import Count
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from django.db.models import Count
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 from affiliate.models import AffiliateProduct, ProductFavorite
@@ -13,10 +14,14 @@ from .feed_views import NewsfeedPagination
 
 @extend_schema(
     tags=["Affiliate Products & Scraping"],
-    summary="Toggle Product Favorite / Wishlist",
-    description="Saves a product to user's personal wishlist or removes it if already favorited.",
+    summary="Toggle / Save / Remove Product Favorite (Wishlist)",
+    description=(
+        "Saves or removes a product from user's personal wishlist. "
+        "Supports idempotent explicit actions via 'action' parameter ('save' or 'remove'), "
+        "HTTP PUT/DELETE methods, or legacy toggle POST with transaction and race-condition safety."
+    ),
     responses={
-        200: OpenApiResponse(description="Product favorite status toggled successfully"),
+        200: OpenApiResponse(description="Product favorite status updated successfully"),
         404: OpenApiResponse(description="Product not found or inactive"),
     }
 )
@@ -25,13 +30,26 @@ class ProductFavoriteToggleView(APIView):
     POST /api/affiliate/products/<id>/love/
     POST /api/affiliate/products/<id>/favorite/
     POST /api/affiliate/products/<id>/save/
-
-    Toggles favorite / love status on a product for the authenticated user.
+    PUT  /api/affiliate/products/<id>/save/ (idempotent save)
+    DELETE /api/affiliate/products/<id>/save/ (idempotent remove)
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
+    def put(self, request, pk):
+        """Idempotent save."""
+        return self._handle_favorite(request, pk, explicit_action='save')
+
+    def delete(self, request, pk):
+        """Idempotent remove."""
+        return self._handle_favorite(request, pk, explicit_action='remove')
+
     def post(self, request, pk):
+        """Toggle or explicit action."""
+        action = request.data.get('action') or request.query_params.get('action')
+        return self._handle_favorite(request, pk, explicit_action=action)
+
+    def _handle_favorite(self, request, pk, explicit_action=None):
         try:
             product = AffiliateProduct.objects.only('id').get(pk=pk, is_active=True)
         except AffiliateProduct.DoesNotExist:
@@ -41,16 +59,36 @@ class ProductFavoriteToggleView(APIView):
                 'data': None
             }, status=status.HTTP_404_NOT_FOUND)
 
-        deleted_count, _ = ProductFavorite.objects.filter(product_id=pk, user=request.user).delete()
-        if deleted_count > 0:
-            is_loved = False
-            status_str = 'unloved'
-            message = 'Product removed from your saved wishlist'
-        else:
-            ProductFavorite.objects.create(product_id=pk, user=request.user)
-            is_loved = True
-            status_str = 'loved'
-            message = 'Product saved to your wishlist!'
+        user = request.user
+
+        with transaction.atomic():
+            if explicit_action == 'save':
+                ProductFavorite.objects.get_or_create(product=product, user=user)
+                is_loved = True
+                status_str = 'loved'
+                message = 'Product saved to your wishlist!'
+            elif explicit_action == 'remove':
+                ProductFavorite.objects.filter(product=product, user=user).delete()
+                is_loved = False
+                status_str = 'unloved'
+                message = 'Product removed from your saved wishlist'
+            else:
+                # Race-condition safe toggle
+                deleted_count, _ = ProductFavorite.objects.filter(product=product, user=user).delete()
+                if deleted_count > 0:
+                    is_loved = False
+                    status_str = 'unloved'
+                    message = 'Product removed from your saved wishlist'
+                else:
+                    try:
+                        ProductFavorite.objects.create(product=product, user=user)
+                        is_loved = True
+                        status_str = 'loved'
+                        message = 'Product saved to your wishlist!'
+                    except IntegrityError:
+                        is_loved = True
+                        status_str = 'loved'
+                        message = 'Product saved to your wishlist!'
 
         favorites_count = ProductFavorite.objects.filter(product_id=pk).count()
 
@@ -78,8 +116,6 @@ class SavedProductsListView(generics.ListAPIView):
     """
     GET /api/affiliate/products/saved/
     GET /api/affiliate/products/favorites/
-
-    Returns all products loved / saved by the authenticated user with O(1) query complexity.
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]

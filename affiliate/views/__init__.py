@@ -22,6 +22,14 @@ from .favorite_views import (
     SavedProductsListView,
 )
 
+from .event_views import (
+    EventBatchView,
+)
+
+from .webhook_views import (
+    AwinWebhookView,
+)
+
 __all__ = [
     'NewsfeedPagination',
     'ForYouPagination',
@@ -34,4 +42,6 @@ __all__ = [
     'build_affiliate_url',
     'ProductFavoriteToggleView',
     'SavedProductsListView',
+    'EventBatchView',
+    'AwinWebhookView',
 ]

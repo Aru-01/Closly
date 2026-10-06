@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from urllib.parse import urlparse, parse_qs, unquote
-from .models import AffiliateProduct
+from .models import AffiliateProduct, ProductClick, Brand, Event, Conversion
 
 
 def fix_image_url(raw_url: str) -> str:
@@ -14,7 +14,7 @@ def fix_image_url(raw_url: str) -> str:
 
     This function:
     1. Detects productserve proxy URLs
-    2. Extracts and fixes the inner image URL → https://...
+    2. Extracts and fixes the inner image URL -> https://...
     3. Returns it directly so the app can load it without hitting the proxy
 
     For all other URLs it returns them unchanged.
@@ -34,7 +34,7 @@ def fix_image_url(raw_url: str) -> str:
         if not inner:
             return raw_url
 
-        # Decode percent-encoding: ssl%3Acdn.example.com → ssl:cdn.example.com
+        # Decode percent-encoding: ssl%3Acdn.example.com -> ssl:cdn.example.com
         inner_decoded = unquote(inner)
 
         # Replace the non-standard `ssl:` prefix with `https://`
@@ -54,15 +54,32 @@ def fix_image_url(raw_url: str) -> str:
     return raw_url
 
 
+class BrandSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Brand
+        fields = [
+            'id',
+            'name',
+            'slug',
+            'kind',
+            'tier',
+            'status',
+            'currency',
+            'commission_pct',
+        ]
+        read_only_fields = fields
+
+
 class AffiliateProductListSerializer(serializers.ModelSerializer):
     """
-    Compact serializer for the newsfeed list view.
+    Compact serializer for the newsfeed and discovery list views.
     Omits heavy fields like full description to keep responses fast.
     """
     discount_percent = serializers.ReadOnlyField()
     image_url        = serializers.SerializerMethodField()
     is_loved         = serializers.SerializerMethodField()
     favorites_count  = serializers.SerializerMethodField()
+    brand_id         = serializers.IntegerField(source='brand_ref_id', read_only=True)
 
     class Meta:
         model = AffiliateProduct
@@ -71,15 +88,22 @@ class AffiliateProductListSerializer(serializers.ModelSerializer):
             'aw_product_id',
             'name',
             'brand',
+            'brand_id',
             'category',
+            'category_norm',
+            'gender',
             'price',
             'rrp_price',
             'discount_percent',
             'currency',
             'colour',
+            'color_primary',
             'image_url',
+            'cdn_image_url',
+            'image_hash',
             'advertiser_name',
             'source',
+            'in_stock',
             'is_loved',
             'favorites_count',
             'is_active',
@@ -88,6 +112,8 @@ class AffiliateProductListSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_image_url(self, obj):
+        if obj.cdn_image_url:
+            return obj.cdn_image_url
         return fix_image_url(obj.image_url)
 
     def get_is_loved(self, obj):
@@ -109,8 +135,8 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
     """
     Full serializer for the product detail view.
     Includes description and the affiliate tracking link.
-    affiliate_url is the correct deep link that lands on the specific
-    product page (not just the merchant homepage).
+    Notice: Outbound purchase clicks should go via POST /api/affiliate/products/<id>/click/
+    to mint a unique click reference UUID for conversion attribution.
     """
     discount_percent = serializers.ReadOnlyField()
     affiliate_url    = serializers.SerializerMethodField()
@@ -119,6 +145,7 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
     is_loved         = serializers.SerializerMethodField()
     favorites_count  = serializers.SerializerMethodField()
     clicks_count     = serializers.SerializerMethodField()
+    brand_id         = serializers.IntegerField(source='brand_ref_id', read_only=True)
 
     class Meta:
         model = AffiliateProduct
@@ -127,19 +154,27 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
             'aw_product_id',
             'name',
             'brand',
+            'brand_id',
             'category',
+            'category_norm',
+            'gender',
             'description',
             'price',
             'rrp_price',
             'discount_percent',
             'currency',
             'colour',
+            'color_primary',
             'image_url',
+            'cdn_image_url',
+            'image_hash',
             'images',                # All available product images (gallery/carousel)
-            'affiliate_url',         # use THIS for the 'Buy' button — deep links to product
+            'affiliate_url',         # Deep link to product (attribution routed via /click/)
             'merchant_deep_link',    # direct brand URL (no tracking, fallback)
             'advertiser_name',
             'source',
+            'in_stock',
+            'sizes',
             'is_loved',
             'favorites_count',
             'clicks_count',          # Total users who clicked 'Buy' on this product
@@ -150,10 +185,12 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_image_url(self, obj):
+        if obj.cdn_image_url:
+            return obj.cdn_image_url
         return fix_image_url(obj.image_url)
 
     def get_images(self, obj):
-        primary = fix_image_url(obj.image_url)
+        primary = obj.cdn_image_url or fix_image_url(obj.image_url)
         raw_extra = getattr(obj, 'additional_image_urls', []) or []
         extra = [fix_image_url(u) for u in raw_extra if u and isinstance(u, str)]
         res = []
@@ -165,7 +202,7 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
         return res
 
     def get_affiliate_url(self, obj):
-        from .views import build_affiliate_url
+        from .views.product_views import build_affiliate_url
         return build_affiliate_url(obj)
 
     def get_is_loved(self, obj):
@@ -183,3 +220,60 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
         if hasattr(obj, '_clicks_count'):
             return obj._clicks_count
         return obj.clicks.count()
+
+
+class EventItemSerializer(serializers.Serializer):
+    """
+    Serializer for individual behavioral events in batch submission.
+    """
+    event_type = serializers.ChoiceField(choices=Event.TYPE_CHOICES)
+    product_id = serializers.IntegerField()
+    source = serializers.CharField(max_length=50, required=False, default='for_you')
+    feed_page = serializers.IntegerField(required=False, allow_null=True)
+    dwell_ms = serializers.IntegerField(required=False, allow_null=True)
+    client_ts = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class EventBatchSerializer(serializers.Serializer):
+    """
+    Serializer for batch event ingestion (up to 200 events).
+    """
+    events = serializers.ListField(
+        child=EventItemSerializer(),
+        max_length=200,
+        allow_empty=False,
+    )
+
+
+class ConversionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for Conversion & Transaction Attribution records (Audit CF-30).
+    """
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    brand_name = serializers.CharField(source='brand.name', read_only=True)
+
+    class Meta:
+        model = Conversion
+        fields = [
+            'id',
+            'conversion_id',
+            'source',
+            'click_ref',
+            'user',
+            'product',
+            'product_name',
+            'brand',
+            'brand_name',
+            'advertiser_id',
+            'order_reference',
+            'status',
+            'sale_amount',
+            'commission_amount',
+            'currency',
+            'transaction_date',
+            'validation_date',
+            'reward_claimed',
+            'created_at',
+            'updated_at',
+        ]
+        read_only_fields = fields

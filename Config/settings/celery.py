@@ -41,7 +41,8 @@ CELERY_RESULT_BACKEND = config(
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
-CELERY_TIMEZONE = TIME_ZONE
+from celery.schedules import crontab
+CELERY_TIMEZONE = config("CELERY_TIMEZONE", default="Europe/Berlin")
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS = True
 CELERY_TASK_ALWAYS_EAGER = config("CELERY_TASK_ALWAYS_EAGER", default=("test" in sys.argv), cast=bool)
@@ -52,13 +53,21 @@ CELERY_BEAT_SCHEDULE = {
         "task": "social.tasks.expire_old_stories_task",
         "schedule": 3600.0,  # runs every hour to clean up 24-hour stories
     },
-    "sync-awin-feeds-5h": {
+    "sync-awin-feeds-daily": {
         "task": "affiliate.tasks.sync_awin_feeds_task",
-        "schedule": 18000.0,  # runs every 5 hours (18,000s) to keep Awin inventory fresh
+        "schedule": crontab(hour=2, minute=0),  # 02:00 Berlin time
     },
-    "sync-rakuten-feeds-5h": {
+    "sync-rakuten-feeds-daily": {
         "task": "affiliate.tasks.sync_rakuten_feeds_task",
-        "schedule": 18000.0,  # runs every 5 hours (18,000s) to keep Rakuten inventory fresh
+        "schedule": crontab(hour=2, minute=30),  # 02:30 Berlin time
+    },
+    "aggregate-feed-impressions-daily": {
+        "task": "affiliate.tasks.aggregate_feed_impressions_daily_task",
+        "schedule": crontab(hour=3, minute=0),  # 03:00 Berlin time
+    },
+    "sync-shopify-feeds-daily": {
+        "task": "affiliate.tasks.sync_shopify_feeds_task",
+        "schedule": crontab(hour=3, minute=30),  # 03:30 Berlin time
     },
     "cleanup-old-notifications-daily": {
         "task": "notifications.tasks.cleanup_old_notifications_task",
