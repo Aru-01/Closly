@@ -8,11 +8,20 @@ from .views import (
     AffiliateProductForYouView,
     ProductFavoriteToggleView,
     SavedProductsListView,
+    EventBatchView,
+    AwinWebhookView,
 )
 
 app_name = 'affiliate'
 
 urlpatterns = [
+    # AWIN transaction webhook / postback
+    path('webhooks/awin/', AwinWebhookView.as_view(), name='webhook-awin'),
+    path('webhooks/awin/v1/', AwinWebhookView.as_view(), name='awin-webhook'),
+
+    # User behavior event batch ingestion
+    path('events/batch/', EventBatchView.as_view(), name='events-batch'),
+
     # Personalized 'For You' product feed based on user Style DNA
     path('products/for-you/', AffiliateProductForYouView.as_view(), name='products-for-you'),
 

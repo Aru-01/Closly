@@ -107,40 +107,32 @@ WSGI_APPLICATION = "Config.wsgi.application"
 ASGI_APPLICATION = "Config.asgi.application"
 
 # Database
-DB_ENGINE = config("DB_ENGINE", default="django.db.backends.sqlite3")
-DB_NAME = config("DB_NAME", default=None)
+DB_ENGINE = config("DB_ENGINE", default="django.db.backends.postgresql")
+DB_NAME = config("DB_NAME", default="Closly")
 
-if "postgresql" in DB_ENGINE and DB_NAME:
-    db_host = config("DB_HOST", default="localhost")
-    if os.path.exists("/.dockerenv"):
-        import socket
+db_host = config("DB_HOST", default="localhost")
+if os.path.exists("/.dockerenv"):
+    import socket
 
-        if db_host in ("localhost", "127.0.0.1"):
+    if db_host in ("localhost", "127.0.0.1"):
+        db_host = "host.docker.internal"
+    elif db_host == "db":
+        try:
+            socket.gethostbyname("db")
+        except Exception:
             db_host = "host.docker.internal"
-        elif db_host == "db":
-            try:
-                socket.gethostbyname("db")
-            except Exception:
-                db_host = "host.docker.internal"
 
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": DB_NAME,
-            "USER": config("DB_USER", default="postgres"),
-            "PASSWORD": config("DB_PASSWORD", default=""),
-            "HOST": db_host,
-            "PORT": config("DB_PORT", default="5432"),
-            "CONN_MAX_AGE": config("DB_CONN_MAX_AGE", default=600, cast=int),
-        }
+DATABASES = {
+    "default": {
+        "ENGINE": DB_ENGINE,
+        "NAME": DB_NAME,
+        "USER": config("DB_USER", default="postgres"),
+        "PASSWORD": config("DB_PASSWORD", default=""),
+        "HOST": db_host,
+        "PORT": config("DB_PORT", default="5432"),
+        "CONN_MAX_AGE": config("DB_CONN_MAX_AGE", default=600, cast=int),
     }
-else:
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
-    }
+}
 
 # Cache Configuration
 USE_REDIS_CACHE = config("USE_REDIS_CACHE", default=False, cast=bool)
@@ -314,6 +306,53 @@ RAKUTEN_REFRESH_TOKEN = config("RAKUTEN_REFRESH_TOKEN", default=None)
 RAKUTEN_CLIENT_ID = config("RAKUTEN_CLIENT_ID", default=None)
 RAKUTEN_CLIENT_SECRET = config("RAKUTEN_CLIENT_SECRET", default=None)
 RAKUTEN_PUBLISHER_SID = config("RAKUTEN_PUBLISHER_SID", default="4674442")
+
+# ==============================================================================
+# Catalog Feed, Attribution, & Discovery Engine Configurations (02_catalog_feed)
+# ==============================================================================
+MYC_INGEST_CURRENCIES = [
+    c.strip().upper()
+    for c in config("MYC_INGEST_CURRENCIES", default="EUR").split(",")
+    if c.strip()
+]
+MYC_FEED_CURRENCIES = [
+    c.strip().upper()
+    for c in config("MYC_FEED_CURRENCIES", default="EUR").split(",")
+    if c.strip()
+]
+MYC_FEED_CANDIDATES = config("MYC_FEED_CANDIDATES", default=600, cast=int)
+MYC_FEED_CACHE_TTL = config("MYC_FEED_CACHE_TTL", default=93600, cast=int)  # 26 hours (93,600s)
+MYC_CLICK_THROTTLE_RATE = config("MYC_CLICK_THROTTLE_RATE", default="30/h")
+MYC_EVENT_BATCH_MAX_SIZE = config("MYC_EVENT_BATCH_MAX_SIZE", default=200, cast=int)
+MYC_SYNC_ZERO_DELTA_THRESHOLD = config("MYC_SYNC_ZERO_DELTA_THRESHOLD", default=0.5, cast=float)
+MYC_SYNC_MISS_COUNT_THRESHOLD = config("MYC_SYNC_MISS_COUNT_THRESHOLD", default=2, cast=int)
+MYC_FEED_MAX_SAME_BRAND_WINDOW_20 = config("MYC_FEED_MAX_SAME_BRAND_WINDOW_20", default=3, cast=int)
+MYC_FEED_MAX_BRAND_SHARE_WINDOW_100 = config("MYC_FEED_MAX_BRAND_SHARE_WINDOW_100", default=0.30, cast=float)
+MYC_SHOPIFY_REQ_INTERVAL_MS = config("MYC_SHOPIFY_REQ_INTERVAL_MS", default=2000, cast=int)
+MYC_BOT_USER_AGENT = config("MYC_BOT_USER_AGENT", default="mycloslybot/1.0 (+https://myclosly.com/bot)")
+
+# Behavioral Recommendation Event Weights (backend-driven, non-LLM)
+MYC_EVENT_WEIGHTS = {
+    "impression": config("MYC_WEIGHT_IMPRESSION", default=0.1, cast=float),
+    "detail_view": config("MYC_WEIGHT_DETAIL_VIEW", default=1.0, cast=float),
+    "long_view": config("MYC_WEIGHT_LONG_VIEW", default=2.0, cast=float),
+    "like": config("MYC_WEIGHT_LIKE", default=5.0, cast=float),
+    "save": config("MYC_WEIGHT_SAVE", default=8.0, cast=float),
+    "click_out": config("MYC_WEIGHT_CLICK_OUT", default=3.0, cast=float),
+    "purchase": config("MYC_WEIGHT_PURCHASE", default=15.0, cast=float),
+    "skip": config("MYC_WEIGHT_SKIP", default=-3.0, cast=float),
+}
+
+# Image Asset CDN Replication (Audit CF-18)
+MYC_CDN_REPLICATION_ENABLED = config("MYC_CDN_REPLICATION_ENABLED", default=False, cast=bool)
+MYC_CDN_BASE_URL = config("MYC_CDN_BASE_URL", default=None)
+MYC_IMAGE_DOWNLOAD_TIMEOUT = config("MYC_IMAGE_DOWNLOAD_TIMEOUT", default=10, cast=int)
+MYC_IMAGE_MAX_SIZE_BYTES = config("MYC_IMAGE_MAX_SIZE_BYTES", default=10 * 1024 * 1024, cast=int)
+
+# Affiliate Purchase Conversion Linkage (Audit CF-30)
+MYC_AWIN_WEBHOOK_SECRET = config("MYC_AWIN_WEBHOOK_SECRET", default="closly-awin-webhook-secret-2026")
+MYC_AUTO_AWARD_PURCHASE_POINTS = config("MYC_AUTO_AWARD_PURCHASE_POINTS", default=True, cast=bool)
+MYC_PURCHASE_AWARD_POINTS = config("MYC_PURCHASE_AWARD_POINTS", default=200, cast=int)
 
 # Reverse Proxy SSL Headers
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

@@ -1,17 +1,25 @@
 import re
 import random
-import operator
-from functools import reduce
+import hashlib
+from collections import defaultdict
+from zoneinfo import ZoneInfo
+from django.conf import settings
+from django.core.cache import cache
+from django.core.paginator import Paginator, Page
+from django.db.models import (
+    Q, Count, Case, When, Value, IntegerField, F, ExpressionWrapper, DecimalField
+)
 from rest_framework import generics, status
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
-from django.db.models import Q, Count, Case, When, Value, IntegerField
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
 
-from affiliate.models import AffiliateProduct, ProductFavorite
+from affiliate.models import AffiliateProduct, ProductFavorite, Event
 from affiliate.serializers import AffiliateProductListSerializer
+
+BERLIN_TZ = ZoneInfo("Europe/Berlin")
 
 
 class NewsfeedPagination(PageNumberPagination):
@@ -34,10 +42,10 @@ class NewsfeedPagination(PageNumberPagination):
 
 class ForYouPagination(NewsfeedPagination):
     """
-    Pagination class for the 'For You' personalized discovery feed.
+    Pagination class for the 'For You' discovery feed.
     Carries the discovery seed in pagination links (seed=<int>) so infinite scrolling
     remains completely non-repetitive across pages, while fresh requests without seed
-    (or with refresh=true) produce freshly randomized product recommendations.
+    (or with refresh=true) produce a freshly seeded discovery sequence.
     """
     def __init__(self):
         super().__init__()
@@ -67,7 +75,7 @@ class ForYouPagination(NewsfeedPagination):
 @extend_schema(
     tags=["Affiliate Products & Scraping"],
     summary="Affiliate Products Feed",
-    description="Returns paginated affiliate products for the newsfeed with search, brand, category, colour, price, and network filters.",
+    description="Returns paginated affiliate products for the newsfeed with search, brand, category, colour, price, discount sorting, and network filters.",
     parameters=[
         OpenApiParameter('search', str, description="Search across product name, brand, description"),
         OpenApiParameter('brand', str, description="Filter by brand (exact match)"),
@@ -76,7 +84,7 @@ class ForYouPagination(NewsfeedPagination):
         OpenApiParameter('min_price', float, description="Minimum price filter"),
         OpenApiParameter('max_price', float, description="Maximum price filter"),
         OpenApiParameter('ordering', str, description="Sort order: 'price_asc', 'price_desc', 'newest', 'discount'"),
-        OpenApiParameter('source', str, description="Filter by network: 'awin' or 'rakuten'"),
+        OpenApiParameter('source', str, description="Filter by network: 'awin', 'rakuten', 'shopify', 'myc_feed'"),
     ],
     responses={
         200: AffiliateProductListSerializer(many=True),
@@ -92,7 +100,12 @@ class AffiliateProductNewsfeedView(generics.ListAPIView):
     pagination_class = NewsfeedPagination
 
     def get_queryset(self):
-        qs = AffiliateProduct.objects.filter(is_active=True, price__gt=0).exclude(
+        feed_currencies = getattr(settings, 'MYC_FEED_CURRENCIES', ['EUR'])
+        qs = AffiliateProduct.objects.filter(
+            is_active=True,
+            price__gt=0,
+            currency__in=feed_currencies,
+        ).exclude(
             Q(aw_deep_link__contains='awinmid=99999') |
             Q(aw_product_id__startswith='closly_') |
             Q(aw_product_id__startswith='mock_')
@@ -118,35 +131,47 @@ class AffiliateProductNewsfeedView(generics.ListAPIView):
             qs = qs.filter(brand__iexact=brand)
 
         if category:
-            qs = qs.filter(category__icontains=category)
+            qs = qs.filter(Q(category__icontains=category) | Q(category_norm__icontains=category))
 
         if colour:
-            qs = qs.filter(colour__icontains=colour)
+            qs = qs.filter(Q(colour__icontains=colour) | Q(color_primary__icontains=colour))
 
-        if source in ('awin', 'rakuten'):
+        if source in ('awin', 'rakuten', 'shopify', 'myc_feed'):
             qs = qs.filter(source=source)
 
         if min_price:
             try:
                 qs = qs.filter(price__gte=float(min_price))
-            except ValueError as e:
-                import logging
-                logging.getLogger(__name__).warning(f"Invalid min_price parameter: {min_price} - {e}")
+            except ValueError:
+                pass
 
         if max_price:
             try:
                 qs = qs.filter(price__lte=float(max_price))
-            except ValueError as e:
-                import logging
-                logging.getLogger(__name__).warning(f"Invalid max_price parameter: {max_price} - {e}")
+            except ValueError:
+                pass
 
-        order_map = {
-            'price_asc':  'price',
-            'price_desc': '-price',
-            'newest':     '-created_at',
-            'discount':   'price',
-        }
-        qs = qs.order_by(order_map.get(ordering, '-created_at'))
+        if ordering == 'discount':
+            # Fix CF-23: Calculate real discount percent and order descending
+            qs = qs.annotate(
+                calc_discount=Case(
+                    When(
+                        rrp_price__gt=F('price'),
+                        then=ExpressionWrapper(
+                            ((F('rrp_price') - F('price')) * 100.0) / F('rrp_price'),
+                            output_field=DecimalField(max_digits=5, decimal_places=2)
+                        )
+                    ),
+                    default=Value(0.0),
+                    output_field=DecimalField(max_digits=5, decimal_places=2)
+                )
+            ).order_by('-calc_discount', '-price', '-created_at')
+        elif ordering == 'price_asc':
+            qs = qs.order_by('price')
+        elif ordering == 'price_desc':
+            qs = qs.order_by('-price')
+        else:
+            qs = qs.order_by('-created_at')
 
         return qs
 
@@ -188,11 +213,11 @@ class AffiliateProductNewsfeedView(generics.ListAPIView):
     tags=["Affiliate Products & Scraping"],
     summary="Personalized 'For You' Products Feed",
     description=(
-        "Curated affiliate discovery feed customized by user Style DNA, preferred brands, "
-        "color palette, and gender balancing (65% primary gender / 35% secondary gender)."
+        "Curated affiliate discovery feed customized by behavioral interaction signals, "
+        "taste profile, gender preference, greedy brand diversity, and cached stable pagination."
     ),
     parameters=[
-        OpenApiParameter('seed', int, description="Discovery seed for pagination continuity"),
+        OpenApiParameter('seed', int, description="Discovery seed for deterministic pagination continuity"),
         OpenApiParameter('refresh', bool, description="Set to true to generate a freshly randomized curation seed"),
     ],
     responses={
@@ -211,160 +236,185 @@ class AffiliateProductForYouView(generics.ListAPIView):
     @staticmethod
     def _base_model_name(name: str) -> str:
         s = re.sub(r'\s*\([^)]*\)\s*$', '', name).strip()
-        s = re.sub(r'\s*-\s*(?:black|white|grey|gray|navy|olive|blue|red|green|brown|beige|tan|pink|orange|khaki|cream|burgundy|yellow)\b.*$', '', s, flags=re.IGNORECASE).strip()
+        s = re.sub(
+            r'\s*-\s*(?:black|white|grey|gray|navy|olive|blue|red|green|brown|beige|tan|pink|orange|khaki|cream|burgundy|yellow)\b.*$',
+            '',
+            s,
+            flags=re.IGNORECASE,
+        ).strip()
         return s.lower()
 
-    def _get_clean_base_queryset(self):
-        return AffiliateProduct.objects.filter(
+    @staticmethod
+    def _is_watch(p) -> bool:
+        b = (getattr(p, 'brand', '') or '').lower()
+        n = (getattr(p, 'name', '') or '').lower()
+        c = (getattr(p, 'category', '') or '').lower()
+        return 'd1 milano' in b or 'watch' in n or 'montre' in n or 'reloj' in n or 'uhr' in n or 'watch' in c
+
+    def _get_clean_base_queryset(self, user=None):
+        feed_currencies = getattr(settings, 'MYC_FEED_CURRENCIES', ['EUR'])
+        qs = AffiliateProduct.objects.filter(
             is_active=True,
-            price__gt=0
+            price__gt=0,
+            currency__in=feed_currencies,
         ).exclude(
             Q(aw_deep_link__contains='awinmid=99999') |
             Q(aw_product_id__startswith='closly_') |
             Q(aw_product_id__startswith='mock_')
         )
 
-    def _get_female_filter(self):
-        female_cats = ['women', 'dress', 'skirt', 'bra', 'lingerie', 'maternity', 'womenswear']
-        female_cat_q = Q()
-        for fc in female_cats:
-            female_cat_q |= Q(category__icontains=fc)
+        # Exclude saved products per product spec
+        if user and user.is_authenticated:
+            qs = qs.exclude(favorites__user=user)
 
-        female_words = [
-            'dress', 'skirt', 'shirtdress', 'sundress', 'midaxi', 'midi dress', 'maxi dress', 'mini dress',
-            'wrap dress', 'mini-jupe', 'robe', 'camisole', 'halterneck', 'jumpsuit', 'strappy heels', 'heels',
-            'slingback', "d'orsay", 'pump', 'pumps', 'bra', 'brassière', 'bralette', 'bikini', 'blouse',
-            'soutien-gorge', 'satchel', 'maternity', 'mary jane', 'fille', 'swimsuit', 'ballet', 'sandal',
-            'espadrille', 'mule', 'wedge', 'earring', 'necklace', 'bracelet'
-        ]
-        female_word_q = Q()
-        for fw in female_words:
-            female_word_q |= Q(name__icontains=fw)
+        # Gender preference filtering (removing hardcoded 65/35 developer invention)
+        user_gender = getattr(user, 'gender', None) if user and user.is_authenticated else None
+        if user_gender:
+            user_gender = user_gender.lower()
+            if user_gender in ('female', 'women'):
+                qs = qs.filter(gender__in=['women', 'unisex'])
+            elif user_gender in ('male', 'men'):
+                qs = qs.filter(gender__in=['men', 'unisex'])
 
-        unisex_words = [
-            'watch', 'cap', 'sunglasses', 'card case', 'cardholder', 'wallet', 'porte-cartes',
-            'sneaker', 'trainer', 'basket', 'scarf', 'écharpe', 'foulard', 'belt', 'ceinture',
-            'keyring', 'backpack', 'sac à dos', 'duffle', 'comb', 'blanket', 'socks',
-            'recovery', 'brace', 'sleeve'
-        ]
-        unisex_q = Q()
-        for uw in unisex_words:
-            unisex_q |= Q(name__icontains=uw)
+        return qs
 
-        female_brand_q = (
-            Q(brand__iexact='Needs No Label') |
-            (Q(brand__in=['Twinset', 'Tory Burch Eu', 'Needs no label']) & ~unisex_q)
-        )
-
-        return female_cat_q | female_brand_q | female_word_q
-
-    def _get_user_affinity_brands(self, user):
+    def _get_user_behavior_boosts(self, user):
+        """
+        Aggregate behavioral recommendation scores from recent Events (NO LLM).
+        Weights are configured in settings.MYC_EVENT_WEIGHTS.
+        """
         if not user or not user.is_authenticated:
-            return set()
+            return defaultdict(float), defaultdict(float), defaultdict(float)
 
-        if hasattr(self, '_cached_affinity_brands'):
-            return self._cached_affinity_brands
+        brand_boosts = defaultdict(float)
+        category_boosts = defaultdict(float)
+        color_boosts = defaultdict(float)
 
-        fav_brands = []
-        try:
-            fav_brands = list(ProductFavorite.objects.filter(user=user).values_list('product__brand', flat=True)[:30])
-        except Exception:
-            fav_brands = []
+        event_weights = getattr(settings, 'MYC_EVENT_WEIGHTS', {})
 
-        closet_brands = []
+        # 1. Recent behavioral events (last 500 events)
+        recent_events = (
+            Event.objects.filter(user=user)
+            .select_related('product')
+            .order_by('-created_at')[:500]
+        )
+        for ev in recent_events:
+            w = event_weights.get(ev.event_type, 1.0)
+            if ev.dwell_ms and ev.dwell_ms >= 5000:
+                w += event_weights.get('long_view', 2.0)
+
+            prod = ev.product
+            if prod:
+                if prod.brand:
+                    brand_boosts[prod.brand.strip().lower()] += w
+                if prod.category_norm:
+                    category_boosts[prod.category_norm.strip().lower()] += w
+                if prod.color_primary:
+                    color_boosts[prod.color_primary.strip().lower()] += w
+
+        # 2. Closet affinity brands
         try:
             from closet.models import ClosetItem
-            closet_brands = list(ClosetItem.objects.filter(user=user).exclude(brand='').values_list('brand', flat=True)[:30])
+            closet_brands = list(
+                ClosetItem.objects.filter(user=user)
+                .exclude(Q(brand='') | Q(brand__iexact='N/A'))
+                .order_by('-created_at')
+                .values_list('brand', flat=True)[:30]
+            )
+            for cb in closet_brands:
+                if cb:
+                    brand_boosts[cb.strip().lower()] += 10.0
         except Exception:
-            closet_brands = []
+            pass
 
-        self._cached_affinity_brands = set(b.strip().lower() for b in fav_brands + closet_brands if b and b.strip())
-        return self._cached_affinity_brands
+        # 3. User onboarding preferences
+        if hasattr(user, 'preferences'):
+            prefs = user.preferences
+            for pb in (prefs.preferred_brands or []):
+                if pb and pb.strip():
+                    brand_boosts[pb.strip().lower()] += 25.0
+
+            palette = prefs.color_palette or ''
+            palette_map = {
+                'neutral_minimalist': ['black', 'white', 'grey', 'gray', 'beige', 'navy', 'cream'],
+                'bold_rich': ['red', 'blue', 'green', 'yellow', 'purple', 'burgundy', 'orange'],
+                'soft_romantic': ['pink', 'pastel', 'lavender', 'rose', 'peach', 'mint', 'blush'],
+                'earthy_warm': ['brown', 'tan', 'olive', 'khaki', 'terracotta', 'rust', 'camel'],
+            }
+            for col in palette_map.get(palette, []):
+                color_boosts[col] += 15.0
+
+            if isinstance(prefs.clothing_categories, dict):
+                for sublist in prefs.clothing_categories.values():
+                    if isinstance(sublist, list):
+                        for ckw in sublist:
+                            category_boosts[ckw.lower()] += 15.0
+
+        return brand_boosts, category_boosts, color_boosts
 
     def _apply_relevance_scoring(self, qs, user):
         if not user or not user.is_authenticated:
             return qs.order_by('-id')
 
-        score_parts = []
+        brand_boosts, category_boosts, color_boosts = self._get_user_behavior_boosts(user)
 
-        affinity_brands = self._get_user_affinity_brands(user)
-        if affinity_brands:
-            aff_q = Q()
-            for ab in list(affinity_brands)[:15]:
-                aff_q |= Q(brand__iexact=ab)
-            score_parts.append(Case(When(aff_q, then=Value(25)), default=Value(0), output_field=IntegerField()))
+        score_cases = []
 
-        if hasattr(user, 'preferences'):
-            prefs = user.preferences
-            preferred_brands = prefs.preferred_brands or []
-            palette = prefs.color_palette or ''
-            styles = prefs.style_match or []
-            clothing_cats = prefs.clothing_categories or {}
+        # Top 15 brands by affinity
+        top_brands = sorted(brand_boosts.items(), key=lambda x: x[1], reverse=True)[:15]
+        for b_name, b_score in top_brands:
+            score_cases.append(
+                When(brand__iexact=b_name, then=Value(int(round(b_score))))
+            )
 
-            if preferred_brands:
-                brand_q = Q()
-                for b in preferred_brands:
-                    if b and b.strip():
-                        brand_q |= Q(brand__icontains=b.strip())
-                score_parts.append(Case(When(brand_q, then=Value(40)), default=Value(0), output_field=IntegerField()))
+        # Top 10 categories
+        top_categories = sorted(category_boosts.items(), key=lambda x: x[1], reverse=True)[:10]
+        for c_name, c_score in top_categories:
+            score_cases.append(
+                When(
+                    Q(category_norm__iexact=c_name) | Q(category__icontains=c_name),
+                    then=Value(int(round(c_score)))
+                )
+            )
 
-            palette_color_map = {
-                'neutral_minimalist': ['black', 'white', 'grey', 'gray', 'beige', 'navy', 'cream', 'charcoal', 'off-white'],
-                'bold_rich': ['red', 'blue', 'green', 'yellow', 'purple', 'burgundy', 'orange', 'emerald', 'crimson'],
-                'soft_romantic': ['pink', 'pastel', 'lavender', 'rose', 'peach', 'mint', 'cream', 'blush'],
-                'earthy_warm': ['brown', 'tan', 'olive', 'khaki', 'terracotta', 'rust', 'camel', 'espresso'],
-            }
-            color_keywords = palette_color_map.get(palette, [])
-            if color_keywords:
-                color_q = Q()
-                for c in color_keywords:
-                    color_q |= Q(colour__icontains=c) | Q(name__icontains=c)
-                score_parts.append(Case(When(color_q, then=Value(25)), default=Value(0), output_field=IntegerField()))
+        # Top 10 colors
+        top_colors = sorted(color_boosts.items(), key=lambda x: x[1], reverse=True)[:10]
+        for col_name, col_score in top_colors:
+            score_cases.append(
+                When(
+                    Q(color_primary__iexact=col_name) | Q(colour__icontains=col_name),
+                    then=Value(int(round(col_score)))
+                )
+            )
 
-            category_keywords = []
-            if isinstance(clothing_cats, dict):
-                for cat_list in clothing_cats.values():
-                    if isinstance(cat_list, list):
-                        category_keywords.extend(cat_list)
-            if category_keywords:
-                cat_q = Q()
-                for ck in category_keywords[:12]:
-                    cat_q |= Q(category__icontains=ck) | Q(name__icontains=ck)
-                score_parts.append(Case(When(cat_q, then=Value(20)), default=Value(0), output_field=IntegerField()))
-
-            if styles:
-                style_q = Q()
-                for s in styles:
-                    style_q |= Q(name__icontains=s) | Q(description__icontains=s)
-                score_parts.append(Case(When(style_q, then=Value(15)), default=Value(0), output_field=IntegerField()))
-
-        if score_parts:
-            composite_score = reduce(operator.add, score_parts)
-            return qs.annotate(relevance_score=composite_score).order_by('-relevance_score', '-id')
+        if score_cases:
+            return qs.annotate(
+                relevance_score=Case(*score_cases, default=Value(0), output_field=IntegerField())
+            ).order_by('-relevance_score', '-id')
 
         return qs.order_by('-id')
 
-    @classmethod
-    def _extract_unique_diverse_pool(cls, qs, target_count, skip_count=0, seed=None, max_watches=None):
-        needed_total = skip_count + target_count
-        candidate_limit = max(needed_total * 4, 180)
+    def _generate_ordered_discovery_feed(self, user, seed: int) -> list:
+        """
+        Generate full ordered candidate list for (user, seed).
+        Applies single candidate pool, deduplication, and greedy brand diversity.
+        """
+        candidate_limit = getattr(settings, 'MYC_FEED_CANDIDATES', 600)
+        base_qs = self._get_clean_base_queryset(user)
+        scored_qs = self._apply_relevance_scoring(base_qs, user)
 
-        brands_in_qs = list(qs.order_by().values_list('brand', flat=True).distinct()[:8])
-        if len(brands_in_qs) > 1:
-            per_brand_limit = max(candidate_limit // len(brands_in_qs), 35)
-            candidates = []
-            for b in brands_in_qs:
-                candidates.extend(list(qs.filter(brand=b)[:per_brand_limit]))
-        else:
-            candidates = list(qs[:candidate_limit])
+        candidates = list(scored_qs[:candidate_limit])
+        if not candidates:
+            return []
 
+        # 1. Deduplication by (brand, base_model_name) and (brand, image_url)
         seen_models = set()
         seen_images = set()
         deduped = []
 
         for p in candidates:
             brand_clean = (p.brand or '').strip().lower()
-            model_key = (brand_clean, cls._base_model_name(p.name))
+            model_key = (brand_clean, self._base_model_name(p.name))
             img_key = (brand_clean, p.image_url.strip()) if p.image_url else None
 
             if model_key in seen_models:
@@ -378,153 +428,112 @@ class AffiliateProductForYouView(generics.ListAPIView):
 
             deduped.append(p)
 
-        if seed is not None and deduped:
-            tiers = {}
-            for p in deduped:
-                score = getattr(p, 'relevance_score', 0) or 0
-                tiers.setdefault(score, []).append(p)
+        # 2. Seeded deterministic shuffle within score tiers
+        tiers = defaultdict(list)
+        for p in deduped:
+            score = getattr(p, 'relevance_score', 0) or 0
+            tiers[score].append(p)
 
-            shuffled = []
-            for score in sorted(tiers.keys(), reverse=True):
-                tier_items = list(tiers[score])
-                tier_seed = (int(seed) + int(score) * 7919) % 2147483647
-                rng = random.Random(tier_seed)
-                rng.shuffle(tier_items)
-                shuffled.extend(tier_items)
-            deduped = shuffled
+        shuffled = []
+        for score in sorted(tiers.keys(), reverse=True):
+            items_in_tier = list(tiers[score])
+            tier_seed = (int(seed) + int(score) * 7919) % 2147483647
+            rng = random.Random(tier_seed)
+            rng.shuffle(items_in_tier)
+            shuffled.extend(items_in_tier)
 
-        def is_watch_item(p):
-            b = (p.brand or '').lower()
-            n = (p.name or '').lower()
-            return 'd1 milano' in b or 'watch' in n or 'montre' in n or 'reloj' in n
+        # 3. Greedy diversity pass:
+        # - Max 3 per brand in 20-product window
+        # - Max 30% from one brand in 100-product window
+        # - Prevent adjacent same-brand products
+        # - Max 2 watches per 20 items
+        max_brand_20 = getattr(settings, 'MYC_FEED_MAX_SAME_BRAND_WINDOW_20', 3)
+        max_brand_100_ratio = getattr(settings, 'MYC_FEED_MAX_BRAND_SHARE_WINDOW_100', 0.30)
 
-        if max_watches is not None:
-            page_items = []
-            skipped = 0
-            watches_in_page = 0
+        ordered = []
+        source_pool = list(shuffled)
 
-            for p in deduped:
-                item_is_watch = is_watch_item(p)
-                if skipped < skip_count:
-                    skipped += 1
+        while source_pool:
+            last_brand = (ordered[-1].brand or '').strip().lower() if ordered else None
+            last_was_watch = self._is_watch(ordered[-1]) if ordered else False
+
+            # Check window counts
+            recent_20 = ordered[-20:]
+            recent_20_brands = defaultdict(int)
+            recent_20_watches = 0
+            for item in recent_20:
+                recent_20_brands[(item.brand or '').strip().lower()] += 1
+                if self._is_watch(item):
+                    recent_20_watches += 1
+
+            recent_100 = ordered[-100:]
+            recent_100_brands = defaultdict(int)
+            for item in recent_100:
+                recent_100_brands[(item.brand or '').strip().lower()] += 1
+
+            picked_idx = None
+
+            # Pass 1: Strict brand cap & watch constraints
+            for idx, cand in enumerate(source_pool):
+                cand_brand = (cand.brand or '').strip().lower()
+                cand_is_watch = self._is_watch(cand)
+
+                # Avoid adjacent same-brand items
+                if cand_brand == last_brand and len(source_pool) > 1:
+                    continue
+                # Cap max 3 items per brand in 20-product window
+                if recent_20_brands[cand_brand] >= max_brand_20:
+                    continue
+                # Cap max 30% from one brand in 100-product window
+                if len(recent_100) >= 30 and (recent_100_brands[cand_brand] / len(recent_100)) >= max_brand_100_ratio:
+                    continue
+                # Watch spacing & limit
+                if cand_is_watch and (recent_20_watches >= 2 or last_was_watch):
                     continue
 
-                if item_is_watch:
-                    if watches_in_page < max_watches:
-                        page_items.append(p)
-                        watches_in_page += 1
-                else:
-                    page_items.append(p)
+                picked_idx = idx
+                break
 
-                if len(page_items) >= target_count:
-                    break
-
-            return page_items
-
-        return deduped[skip_count:skip_count + target_count]
-
-    @staticmethod
-    def _is_watch(p):
-        b = (p.brand or '').lower()
-        n = (p.name or '').lower()
-        return 'd1 milano' in b or 'watch' in n or 'montre' in n or 'reloj' in n
-
-    @classmethod
-    def _interleave_diverse(cls, primary_batch, secondary_batch):
-        combined = []
-        p_list = list(primary_batch)
-        s_list = list(secondary_batch)
-        items_since_watch = 99
-
-        while p_list or s_list:
-            last_item = combined[-1] if combined else None
-            last_brand = (last_item.brand or '').strip().lower() if last_item else None
-            last_was_watch = cls._is_watch(last_item) if last_item else False
-
-            sources = []
-            if len(p_list) >= len(s_list):
-                sources = [(p_list, 'p'), (s_list, 's')]
-            else:
-                sources = [(s_list, 's'), (p_list, 'p')]
-
-            chosen_source = None
-            chosen_idx = 0
-            found = False
-
-            for src, _ in sources:
-                if not src:
-                    continue
-                for idx, cand in enumerate(src):
+            # Pass 2: Relax window caps if remaining pool has no brand satisfying Pass 1
+            if picked_idx is None:
+                for idx, cand in enumerate(source_pool):
                     cand_brand = (cand.brand or '').strip().lower()
-                    cand_is_watch = cls._is_watch(cand)
-
-                    if cand_brand != last_brand and not (last_was_watch and cand_is_watch):
-                        if cand_is_watch and items_since_watch < 3 and len(src) > 1:
-                            continue
-                        chosen_source = src
-                        chosen_idx = idx
-                        found = True
-                        break
-                if found:
+                    cand_is_watch = self._is_watch(cand)
+                    if cand_brand == last_brand and len(source_pool) > 1:
+                        continue
+                    if cand_is_watch and last_was_watch:
+                        continue
+                    picked_idx = idx
                     break
 
-            if not found:
-                for src, _ in sources:
-                    if not src:
-                        continue
-                    for idx, cand in enumerate(src):
-                        cand_is_watch = cls._is_watch(cand)
-                        if not (last_was_watch and cand_is_watch):
-                            chosen_source = src
-                            chosen_idx = idx
-                            found = True
-                            break
-                    if found:
-                        break
+            # Pass 3: Ultimate fallback
+            if picked_idx is None:
+                picked_idx = 0
 
-            if not found:
-                chosen_source = p_list if p_list else s_list
-                chosen_idx = 0
+            chosen = source_pool.pop(picked_idx)
+            ordered.append(chosen)
 
-            picked = chosen_source.pop(chosen_idx)
-            combined.append(picked)
-            if cls._is_watch(picked):
-                items_since_watch = 0
-            else:
-                items_since_watch += 1
+        return [p.id for p in ordered]
 
-        return combined
+    def _get_or_create_cached_feed_ids(self, user, seed: int, refresh: bool) -> list:
+        user_key = f"user_{user.id}" if user and user.is_authenticated else "anon"
+        cache_key = f"feed:{user_key}:{seed}"
 
-    @staticmethod
-    def _diversify_brands(items):
-        if len(items) <= 2:
-            return items
+        if not refresh:
+            cached_ids = cache.get(cache_key)
+            if cached_ids is not None:
+                return cached_ids
 
-        diversified = []
-        remaining = list(items)
-
-        while remaining:
-            last_brand = diversified[-1].brand.strip().lower() if diversified else None
-            chosen_idx = 0
-            if last_brand is not None:
-                for idx, candidate in enumerate(remaining):
-                    if candidate.brand.strip().lower() != last_brand:
-                        chosen_idx = idx
-                        break
-            diversified.append(remaining.pop(chosen_idx))
-
-        return diversified
+        ordered_ids = self._generate_ordered_discovery_feed(user, seed)
+        ttl = getattr(settings, 'MYC_FEED_CACHE_TTL', 93600)
+        cache.set(cache_key, ordered_ids, timeout=ttl)
+        return ordered_ids
 
     def get_queryset(self):
-        user = self.request.user
-        qs = self._get_clean_base_queryset()
-        return self._apply_relevance_scoring(qs, user)
+        return self._get_clean_base_queryset(self.request.user)
 
     def paginate_queryset(self, queryset):
         user = self.request.user
-        gender = getattr(user, 'gender', None) if user and user.is_authenticated else None
-        if gender:
-            gender = gender.lower()
 
         page_size = self.paginator.get_page_size(self.request) or getattr(self.paginator, 'page_size', 20) or 20
         page_number_str = self.request.query_params.get(self.paginator.page_query_param, 1)
@@ -544,80 +553,36 @@ class AffiliateProductForYouView(generics.ListAPIView):
             try:
                 seed = int(seed_param)
             except (ValueError, TypeError):
-                seed = abs(hash(str(seed_param))) % 1000000
+                # Deterministic SHA-256 hash instead of process-dependent hash()
+                seed = int(hashlib.sha256(str(seed_param).encode('utf-8')).hexdigest()[:8], 16) % 1000000
 
         if hasattr(self.paginator, 'seed'):
             self.paginator.seed = seed
 
-        base_qs = self._get_clean_base_queryset()
+        # Get or generate cached ordered product IDs
+        ordered_ids = self._get_or_create_cached_feed_ids(user, seed, refresh=refresh_param)
 
-        if gender not in ('male', 'female'):
-            skip_count = (page_number - 1) * page_size
-            scored_qs = self._apply_relevance_scoring(base_qs, user)
-            batch = self._extract_unique_diverse_pool(scored_qs, page_size, skip_count, seed=seed, max_watches=2)
-            diversified = self._diversify_brands(batch)
-
-            from django.core.paginator import Paginator, Page
-            total_count = scored_qs.count()
-            paginator = Paginator(range(total_count), page_size)
-            try:
-                self.paginator.page = paginator.page(page_number)
-            except Exception:
-                self.paginator.page = Page([], page_number, paginator)
-            self.paginator.request = self.request
-            return diversified
-
-        female_filter = self._get_female_filter()
-        scored_female = self._apply_relevance_scoring(base_qs.filter(female_filter), user)
-        scored_male = self._apply_relevance_scoring(base_qs.exclude(female_filter), user)
-
-        if gender == 'male':
-            primary_qs = scored_male
-            secondary_qs = scored_female
-            max_watches = 2
-        else:
-            primary_qs = scored_female
-            secondary_qs = scored_male
-            max_watches = 1
-
-        primary_target = int(round(page_size * 0.65))
-        secondary_target = page_size - primary_target
-
-        p_skip = (page_number - 1) * primary_target
-        s_skip = (page_number - 1) * secondary_target
-
-        primary_batch = self._extract_unique_diverse_pool(
-            primary_qs, primary_target, p_skip, seed=seed, max_watches=max_watches
-        )
-        secondary_batch = self._extract_unique_diverse_pool(
-            secondary_qs, secondary_target, s_skip, seed=seed
-        )
-
-        if len(primary_batch) < primary_target:
-            needed = primary_target - len(primary_batch)
-            extra_sec = self._extract_unique_diverse_pool(
-                secondary_qs, needed, s_skip + len(secondary_batch), seed=seed
-            )
-            secondary_batch.extend(extra_sec)
-        elif len(secondary_batch) < secondary_target:
-            needed = secondary_target - len(secondary_batch)
-            extra_prim = self._extract_unique_diverse_pool(
-                primary_qs, needed, p_skip + len(primary_batch), seed=seed, max_watches=max_watches
-            )
-            primary_batch.extend(extra_prim)
-
-        interleaved = self._interleave_diverse(primary_batch, secondary_batch)
-
-        total_count = primary_qs.count() + secondary_qs.count()
-        from django.core.paginator import Paginator, Page
+        total_count = len(ordered_ids)
         paginator = Paginator(range(total_count), page_size)
         try:
             self.paginator.page = paginator.page(page_number)
         except Exception:
             self.paginator.page = Page([], page_number, paginator)
-
         self.paginator.request = self.request
-        return interleaved
+
+        start_idx = (page_number - 1) * page_size
+        end_idx = start_idx + page_size
+        page_ids = ordered_ids[start_idx:end_idx]
+
+        if not page_ids:
+            return []
+
+        # Fetch products preserving exact order of page_ids
+        products = list(AffiliateProduct.objects.filter(id__in=page_ids))
+        prod_map = {p.id: p for p in products}
+        ordered_page = [prod_map[pid] for pid in page_ids if pid in prod_map]
+
+        return ordered_page
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -653,24 +618,25 @@ class AffiliateProductForYouView(generics.ListAPIView):
             response = Response(serializer.data)
 
         user = request.user
+        is_personalized = bool(user and user.is_authenticated)
+
         prefs_summary = None
-        gender_summary = getattr(user, 'gender', None) if user and user.is_authenticated else None
-        if user and user.is_authenticated and hasattr(user, 'preferences'):
+        if is_personalized and hasattr(user, 'preferences'):
             prefs = user.preferences
             prefs_summary = {
                 'palette': prefs.color_palette or 'neutral_minimalist',
                 'styles': prefs.style_match or ['minimalist'],
                 'preferred_brands': prefs.preferred_brands or []
             }
-        
+
         response.data['user_taste_profile'] = prefs_summary
-        if gender_summary in ('male', 'female'):
-            response.data['gender_balance'] = {
-                'user_gender': gender_summary,
-                'primary_ratio': '65%',
-                'secondary_ratio': '35%',
-            }
+        response.data['personalized'] = is_personalized
         if getattr(self.paginator, 'seed', None) is not None:
             response.data['seed'] = self.paginator.seed
-        response.data['message'] = "Personalized 'For You' products curated based on your Style DNA and balanced preferences."
+
+        if is_personalized:
+            response.data['message'] = "Personalized 'For You' discovery feed curated based on your taste profile and behavioral signals."
+        else:
+            response.data['message'] = "Discover trending fashion items. Sign in to personalize your discovery feed."
+
         return response
