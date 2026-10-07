@@ -2,117 +2,133 @@ import os
 import io
 import uuid
 import logging
-from PIL import Image
 from django.conf import settings
-from django.core.files.storage import default_storage
-from django.core.files.base import ContentFile
+from django.core.cache import cache
+from django.utils import timezone
 from users.utils import build_absolute_media_url
+from closet.utils import validate_and_sanitize_image, persist_sanitized_image
+from closet.exceptions import AIServiceUnavailableError, AIDailyLimitExceededError
+from closet.models import FitCheck, ClosetItem
 
 from .gemini_client import call_gemini_vision_api
-from .geometry import analyze_multi_item_outfit
 
 logger = logging.getLogger(__name__)
 
 
-def scan_clothing_image(image_file, request=None):
+def scan_clothing_image(image_file, request=None, user=None):
     """
-    Main entry point for AI clothing scan.
-    1. Saves image to closet media storage and builds full absolute HTTPS URL.
-    2. Runs Gemini Vision if API key is present; otherwise runs built-in fashion heuristics.
-    3. Handles both single pieces and multi-item full-body outfits (cap, shirt, pants, watch, shoes).
-    4. Enforces brand='N/A' when brand cannot be proven with high confidence.
-    5. Returns pre-fill metadata dictionary for the mobile Add Cloth screen.
+    Production-grade entry point for AI clothing scan:
+    1. Enforces global kill-switch flag (AI_SCANNER_ENABLED) -> HTTP 503 if disabled.
+    2. Validates user daily quota (MYC_AI_SCAN_DAILY_LIMIT) -> HTTP 429 if exceeded.
+    3. In-memory validation, EXIF stripping, downscaling to <= 1024px, and SHA-256 computation (C-01, C-06).
+    4. Calls official Vision LLM with European taxonomy and EUR pricing.
+    5. Never fabricates fake garments or watches if LLM fails (C-04) — fails closed with 503.
+    6. Persists sanitized photo only upon valid garment identification and links to FitCheck audit row (C-01, C-02).
+    7. Detects duplicate photos via photo_sha256 for points farming idempotency (C-07).
     """
-    image_file.seek(0)
-    image_bytes = image_file.read()
-    image_file.seek(0)
+    # 1. Kill-switch check
+    if not getattr(settings, 'AI_SCANNER_ENABLED', True):
+        logger.warning("AI Scan rejected: AI_SCANNER_ENABLED is False.")
+        raise AIServiceUnavailableError("AI garment scanner is temporarily disabled for scheduled maintenance.")
 
-    # Save to media/closet_items/
-    ext = os.path.splitext(getattr(image_file, 'name', 'scan.jpg'))[1].lower()
-    if ext not in ('.jpg', '.jpeg', '.png', '.webp'):
-        ext = '.jpg'
+    current_user = user or (request.user if request and getattr(request, 'user', None) and request.user.is_authenticated else None)
 
-    file_name = f"closet_items/ai_scan_{uuid.uuid4().hex[:16]}{ext}"
-    saved_path = default_storage.save(file_name, ContentFile(image_bytes))
-    absolute_image_url = build_absolute_media_url(saved_path, request=request)
+    # 2. Per-user daily scan quota enforcement (C-05)
+    if current_user and current_user.is_authenticated:
+        daily_limit = getattr(settings, 'MYC_AI_SCAN_DAILY_LIMIT', 25)
+        today_str = timezone.now().strftime('%Y-%m-%d')
+        daily_cache_key = f"ai_scan_daily_{current_user.id}_{today_str}"
+        current_count = cache.get(daily_cache_key, 0)
+        if current_count >= daily_limit:
+            logger.warning(f"User {current_user.id} exceeded daily AI scan limit ({current_count}/{daily_limit}).")
+            raise AIDailyLimitExceededError(f"Daily AI scan limit of {daily_limit} scans reached. Please try again tomorrow.")
 
-    # 1. Try OpenAI GPT-4o Vision (Official engine from dress-analyzer-ai team)
-    mime = 'image/jpeg' if ext in ('.jpg', '.jpeg') else ('image/png' if ext == '.png' else 'image/webp')
+    # 3. In-memory image validation, EXIF stripping & downscaling (C-01, C-06)
+    sanitized_bytes, photo_sha256, mime = validate_and_sanitize_image(image_file)
+
+    # 4. Check for existing item owned by user with exact same photo_sha256 (C-07)
+    existing_item = None
+    if current_user and current_user.is_authenticated:
+        existing_item = ClosetItem.objects.filter(user=current_user, photo_sha256=photo_sha256).first()
+
+    # 5. Execute Vision LLM pipeline through AIGateway (Safety, EU routing, Token & Cost tracking)
     garment_data = None
-
     try:
-        from closet.openai_analyzer import analyze_dress_with_openai
-        garment_data = analyze_dress_with_openai(image_bytes, mime_type=mime)
-    except TimeoutError:
+        from closet.ai.gateway import AIGateway
+        from closet.ai.safety import AISafetyBlockedError, AISafetyError
+        garment_data = AIGateway.execute_photo_analysis(sanitized_bytes, mime_type=mime, user=current_user)
+    except (TimeoutError, AIServiceUnavailableError, AISafetyBlockedError, AISafetyError):
         raise
     except Exception as e:
-        logger.warning(f"Error invoking OpenAI dress analyzer: {e}")
+        logger.error(f"AI Gateway photo analysis failed: {e}", exc_info=True)
 
-    # If the image was inspected and is NOT a garment, return immediately
-    if garment_data and not garment_data.get('is_garment', True):
+    # Secondary fallback: Gemini Vision if configured
+    if not garment_data:
+        gemini_key = getattr(settings, 'GEMINI_API_KEY', None)
+        if gemini_key:
+            try:
+                garment_data = call_gemini_vision_api(sanitized_bytes, mime, gemini_key)
+            except Exception as e:
+                logger.error(f"Gemini vision fallback failed: {e}", exc_info=True)
+
+    # Strict production rule (C-04): Never fabricate fake garments on provider failure!
+    if not garment_data:
+        raise AIServiceUnavailableError("AI scanning service is currently experiencing upstream provider delays. Please try again in a few moments.")
+
+    # If inspected and verified as NOT a garment, return immediately without storing any file to disk (C-01)
+    if not garment_data.get('is_garment', True):
         return {
             "is_garment": False,
             "message": garment_data.get("message") or "The uploaded image does not appear to be a clothing item. Please capture or upload a clear photo of a garment.",
             "notes": garment_data.get("notes", ""),
+            "photo_sha256": photo_sha256,
         }
 
-    # 2. Try Gemini Vision if OpenAI did not return data
-    if not garment_data:
-        gemini_key = getattr(settings, 'GEMINI_API_KEY', None)
-        if gemini_key:
-            garment_data = call_gemini_vision_api(image_bytes, mime, gemini_key)
+    # 6. Valid garment detected: Persist sanitized JPEG to storage and create FitCheck audit record
+    saved_path = persist_sanitized_image(sanitized_bytes, folder="closet_items", prefix="ai_scan_")
+    absolute_image_url = build_absolute_media_url(saved_path, request=request)
 
-    # 3. Fallback to Built-in Computer Vision & Fashion Heuristics Engine
-    if not garment_data:
+    fit_check = None
+    if current_user and current_user.is_authenticated:
         try:
-            pil_img = Image.open(io.BytesIO(image_bytes))
-            width, height = pil_img.size
-            garment_data = analyze_multi_item_outfit(pil_img, width, height)
+            fit_check = FitCheck.objects.create(
+                user=current_user,
+                photo=saved_path,
+                photo_sha256=photo_sha256,
+                status='dedupe_hit' if existing_item else 'tagged',
+                raw_tagging=garment_data,
+                tagging_model=getattr(settings, 'LLM_MODEL', 'gpt-4o'),
+                tagged_at=timezone.now()
+            )
+            # Increment daily quota counter
+            today_str = timezone.now().strftime('%Y-%m-%d')
+            daily_cache_key = f"ai_scan_daily_{current_user.id}_{today_str}"
+            try:
+                if cache.get(daily_cache_key) is None:
+                    cache.set(daily_cache_key, 1, timeout=86400)
+                else:
+                    cache.incr(daily_cache_key)
+            except Exception:
+                pass
         except Exception as e:
-            logger.error(f"Error in fashion heuristics engine: {e}")
-            garment_data = {
-                "is_full_outfit": False,
-                "detected_items": [{
-                    "slot": "top",
-                    "category": "top",
-                    "name": "Classic Wardrobe Essential",
-                    "color": "Neutral",
-                    "brand": "N/A",
-                    "price": "35.00",
-                    "style_vibe": "Everyday Casual",
-                    "confidence": 0.85,
-                }],
-                "total_pieces_detected": 1,
-                "name": "Classic Wardrobe Essential",
-                "category": "top",
-                "color": "Neutral",
-                "brand": "N/A",
-                "price": "35.00",
-                "style_vibe": "Everyday Casual",
-                "confidence": 0.85,
-            }
+            logger.warning(f"Could not create FitCheck audit record: {e}")
 
-    # Ensure brand is strictly 'N/A' if not verified
-    if not garment_data.get('brand') or garment_data.get('brand').lower() in ('unknown', 'none', 'generic', 'n/a', 'null'):
+    # Ensure brand is strictly 'N/A' if unverified
+    if not garment_data.get('brand') or garment_data.get('brand').lower() in ('unknown', 'none', 'generic', 'n/a', 'null', 'undefined'):
         garment_data['brand'] = "N/A"
 
-    # Attach visual match score
-    confidence = float(garment_data.get('confidence', 0.92))
-    visual_match_pct = int(round(confidence * 100))
-    if visual_match_pct > 98:
-        visual_match_pct = 98
-    if visual_match_pct < 85:
-        visual_match_pct = 88
+    # Real visual match score reflecting model confidence
+    confidence = float(garment_data.get('confidence', 0.90))
+    visual_match_pct = max(50, min(100, int(round(confidence * 100))))
 
     # Find similar items the user already owns in their wardrobe
     similar_wardrobe_items = []
-    if request and getattr(request, 'user', None) and getattr(request.user, 'is_authenticated', False):
+    if current_user and current_user.is_authenticated:
         try:
-            from closet.models import ClosetItem
             similar_qs = ClosetItem.objects.filter(
-                user=request.user,
+                user=current_user,
                 category=garment_data.get('category', 'top')
-            )[:3]
+            ).exclude(photo_sha256=photo_sha256)[:3]
             for it in similar_qs:
                 similar_wardrobe_items.append({
                     "id": it.id,
@@ -135,6 +151,7 @@ def scan_clothing_image(image_file, request=None):
         "brand": garment_data.get("brand"),
         "brand_info": garment_data.get("brand_info"),
         "price": garment_data.get("price"),
+        "currency": "EUR",
         "estimated_price": garment_data.get("estimated_price"),
         "style_vibe": garment_data.get("style_vibe"),
         "visual_match_score": visual_match_pct,
@@ -142,6 +159,10 @@ def scan_clothing_image(image_file, request=None):
         "notes": garment_data.get("notes"),
         "similar_wardrobe_items": similar_wardrobe_items,
         "saved_image_path": saved_path,
+        "photo_sha256": photo_sha256,
+        "fit_check_id": str(fit_check.id) if fit_check else None,
+        "is_duplicate": bool(existing_item),
+        "existing_item_id": existing_item.id if existing_item else None,
         "is_garment": True,
         "is_full_outfit": bool(garment_data.get("is_full_outfit", False)),
     }
@@ -149,3 +170,4 @@ def scan_clothing_image(image_file, request=None):
         clean_result["detected_items"] = garment_data.get("detected_items")
 
     return clean_result
+

@@ -19,6 +19,13 @@ from .scanner_views import (
     scan_clothing_image,
 )
 
+from .fit_check_views import (
+    FitCheckCreateView,
+    FitCheckDetailView,
+    ConsentRecordView,
+    LLMCostLogListView,
+)
+
 __all__ = [
     'ClosetItemListCreateView',
     'ClosetItemDetailView',
@@ -28,4 +35,9 @@ __all__ = [
     'ClosetAuditView',
     'ClosetAIScanView',
     'scan_clothing_image',
+    'FitCheckCreateView',
+    'FitCheckDetailView',
+    'ConsentRecordView',
+    'LLMCostLogListView',
 ]
+

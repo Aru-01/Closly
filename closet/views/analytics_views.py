@@ -15,10 +15,12 @@ logger = logging.getLogger(__name__)
 
 
 def get_wardrobe_analytics(user, items):
+    from django.conf import settings
     items_list = list(items) if not isinstance(items, list) else items
     total_items = len(items_list)
     now = timezone.now()
-    fifteen_days_ago = now - timedelta(days=15)
+    ghost_days = getattr(settings, 'MYC_GHOST_DAYS', 30)
+    ghost_cutoff = now - timedelta(days=ghost_days)
 
     # Empty wardrobe handling: accurate 0% metrics without fake ratings
     if total_items == 0:
@@ -45,15 +47,16 @@ def get_wardrobe_analytics(user, items):
             'items_list': []
         }
 
-    # Ghost pieces: never worn (times_worn == 0) OR not worn in the last 15 days
+    # Ghost pieces: never worn (times_worn == 0) OR not worn in the configurable ghost window (default 30 days C-13)
     ghost_items = [
         it for it in items_list
-        if it.times_worn == 0 or it.last_worn_at is None or it.last_worn_at < fifteen_days_ago
+        if it.times_worn == 0 or it.last_worn_at is None or it.last_worn_at < ghost_cutoff
     ]
     ghost_count = len(ghost_items)
     active_count = max(0, total_items - ghost_count)
 
     utilization_rate = (active_count / total_items * 100)
+
 
     # Dynamic wardrobe health grades & titles
     if utilization_rate >= 85:
@@ -109,7 +112,7 @@ def get_wardrobe_analytics(user, items):
             'wasted_investment_cost': round(wasted_investment, 2),
             'space_waste_percentage': space_waste_pct,
             'co2_saved_kg': co2_saved,
-            'summary': f"{ghost_count} unworn pieces represent {wasted_carbon_kg} kg of dormant CO2 and ${wasted_investment:,.2f} in idle closet space."
+            'summary': f"{ghost_count} unworn pieces represent {wasted_carbon_kg} kg of dormant CO2 and €{wasted_investment:,.2f} in idle closet space."
         },
         'ghost_items': ghost_items,
         'ghost_items_qs': items if hasattr(items, 'filter') else ClosetItem.objects.filter(user=user, id__in=[it.id for it in ghost_items]),
@@ -155,13 +158,31 @@ class ClosetScoreDashboardView(APIView):
         styles = pref.style_match if pref and pref.style_match else []
         vibes = pref.what_do_you_dress_for if pref and pref.what_do_you_dress_for else []
 
-        style_dna = {
-            'minimal': 72 if 'minimalist' in styles else 62,
-            'classic': 69 if 'classic' in styles else 58,
-            'relaxed': 88 if ('weekend' in vibes or 'home-lounge' in vibes) else 74,
-            'streetwear': 65 if 'streetwear' in styles else 52,
-            'sporty': 68 if 'sporty' in styles or 'active-gym' in vibes else 48,
-        }
+        # Dynamic Style DNA derived from actual wardrobe items and style preferences (C-13)
+        if not items:
+            style_dna = {
+                'minimal': 10 if 'minimalist' in styles else 0,
+                'classic': 10 if 'classic' in styles else 0,
+                'relaxed': 10 if ('weekend' in vibes or 'home-lounge' in vibes) else 0,
+                'streetwear': 10 if 'streetwear' in styles else 0,
+                'sporty': 10 if ('sporty' in styles or 'active-gym' in vibes) else 0,
+            }
+        else:
+            total_it = len(items)
+            minimal_count = sum(1 for it in items if (it.color or '').lower() in ('black', 'white', 'grey', 'gray', 'beige', 'navy blue', 'neutral') or 'minimal' in (it.style_vibe or '').lower())
+            classic_count = sum(1 for it in items if it.category in ('top', 'bottom', 'dresses_outerwear') or 'classic' in (it.style_vibe or '').lower() or 'elevated' in (it.style_vibe or '').lower())
+            relaxed_count = sum(1 for it in items if 'casual' in (it.style_vibe or '').lower() or 'relaxed' in (it.style_vibe or '').lower() or it.category in ('top', 'bottom'))
+            street_count = sum(1 for it in items if 'streetwear' in (it.style_vibe or '').lower() or it.category in ('shoes', 'accessories'))
+            sporty_count = sum(1 for it in items if 'sport' in (it.style_vibe or '').lower() or 'athletic' in (it.style_vibe or '').lower() or it.category == 'shoes')
+
+            style_dna = {
+                'minimal': min(100, int(round((minimal_count / total_it) * 80 + (15 if 'minimalist' in styles else 5)))),
+                'classic': min(100, int(round((classic_count / total_it) * 80 + (15 if 'classic' in styles else 5)))),
+                'relaxed': min(100, int(round((relaxed_count / total_it) * 80 + (15 if ('weekend' in vibes or 'home-lounge' in vibes) else 5)))),
+                'streetwear': min(100, int(round((street_count / total_it) * 80 + (15 if 'streetwear' in styles else 5)))),
+                'sporty': min(100, int(round((sporty_count / total_it) * 80 + (15 if ('sporty' in styles or 'active-gym' in vibes) else 5)))),
+            }
+
 
         # 0 pieces in wardrobe: return realistic 0 score with guidance
         if not items:

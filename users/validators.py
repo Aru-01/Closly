@@ -199,6 +199,20 @@ def validate_image_file(image, max_mb=30):
                 code='invalid_image_format'
             )
 
+    # Verify image integrity and magic bytes with Pillow
+    if hasattr(image, 'read'):
+        try:
+            image.seek(0)
+            from PIL import Image
+            img = Image.open(image)
+            img.verify()
+            image.seek(0)
+        except Exception:
+            raise ValidationError(
+                _('Uploaded file is corrupted or not a valid image format.'),
+                code='corrupted_image'
+            )
+
     # Sanitize and shorten filename if it is too long (prevents OS and storage length issues)
     if hasattr(image, 'name') and image.name and len(image.name) > 80:
         import os
@@ -206,6 +220,7 @@ def validate_image_file(image, max_mb=30):
         image.name = f"{base[:40]}_{abs(hash(base)) % 1000000}{ext}"
 
     return image
+
 
 
 def validate_profile_picture(image):

@@ -46,6 +46,7 @@ urllib3==2.5.0
 django-cors-headers
 deep-translator
 psycopg2-binary>=2.9.9
+psycopg[binary]>=3.1.18
 daphne>=4.1.0
 channels>=4.0.0
 channels-redis>=4.2.0

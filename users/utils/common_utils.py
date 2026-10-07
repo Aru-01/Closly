@@ -76,7 +76,7 @@ def get_minimized_user_agent(user_agent):
     return hashlib.sha256(user_agent.encode('utf-8')).hexdigest()[:16]
 
 
-def record_user_consent(user, kind, granted=True, request=None):
+def record_user_consent(user, kind, granted=True, request=None, version='1.0'):
     """
     Records an auditable Consent event (ToS, privacy, photo AI processing, push notifications).
     Does not rely on a boolean field on User (U-21, Consent System).
@@ -92,10 +92,33 @@ def record_user_consent(user, kind, granted=True, request=None):
         user=user,
         kind=kind,
         granted=granted,
+        version=version or '1.0',
         occurred_at=timezone.now(),
         ip_address=ip,
         user_agent=ua
     )
+
+
+def has_user_consent(user, kind='photo_ai_processing', min_version=None):
+    """
+    Checks if user has actively granted consent for a specific category.
+    Returns False if no consent is recorded, or if the latest consent record is granted=False.
+    Server-side enforced gate for GDPR Article 7 compliance.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    from users.models import Consent
+    latest = Consent.objects.filter(user=user, kind=kind).order_by('-occurred_at').first()
+    if not latest or not latest.granted:
+        return False
+    if min_version and hasattr(latest, 'version') and latest.version:
+        try:
+            from packaging import version as pkg_version
+            if pkg_version.parse(latest.version) < pkg_version.parse(min_version):
+                return False
+        except Exception:
+            pass
+    return True
 
 
 
@@ -183,10 +206,14 @@ def purge_and_anonymize_user(user):
     with transaction.atomic():
         # 3. Purge private user content
         try:
-            from closet.models import ClosetItem
-            ClosetItem.objects.filter(user=user).delete()
+            from closet.models import ClosetItem, FitCheck
+            for item in ClosetItem.objects.filter(user=user):
+                item.delete()
+            for fc in FitCheck.objects.filter(user=user):
+                fc.delete()
         except Exception:
             pass
+
 
         try:
             from social.models import TodayOutfit, OutfitLike, Story, StoryView, StoryLike, UserFollow
