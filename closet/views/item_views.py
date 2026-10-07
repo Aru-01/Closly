@@ -57,12 +57,20 @@ class ClosetItemListCreateView(generics.ListCreateAPIView):
         item = serializer.save(user=self.request.user)
         try:
             from rewards.services import award_points
-            award_points(
+            from rewards.models import RewardPointTransaction
+            from django.conf import settings
+            daily_awards = RewardPointTransaction.objects.filter(
                 user=self.request.user,
                 action_type='add_closet_item',
-                description=f"Added '{item.name}' to closet",
-                reference_id=str(item.id)
-            )
+                created_at__date=timezone.now().date()
+            ).count()
+            if daily_awards < getattr(settings, 'MYC_CLOSET_ITEM_POINTS_DAILY_LIMIT', 10):
+                award_points(
+                    user=self.request.user,
+                    action_type='add_closet_item',
+                    description=f"Added '{item.name}' to closet",
+                    reference_id=str(item.id)
+                )
         except Exception as e:
             logger.warning(f"Error awarding points for adding closet item: {e}")
 
@@ -134,6 +142,10 @@ class ClosetItemDetailView(generics.RetrieveUpdateDestroyAPIView):
             'data': serializer.data
         }, status=status.HTTP_200_OK)
 
+    def perform_destroy(self, instance):
+        # Explicit deletion invokes model.delete() and triggers media purge (C-02)
+        instance.delete()
+
 
 @extend_schema(
     tags=["Closet & Digital Wardrobe"],
@@ -147,7 +159,7 @@ class ClosetItemDetailView(generics.RetrieveUpdateDestroyAPIView):
 class WearTodayView(APIView):
     """
     API endpoint to record today's wear for a specific cloth item.
-    Increments times_worn counter and updates last_worn_at.
+    Atomically increments times_worn counter using F() expressions and updates last_worn_at.
     
     POST /api/closet/items/<id>/wear-today/
     """
@@ -155,11 +167,14 @@ class WearTodayView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def post(self, request, pk):
+        from django.db import models
         try:
             item = ClosetItem.objects.get(pk=pk, user=request.user)
-            item.times_worn += 1
-            item.last_worn_at = timezone.now()
-            item.save()
+            ClosetItem.objects.filter(pk=pk, user=request.user).update(
+                times_worn=models.F('times_worn') + 1,
+                last_worn_at=timezone.now()
+            )
+            item.refresh_from_db()
 
             serializer = ClosetItemSerializer(item, context={'request': request})
             return Response({
@@ -172,3 +187,4 @@ class WearTodayView(APIView):
                 'success': False,
                 'message': 'Cloth item not found in your closet.'
             }, status=status.HTTP_404_NOT_FOUND)
+

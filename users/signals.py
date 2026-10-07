@@ -30,12 +30,17 @@ def register_media_cleanup_signals():
     Connect pre_delete cleanup handlers for all media-storing models across apps.
     """
     try:
-        from closet.models import ClosetItem
+        from closet.models import ClosetItem, FitCheck
         @receiver(pre_delete, sender=ClosetItem, weak=False)
         def cleanup_closet_item_image(sender, instance, **kwargs):
             _delete_file_safely(instance.image)
+
+        @receiver(pre_delete, sender=FitCheck, weak=False)
+        def cleanup_fit_check_photo(sender, instance, **kwargs):
+            _delete_file_safely(instance.photo)
     except Exception as e:
-        logger.debug(f"Could not register ClosetItem media signal: {e}")
+        logger.debug(f"Could not register ClosetItem/FitCheck media signal: {e}")
+
 
     try:
         from social.models import TodayOutfit, OutfitImage, Story, DirectMessage

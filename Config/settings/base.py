@@ -364,6 +364,12 @@ BACKEND_URL = config("BACKEND_URL", default="")
 FORCE_HTTPS_MEDIA_URL = config("FORCE_HTTPS_MEDIA_URL", default=not DEBUG, cast=bool)
 
 # AI Vision Configuration
+AI_SCANNER_ENABLED = config("AI_SCANNER_ENABLED", default=True, cast=bool)
+AI_BRAND_SEARCH_ENABLED = config("AI_BRAND_SEARCH_ENABLED", default=False, cast=bool)
+MYC_AI_SCAN_DAILY_LIMIT = config("MYC_AI_SCAN_DAILY_LIMIT", default=25, cast=int)
+MYC_GHOST_DAYS = config("MYC_GHOST_DAYS", default=30, cast=int)
+MYC_CLOSET_ITEM_POINTS_DAILY_LIMIT = config("MYC_CLOSET_ITEM_POINTS_DAILY_LIMIT", default=10, cast=int)
+
 GEMINI_API_KEY = config("GEMINI_API_KEY", default=None)
 LLM_API_KEY = config("LLM_API_KEY", default="")
 LLM_BASE_URL = config("LLM_BASE_URL", default=None)
@@ -376,3 +382,20 @@ DRESS_ANALYZER_DIR = BASE_DIR / "dress-analyzer-ai"
 AI_SCAN_CONCURRENCY_LIMIT = config("AI_SCAN_CONCURRENCY_LIMIT", default=15, cast=int)
 AI_SCAN_QUEUE_TIMEOUT = config("AI_SCAN_QUEUE_TIMEOUT", default=35, cast=int)
 AI_SCAN_CACHE_TTL = config("AI_SCAN_CACHE_TTL", default=600, cast=int)
+
+# EU Data Routing & AI Gateway Configuration (03_closet_ai_scanner C-03, §7.4)
+AI_DATA_REGION = config("AI_DATA_REGION", default="EU")
+AI_PHOTO_PROVIDER = config("AI_PHOTO_PROVIDER", default="openai")
+AI_PROVIDER_ALLOWLIST = [
+    p.strip()
+    for p in config("AI_PROVIDER_ALLOWLIST", default="openai,openai_eu,anthropic_eu,vertex_eu,mock").split(",")
+    if p.strip()
+]
+OPENAI_EU_BASE_URL = config("OPENAI_EU_BASE_URL", default="")
+AI_SAFETY_GATE_ENABLED = config("AI_SAFETY_GATE_ENABLED", default=True, cast=bool)
+AI_SAFETY_PROVIDER = config("AI_SAFETY_PROVIDER", default="openai")  # openai, sightengine, internal
+SIGHTENGINE_API_USER = config("SIGHTENGINE_API_USER", default="")
+SIGHTENGINE_API_SECRET = config("SIGHTENGINE_API_SECRET", default="")
+AI_SAFETY_THRESHOLD = config("AI_SAFETY_THRESHOLD", default=0.75, cast=float)
+
+

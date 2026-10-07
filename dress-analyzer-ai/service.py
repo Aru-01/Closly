@@ -7,62 +7,89 @@ from schemas import DressAnalysisResult
 from apify_client_wrapper import search_brand_from_logo_text
 
 
-ANALYSIS_PROMPT = """You are a fashion image analysis expert. Carefully examine this dress image and respond according to the JSON schema below. Return ONLY valid JSON — no extra text, explanation, or markdown code fences.
+ANALYSIS_PROMPT = """You are a professional fashion AI stylist and garment analysis expert. Carefully examine this garment image and respond strictly according to the JSON schema below. Return ONLY valid JSON — no markdown code fences, no conversational filler.
 
 JSON schema:
 {
-  "garment_type": "tshirt | shirt | pant | plazoo | jeans | saree | kurti | dress | skirt | jacket | other",
+  "is_garment": true,
+  "garment_type": "t-shirt | shirt | polo | blouse | sweater | hoodie | sweatshirt | cardigan | blazer | suit | jacket | coat | jeans | pants | trousers | shorts | skirt | dress | jumpsuit | sneakers | boots | shoes | loafers | sandals | heels | bag | handbag | backpack | hat | cap | beanie | belt | scarf | sunglasses | watch | jewelry | accessory | other",
   "gender": "male | female | unisex",
   "primary_color": "string",
   "secondary_colors": ["string"],
-  "pattern": "solid | striped | checked | floral | printed | polka-dot | abstract | other",
+  "pattern": "solid | striped | checked | floral | printed | polka-dot | abstract | graphic | other",
   "brand": {
     "name": "string",
-    "detected_from_logo": true/false,
-    "confidence": "high | medium | low | assumed",
+    "detected_from_logo": true,
+    "confidence": "high | medium | low | none",
     "logo_text": "string or null",
     "logo_symbol": "string or null"
   },
   "estimated_price": {
-    "currency": "USD",
+    "currency": "EUR",
     "amount": number,
     "range_min": number,
     "range_max": number,
-    "confidence": "high | medium | low | assumed"
+    "confidence": "high | medium | low"
   },
   "notes": "string"
 }
 
-Rules for logo_text vs logo_symbol:
-- "logo_text": literal readable letters/words physically visible on the garment. Null if none.
-- "logo_symbol": a described icon/graphic shape logo with no letters (e.g. "diamond shape", "checkmark swoosh"). Describe ONLY the shape/geometry you see — do not name a brand here, and do not guess a brand in "brand.name" based on a vague shape unless you are genuinely highly confident.
-
-Rules for brand.name:
-- Provide your best guess, but be conservative: only claim a specific famous brand if you are genuinely confident, not just because a shape loosely resembles something.
-- Never return "other", "unknown", "N/A", or leave it blank.
-
-Rules for estimated_price (MANDATORY — always fill):
-- Estimate a realistic USD retail price based on garment type, fabric/build quality, and design complexity.
-- Must vary by garment — never a fixed default number.
-
-Return only valid JSON, nothing else — both "brand" and "estimated_price" objects are required.
+Critical Classification Rules:
+1. is_garment (BOOLEAN):
+   - Set to true if the image depicts wearable clothing, footwear, headwear, bags, or wearable fashion accessories.
+   - Graphic t-shirts, printed hoodies, patterned dresses, or illustrated garments ARE valid wearable garments (set is_garment: true).
+   - Set to false ONLY if the image depicts a screenshot, text document, meme, landscape, food, animal, electronics, or non-wearable artwork/object.
+2. brand.name:
+   - Provide the brand name ONLY if a physical brand logo, brand tag, or legible brand wordmark is visible on the garment.
+   - If no brand logo or brand text is clearly identifiable, set "name": "N/A", "confidence": "none", "detected_from_logo": false.
+   - NEVER invent, hallucinate, or guess brand names when no brand markings exist.
+3. estimated_price:
+   - Estimate realistic EUR (€) retail pricing based on garment type, fabric weight, and silhouette.
+   - Currency MUST be "EUR".
 """
 
 
-INVALID_BRAND_VALUES = {"", "other", "unknown", "n/a", "none", "null"}
+INVALID_BRAND_VALUES = {"", "other", "unknown", "none", "null", "undefined"}
 
 DEFAULT_PRICE_BY_GARMENT = {
-    "tshirt": (12, 8, 25),
-    "shirt": (30, 18, 55),
-    "pant": (35, 20, 70),
-    "jeans": (45, 25, 90),
-    "plazoo": (25, 15, 45),
-    "saree": (60, 30, 150),
-    "kurti": (28, 15, 60),
-    "dress": (40, 20, 90),
-    "skirt": (28, 15, 55),
-    "jacket": (65, 35, 140),
-    "other": (30, 15, 60),
+    "t-shirt": (25, 15, 45),
+    "shirt": (45, 25, 80),
+    "polo": (35, 20, 65),
+    "blouse": (40, 25, 75),
+    "sweater": (55, 30, 95),
+    "hoodie": (50, 30, 90),
+    "sweatshirt": (45, 25, 80),
+    "cardigan": (50, 30, 85),
+    "blazer": (95, 55, 180),
+    "suit": (180, 90, 350),
+    "jacket": (85, 45, 160),
+    "coat": (120, 60, 240),
+    "jeans": (60, 35, 110),
+    "pants": (55, 30, 95),
+    "trousers": (60, 35, 110),
+    "shorts": (35, 20, 60),
+    "skirt": (40, 20, 75),
+    "dress": (65, 35, 130),
+    "jumpsuit": (75, 40, 140),
+    "sneakers": (85, 45, 150),
+    "boots": (110, 60, 200),
+    "shoes": (75, 40, 130),
+    "loafers": (80, 45, 140),
+    "sandals": (45, 25, 80),
+    "heels": (75, 40, 130),
+    "bag": (65, 30, 140),
+    "handbag": (85, 40, 180),
+    "backpack": (55, 30, 100),
+    "hat": (25, 15, 40),
+    "cap": (25, 15, 40),
+    "beanie": (20, 10, 35),
+    "belt": (30, 15, 55),
+    "scarf": (25, 15, 45),
+    "sunglasses": (45, 20, 100),
+    "watch": (95, 40, 220),
+    "jewelry": (35, 15, 80),
+    "accessory": (25, 10, 50),
+    "other": (35, 20, 60),
 }
 
 
@@ -77,9 +104,12 @@ def validate_image_size(file_bytes: bytes):
 
 
 def call_llm_for_analysis(base64_image: str, mime_type: str) -> dict:
-    response = llm_client.chat.completions.create(
+    from llm_client import get_llm_client
+    client = get_llm_client()
+    response = client.chat.completions.create(
         model=settings.LLM_MODEL,
         max_tokens=700,
+        temperature=0,
         messages=[
             {
                 "role": "user",
@@ -94,9 +124,11 @@ def call_llm_for_analysis(base64_image: str, mime_type: str) -> dict:
     raw_text = response.choices[0].message.content.strip()
     if raw_text.startswith("```"):
         raw_text = raw_text.strip("`")
-        raw_text = raw_text.replace("json", "", 1).strip()
+        if raw_text.startswith("json"):
+            raw_text = raw_text[4:].strip()
 
     return json.loads(raw_text)
+
 
 
 def _google_top_result(query_text: str) -> dict | None:
@@ -137,21 +169,34 @@ def resolve_brand(raw_json: dict) -> dict:
     logo_text = brand_data.get("logo_text")
     logo_symbol = brand_data.get("logo_symbol")
 
-    # Case 1: literal text visible — most reliable, verify via search
+    # If external brand search is disabled by configuration (C-03 privacy/cost posture)
+    if not getattr(settings, 'AI_BRAND_SEARCH_ENABLED', False):
+        if logo_text:
+            brand_data["name"] = str(logo_text).strip()
+            brand_data["confidence"] = "medium"
+            brand_data["detected_from_logo"] = True
+        elif not brand_data.get("name") or brand_data.get("name").lower() in INVALID_BRAND_VALUES:
+            brand_data["name"] = "N/A"
+            brand_data["confidence"] = "none"
+            brand_data["detected_from_logo"] = False
+        raw_json["brand"] = brand_data
+        return raw_json
+
+    # External Apify Google Search (Only if explicitly enabled via AI_BRAND_SEARCH_ENABLED=True)
     if logo_text:
-        top_result = _google_top_result(f'"{logo_text}" clothing brand logo')
+        top_result = _google_top_result(f'"{logo_text}" clothing brand')
         if top_result and _looks_like_brand_name(top_result.get("title", "")):
             brand_data["name"] = top_result["title"]
             brand_data["confidence"] = "high"
             brand_data["detected_from_logo"] = True
             raw_json["brand"] = brand_data
             return raw_json
-        # search inconclusive but text was clearly readable — keep LLM's literal reading
+        brand_data["name"] = str(logo_text).strip()
         brand_data["confidence"] = "medium"
+        brand_data["detected_from_logo"] = True
         raw_json["brand"] = brand_data
         return raw_json
 
-    # Case 2: only a shape/symbol was seen — do NOT trust the LLM's own brand guess blindly
     if logo_symbol:
         top_result = _google_top_result(f"{logo_symbol} clothing brand logo")
         if top_result and _looks_like_brand_name(top_result.get("title", "")):
@@ -160,47 +205,27 @@ def resolve_brand(raw_json: dict) -> dict:
             brand_data["detected_from_logo"] = True
             raw_json["brand"] = brand_data
             return raw_json
-
-        # Search didn't confidently confirm anything — drop the LLM's specific guess
-        # (avoids wrongly saying "Nike"/"Lotto" for a local/unrelated logo)
-        fallback_query = f"{logo_symbol} logo generic apparel brand"
-        fallback_result = _google_top_result(fallback_query)
-        if fallback_result and _looks_like_brand_name(fallback_result.get("title", "")):
-            brand_data["name"] = fallback_result["title"]
-        else:
-            brand_data["name"] = f"Unbranded ({logo_symbol} logo)"
-        brand_data["confidence"] = "low"
+        brand_data["name"] = "N/A"
+        brand_data["confidence"] = "none"
         brand_data["detected_from_logo"] = False
         raw_json["brand"] = brand_data
         return raw_json
 
-    # Case 3: no logo/text/symbol at all — best-effort related name via garment attributes
-    garment_type = raw_json.get("garment_type", "garment")
-    color = raw_json.get("primary_color", "")
-    pattern = raw_json.get("pattern", "")
-    style_query = f"{color} {pattern} {garment_type} popular clothing brand".strip()
-
-    style_result = _google_top_result(style_query)
-    if style_result and _looks_like_brand_name(style_result.get("title", "")):
-        brand_data["name"] = style_result["title"]
-        brand_data["confidence"] = "assumed"
-    else:
-        brand_data["name"] = f"Generic {garment_type.capitalize()} Brand"
-        brand_data["confidence"] = "assumed"
-
+    # No logo or brand markings visible
+    brand_data["name"] = "N/A"
+    brand_data["confidence"] = "none"
     brand_data["detected_from_logo"] = False
     raw_json["brand"] = brand_data
     return raw_json
 
 
 def _sanitize_brand(raw_json: dict) -> dict:
-    """Final safety net — guarantees brand.name is never blank/invalid, no matter what happened above."""
+    """Final safety net — guarantees brand.name is strictly 'N/A' when not verified from a visible logo."""
     brand_data = raw_json.get("brand", {}) or {}
     name = (brand_data.get("name") or "").strip()
-    if name.lower() in INVALID_BRAND_VALUES:
-        garment_type = raw_json.get("garment_type", "garment")
-        brand_data["name"] = f"Generic {garment_type.capitalize()} Brand"
-        brand_data["confidence"] = "assumed"
+    if not name or name.lower() in INVALID_BRAND_VALUES:
+        brand_data["name"] = "N/A"
+        brand_data["confidence"] = "none"
         brand_data["detected_from_logo"] = False
     raw_json["brand"] = brand_data
     return raw_json
@@ -215,21 +240,22 @@ def _sanitize_price(raw_json: dict) -> dict:
 
     if not price or not isinstance(price, dict):
         raw_json["estimated_price"] = {
-            "currency": "USD",
-            "amount": default_amount,
-            "range_min": default_min,
-            "range_max": default_max,
-            "confidence": "assumed",
+            "currency": "EUR",
+            "amount": float(default_amount),
+            "range_min": float(default_min),
+            "range_max": float(default_max),
+            "confidence": "medium",
         }
         return raw_json
 
-    price.setdefault("currency", "USD")
-    price.setdefault("amount", default_amount)
-    price.setdefault("range_min", default_min)
-    price.setdefault("range_max", default_max)
-    price.setdefault("confidence", "assumed")
+    price.setdefault("currency", "EUR")
+    price.setdefault("amount", float(default_amount))
+    price.setdefault("range_min", float(default_min))
+    price.setdefault("range_max", float(default_max))
+    price.setdefault("confidence", "medium")
     raw_json["estimated_price"] = price
     return raw_json
+
 
 
 async def analyze_dress_image(file: UploadFile) -> DressAnalysisResult:

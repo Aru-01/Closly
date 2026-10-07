@@ -11,22 +11,24 @@ class BrandInfo(BaseModel):
 
 
 class EstimatedPrice(BaseModel):
-    currency: str
-    amount: float
-    range_min: float
-    range_max: float
-    confidence: str
+    currency: str = "EUR"
+    amount: float = 35.0
+    range_min: float = 20.0
+    range_max: float = 60.0
+    confidence: str = "medium"
 
 
 class DressAnalysisResult(BaseModel):
-    garment_type: str
-    gender: str
-    primary_color: str
+    is_garment: bool = True
+    garment_type: str = "top"
+    gender: str = "unisex"
+    primary_color: str = "Neutral"
     secondary_colors: List[str] = []
-    pattern: str
+    pattern: str = "solid"
     brand: BrandInfo
     estimated_price: EstimatedPrice
     notes: Optional[str] = None
+
 
 
 class AnalyzeResponse(BaseModel):

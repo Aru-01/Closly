@@ -6,6 +6,10 @@ from .views import (
     ClosetAuditView,
     ClosetScoreDashboardView,
     ClosetAIScanView,
+    FitCheckCreateView,
+    FitCheckDetailView,
+    ConsentRecordView,
+    LLMCostLogListView,
 )
 
 app_name = 'closet'
@@ -22,6 +26,16 @@ urlpatterns = [
     path('clothes/<int:pk>/wear/', WearTodayView.as_view(), name='clothes-wear'),
     path('clothes/<int:pk>/wear-today/', WearTodayView.as_view(), name='clothes-wear-today'),
     path('clothes/ai-scan/', ClosetAIScanView.as_view(), name='clothes-ai-scan'),
+
+    # FitCheck Async AI Processing & Polling (Spec §1.1, §7.2)
+    path('fit-checks/', FitCheckCreateView.as_view(), name='fit-check-create'),
+    path('fit-checks/<uuid:pk>/', FitCheckDetailView.as_view(), name='fit-check-detail'),
+
+    # GDPR Art. 7 Consent Management (Spec §5.5, C-03)
+    path('consent/', ConsentRecordView.as_view(), name='closet-consent'),
+
+    # AI Usage & Cost Visibility (Spec §3.1, C-05)
+    path('costs/', LLMCostLogListView.as_view(), name='closet-costs'),
 
     # Audit, score & smart AI camera scanning
     path('audit/', ClosetAuditView.as_view(), name='closet-audit'),

@@ -700,6 +700,7 @@ class Consent(models.Model):
     )
     kind = models.CharField(max_length=40, choices=KIND_CHOICES)
     granted = models.BooleanField(default=True)
+    version = models.CharField(max_length=20, default='1.0', blank=True)
     occurred_at = models.DateTimeField(default=timezone.now)
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.CharField(max_length=255, blank=True, default='')
