@@ -63,7 +63,7 @@ class ApiRootView(APIView):
                 'legal': request.build_absolute_uri('/api/legal/'),
             },
             'realtime': {
-                'websocket_chat': 'ws://' + request.get_host() + '/ws/chat/?token=<JWT_TOKEN>',
+                'websocket_chat': ((('wss://' if (request.is_secure() or not settings.DEBUG) else 'ws://') + request.get_host() + '/ws/chat/?ticket=<60S_ONE_TIME_TICKET> (obtain via POST /api/social/ws-ticket/)')) if getattr(settings, 'MYC_DM_ENABLED', False) else None,
             }
         }, status=status.HTTP_200_OK)
 

@@ -9,7 +9,7 @@ from django.core.exceptions import ValidationError
 from django.db.models import Q, Count
 from django.utils import timezone
 
-from social.models import UserFollow, TodayOutfit, OutfitLike
+from social.models import UserFollow, TodayOutfit, OutfitLike, UserBlock, get_blocked_user_ids
 from social.serializers import UserFollowSerializer, TodayOutfitSerializer
 from .outfit_views import StandardSocialPagination
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
@@ -52,6 +52,12 @@ class UserFollowToggleView(APIView):
                 'message': 'Invalid user ID format.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        if target_user.id in get_blocked_user_ids(request.user):
+            return Response({
+                'success': False,
+                'message': 'Cannot follow this user.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         follow, created = UserFollow.objects.get_or_create(follower=request.user, following=target_user)
 
         if not created:
@@ -83,6 +89,57 @@ class UserFollowToggleView(APIView):
                 'is_following': is_following
             }
         }, status=status.HTTP_200_OK)
+
+
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="Block or Unblock User",
+    description="Toggle bilateral block status for a user. Bilaterally dissolves follows and hides all content.",
+    responses={
+        200: OpenApiResponse(description="Block status toggled"),
+        400: OpenApiResponse(description="Cannot block self or invalid user ID"),
+        404: OpenApiResponse(description="User not found"),
+    }
+)
+class UserBlockToggleView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request, user_id):
+        if str(request.user.id) == str(user_id):
+            return Response({
+                'success': False,
+                'message': 'You cannot block yourself.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            target_user = get_object_or_404(User, pk=user_id)
+        except (ValidationError, ValueError):
+            return Response({
+                'success': False,
+                'message': 'Invalid user ID format.'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        block = UserBlock.objects.filter(blocker=request.user, blocked=target_user).first()
+        if block:
+            block.delete()
+            return Response({
+                'success': True,
+                'message': f"Unblocked {target_user.name or 'User'}.",
+                'data': {'user_id': str(target_user.id), 'is_blocked': False}
+            }, status=status.HTTP_200_OK)
+        else:
+            UserBlock.objects.create(blocker=request.user, blocked=target_user)
+            # Dissolve mutual follows
+            UserFollow.objects.filter(
+                Q(follower=request.user, following=target_user) |
+                Q(follower=target_user, following=request.user)
+            ).delete()
+            return Response({
+                'success': True,
+                'message': f"Blocked {target_user.name or 'User'}. Content and interactions are now hidden.",
+                'data': {'user_id': str(target_user.id), 'is_blocked': True}
+            }, status=status.HTTP_200_OK)
 
 
 @extend_schema(
@@ -138,6 +195,10 @@ class UserFollowersListView(generics.ListAPIView):
                 q_loc |= Q(follower__country__iexact=u.country.strip())
             if q_loc:
                 qs = qs.filter(q_loc)
+
+        blocked_ids = get_blocked_user_ids(self.request.user)
+        if blocked_ids:
+            qs = qs.exclude(follower_id__in=blocked_ids)
 
         return qs.order_by('-created_at')
 
@@ -203,8 +264,9 @@ class UserFollowingListView(generics.ListAPIView):
                 q_loc |= Q(following__city__iexact=u.city.strip())
             if u.country:
                 q_loc |= Q(following__country__iexact=u.country.strip())
-            if q_loc:
-                qs = qs.filter(q_loc)
+        blocked_ids = get_blocked_user_ids(self.request.user)
+        if blocked_ids:
+            qs = qs.exclude(following_id__in=blocked_ids)
 
         return qs.order_by('-created_at')
 
@@ -286,6 +348,12 @@ class OtherUserProfileView(APIView):
             User.objects.select_related('preferences', 'reward_profile'),
             pk=user_id
         )
+        if target_user.id in get_blocked_user_ids(request.user):
+            return Response({
+                'success': False,
+                'message': 'User not found.'
+            }, status=status.HTTP_404_NOT_FOUND)
+
         is_following = UserFollow.objects.filter(follower=request.user, following=target_user).exists()
         is_self = (request.user.id == target_user.id)
 
@@ -307,9 +375,17 @@ class OtherUserProfileView(APIView):
         pref_target = getattr(target_user, 'preferences', None)
         target_styles = pref_target.style_match if pref_target and pref_target.style_match else []
 
+        is_mutual_following = is_following and UserFollow.objects.filter(follower=target_user, following=request.user).exists()
         from users.utils import is_user_online, get_user_last_seen
-        is_online = True if is_self else is_user_online(target_user.id)
-        last_seen = timezone.now().isoformat() if is_self else get_user_last_seen(target_user)
+        if is_self:
+            is_online = True
+            last_seen = timezone.now().isoformat()
+        elif is_mutual_following:
+            is_online = is_user_online(target_user.id)
+            last_seen = get_user_last_seen(target_user)
+        else:
+            is_online = False
+            last_seen = None
 
         return Response({
             'success': True,
@@ -317,7 +393,6 @@ class OtherUserProfileView(APIView):
             'data': {
                 'id': str(target_user.id),
                 'name': target_user.name,
-                'email': target_user.email,
                 'bio': target_user.bio or '',
                 'country': target_user.country or '',
                 'city': target_user.city or '',
@@ -370,7 +445,7 @@ class UserOutfitsListView(generics.ListAPIView):
 
     def get_queryset(self):
         target_user = self._get_target_user()
-        if not target_user:
+        if not target_user or target_user.id in get_blocked_user_ids(self.request.user):
             return TodayOutfit.objects.none()
 
         # If viewing own profile, show all; if viewing others, show public only

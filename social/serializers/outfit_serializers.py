@@ -76,6 +76,27 @@ class OutfitImageSerializer(serializers.ModelSerializer):
         return None
 
 
+class PublicTaggedItemSerializer(serializers.ModelSerializer):
+    """
+    Public representation of closet items tagged in an outfit post.
+    Excludes private purchase details (price, purchase date, notes).
+    """
+    image = AbsoluteImageField(read_only=True)
+
+    class Meta:
+        model = ClosetItem
+        fields = [
+            'id',
+            'name',
+            'category',
+            'brand',
+            'color',
+            'size',
+            'image',
+            'style_vibe',
+        ]
+
+
 class TodayOutfitSerializer(serializers.ModelSerializer):
     """
     Serializer for TodayOutfit creation, feed listing, and updates.
@@ -92,7 +113,7 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
         queryset=ClosetItem.objects.all(),
         required=False
     )
-    tagged_items_details = ClosetItemSerializer(source='tagged_items', many=True, read_only=True)
+    tagged_items_details = PublicTaggedItemSerializer(source='tagged_items', many=True, read_only=True)
     style_category = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
     weather_tag = serializers.CharField(max_length=50, required=False, allow_blank=True, default='')
 
@@ -238,6 +259,12 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
                 instance._prefetched_objects_cache.pop('tagged_items', None)
 
         if uploaded_images:
+            for old_img in instance.images.all():
+                if old_img.image and hasattr(old_img.image, 'storage') and old_img.image.name:
+                    try:
+                        old_img.image.storage.delete(old_img.image.name)
+                    except Exception:
+                        pass
             instance.images.all().delete()
             OutfitImage.objects.bulk_create([
                 OutfitImage(outfit=instance, image=img_file, order=idx)
@@ -327,13 +354,6 @@ class TodayOutfitSerializer(serializers.ModelSerializer):
             ]
         elif obj.image:
             return [
-                {
-                    'id': None,
-                    'image': build_absolute_media_url(obj.image, request=request),
-                    'order': 0,
-                }
-                for img in images
-            ] if False else [
                 {
                     'id': None,
                     'image': build_absolute_media_url(obj.image, request=request),

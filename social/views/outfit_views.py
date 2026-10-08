@@ -8,6 +8,7 @@ from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
 from django.utils import timezone
+from django.conf import settings
 
 from social.models import TodayOutfit, OutfitLike, UserFollow
 from social.serializers import TodayOutfitSerializer
@@ -33,7 +34,7 @@ class StandardSocialPagination(PageNumberPagination):
         }, status=status.HTTP_200_OK)
 
 
-KNOWN_STYLES = ['minimalist', 'streetwear', 'casual', 'chic', 'classic', 'formal', 'bohemian', 'vintage', 'sporty', 'adjacent']
+KNOWN_STYLES = ['minimalist', 'streetwear', 'casual', 'chic', 'classic', 'formal', 'bohemian', 'vintage', 'sporty']
 KNOWN_WEATHER = ['warm', 'cool', 'chilly', 'cold', 'hot', 'rainy', 'mild', 'sunny']
 
 
@@ -81,24 +82,6 @@ def infer_weather_tag(user, caption, explicit_weather=None):
             if w in caption_lower:
                 return w
 
-    try:
-        from social.your_day import get_live_weather
-        weather = get_live_weather(user=user)
-        vibe = weather.get('weather_vibe')
-        if vibe and str(vibe).lower() in KNOWN_WEATHER:
-            return str(vibe).lower()
-        cond = weather.get('condition')
-        if cond:
-            cond_lower = str(cond).lower()
-            if 'rain' in cond_lower:
-                return 'rainy'
-            elif 'snow' in cond_lower or 'cold' in cond_lower:
-                return 'chilly'
-            elif 'sun' in cond_lower or 'clear' in cond_lower:
-                return 'warm'
-    except Exception:
-        pass
-
     return 'mild'
 
 
@@ -137,13 +120,8 @@ class TodayOutfitCreateView(generics.CreateAPIView):
             weather_tag=weather_tag
         )
         try:
-            from rewards.services import award_points
-            award_points(
-                user=user,
-                action_type='share_look',
-                description="Shared a today outfit look",
-                reference_id=str(outfit.id)
-            )
+            from rewards.services import record_activity_reward
+            record_activity_reward(user=user, outfit=outfit)
         except Exception:
             pass
 
@@ -233,12 +211,16 @@ class OutfitLikeToggleView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def post(self, request, pk):
-        outfit = get_object_or_404(TodayOutfit, pk=pk)
-        if outfit.visibility != 'public' and outfit.user != request.user:
+        outfit = get_object_or_404(
+            TodayOutfit.objects.filter(Q(visibility='public') | Q(user=request.user)),
+            pk=pk
+        )
+        from social.models import get_blocked_user_ids
+        if outfit.user_id in get_blocked_user_ids(request.user):
             return Response({
                 'success': False,
-                'message': 'Cannot interact with a private outfit post.'
-            }, status=status.HTTP_403_FORBIDDEN)
+                'message': 'Cannot interact with this outfit post.'
+            }, status=status.HTTP_404_NOT_FOUND)
 
         like, created = OutfitLike.objects.get_or_create(outfit=outfit, user=request.user)
         if not created:
@@ -356,12 +338,14 @@ class OutfitCalendarView(APIView):
         except (ValueError, TypeError):
             year, month = now.year, now.month
 
+        from zoneinfo import ZoneInfo
+        from django.db.models.functions import TruncDate
+
+        berlin_tz = ZoneInfo("Europe/Berlin")
         outfits = list(
-            TodayOutfit.objects.filter(
-                user=request.user,
-                created_at__year=year,
-                created_at__month=month
-            )
+            TodayOutfit.objects.filter(user=request.user)
+            .annotate(local_date=TruncDate('created_at', tzinfo=berlin_tz))
+            .filter(local_date__year=year, local_date__month=month)
             .select_related('user')
             .prefetch_related('tagged_items', 'images')
             .annotate(_likes_count=Count('likes', distinct=True))
@@ -370,7 +354,7 @@ class OutfitCalendarView(APIView):
 
         days_map = {}
         for outfit in outfits:
-            date_str = outfit.created_at.strftime('%Y-%m-%d')
+            date_str = outfit.created_at.astimezone(berlin_tz).strftime('%Y-%m-%d')
             if date_str not in days_map:
                 days_map[date_str] = []
 
@@ -516,8 +500,16 @@ class OutfitLikersListView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def get(self, request, pk):
-        outfit = get_object_or_404(TodayOutfit, pk=pk)
-        likers = list(User.objects.filter(outfit_likes__outfit=outfit).select_related('reward_profile'))
+        outfit = get_object_or_404(
+            TodayOutfit.objects.filter(Q(visibility='public') | Q(user=request.user)),
+            pk=pk
+        )
+        from social.models import get_blocked_user_ids
+        blocked_ids = get_blocked_user_ids(request.user)
+        likers_qs = User.objects.filter(outfit_likes__outfit=outfit)
+        if blocked_ids:
+            likers_qs = likers_qs.exclude(id__in=blocked_ids)
+        likers = list(likers_qs.select_related('reward_profile'))
         
         # Batch following check in a single query (eliminates N+1 query)
         following_user_ids = set(

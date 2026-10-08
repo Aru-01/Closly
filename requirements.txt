@@ -63,4 +63,5 @@ pydantic>=2.9.2
 python-dotenv>=1.0.1
 python-multipart>=0.0.12
 apify-client>=1.6.0
+pillow-heif>=1.8.0
 

@@ -21,6 +21,7 @@ from .feed_views import (
 )
 from .follow_views import (
     UserFollowToggleView,
+    UserBlockToggleView,
     UserFollowersListView,
     UserFollowingListView,
     MyFollowingListView,
@@ -28,10 +29,12 @@ from .follow_views import (
     OtherUserProfileView,
     UserOutfitsListView,
 )
+from .report_views import ContentReportCreateView
 from .chat_views import (
     DirectMessageSendView,
     DirectMessageConversationView,
     ConversationListView,
+    WebSocketTicketCreateView,
 )
 from .story_views import (
     get_active_stories_for_user,
@@ -59,6 +62,8 @@ __all__ = [
     'ExploreNewsfeedView',
     'YourDayOutfitView',
     'UserFollowToggleView',
+    'UserBlockToggleView',
+    'ContentReportCreateView',
     'UserFollowersListView',
     'UserFollowingListView',
     'MyFollowingListView',
@@ -77,4 +82,5 @@ __all__ = [
     'StoryReplyView',
     'StoryViewersListView',
     'StoryDeleteView',
+    'WebSocketTicketCreateView',
 ]

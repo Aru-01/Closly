@@ -10,6 +10,8 @@ from .views import (
     ExploreNewsfeedView,
     YourDayOutfitView,
     UserFollowToggleView,
+    UserBlockToggleView,
+    ContentReportCreateView,
     UserFollowersListView,
     UserFollowingListView,
     MyFollowersListView,
@@ -29,6 +31,7 @@ from .views import (
     StoryReplyView,
     StoryViewersListView,
     StoryDeleteView,
+    WebSocketTicketCreateView,
 )
 
 app_name = 'social'
@@ -51,8 +54,10 @@ urlpatterns = [
     path('following/', MyFollowingListView.as_view(), name='my-following'),
     path('followers/', MyFollowersListView.as_view(), name='my-followers'),
 
-    # Follow / Unfollow system & user profile visit
+    # Follow / Unfollow system, block & user profile visit
     path('users/<str:user_id>/follow/', UserFollowToggleView.as_view(), name='user-follow'),
+    path('users/<str:user_id>/block/', UserBlockToggleView.as_view(), name='user-block'),
+    path('reports/', ContentReportCreateView.as_view(), name='content-report'),
     path('users/<str:user_id>/followers/', UserFollowersListView.as_view(), name='user-followers'),
     path('users/<str:user_id>/following/', UserFollowingListView.as_view(), name='user-following'),
     path('users/<str:user_id>/profile/', OtherUserProfileView.as_view(), name='user-social-profile'),
@@ -68,7 +73,8 @@ urlpatterns = [
     path('stories/<int:pk>/viewers/', StoryViewersListView.as_view(), name='story-viewers'),
     path('stories/<int:pk>/', StoryDeleteView.as_view(), name='story-delete'),
 
-    # Direct Messaging & Inbox
+    # Direct Messaging, Inbox & Single-Use WS Tickets (SR-09)
+    path('ws-ticket/', WebSocketTicketCreateView.as_view(), name='ws-ticket'),
     path('messages/', DirectMessageSendView.as_view(), name='message-send'),
     path('messages/inbox/', ConversationListView.as_view(), name='messages-inbox'),
     path('conversations/', ConversationListView.as_view(), name='conversations-list'),

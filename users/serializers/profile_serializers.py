@@ -293,11 +293,13 @@ class UserProfileSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(str(e))
     
     def validate_date_of_birth(self, value):
-        """Validate date of birth"""
+        """Validate date of birth against MYC_MIN_AGE (U-10 / SR-21)"""
         try:
             validate_date_of_birth(value)
-            if not validate_age(value, min_age=13):
-                raise serializers.ValidationError("You must be at least 13 years old.")
+            from django.conf import settings
+            min_age = getattr(settings, 'MYC_MIN_AGE', 16)
+            if not validate_age(value, min_age=min_age):
+                raise serializers.ValidationError(f"You must be at least {min_age} years old to use Closly.")
             return value
         except DjangoValidationError as e:
             raise serializers.ValidationError(str(e))

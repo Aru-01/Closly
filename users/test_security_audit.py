@@ -192,6 +192,97 @@ class SecurityAuditTestCase(TestCase):
         self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("date_of_birth", resp.data["errors"])
 
+    def test_age_gate_cross_path_enforcement(self):
+        """SR-21 & U-10: Strict boundary enforcement across signup and profile update (15 rejected, 16 accepted, 17+ accepted, missing rejected)."""
+        today = timezone.now().date()
+        dob_15 = (today.replace(year=today.year - 15)).isoformat()
+        dob_16 = (today.replace(year=today.year - 16)).isoformat()
+        dob_17 = (today.replace(year=today.year - 17)).isoformat()
+        url = reverse("users:signup")
+
+        # 1. Age 15 is rejected
+        resp_15 = self.client.post(url, {
+            "name": "Fifteen User",
+            "email": "fifteen@example.com",
+            "date_of_birth": dob_15,
+            "gender": "female",
+            "password": "ValidPassword123!",
+            "confirm_password": "ValidPassword123!",
+        }, format="json")
+        self.assertEqual(resp_15.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 2. Missing DOB is rejected
+        resp_missing = self.client.post(url, {
+            "name": "Missing DOB User",
+            "email": "missing_dob@example.com",
+            "gender": "female",
+            "password": "ValidPassword123!",
+            "confirm_password": "ValidPassword123!",
+        }, format="json")
+        self.assertEqual(resp_missing.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 3. Exactly age 16 is accepted
+        resp_16 = self.client.post(url, {
+            "name": "Sixteen User",
+            "email": "sixteen@example.com",
+            "date_of_birth": dob_16,
+            "gender": "female",
+            "password": "ValidPassword123!",
+            "confirm_password": "ValidPassword123!",
+        }, format="json")
+        self.assertEqual(resp_16.status_code, status.HTTP_201_CREATED)
+
+        # 4. Age 17 is accepted
+        resp_17 = self.client.post(url, {
+            "name": "Seventeen User",
+            "email": "seventeen@example.com",
+            "date_of_birth": dob_17,
+            "gender": "female",
+            "password": "ValidPassword123!",
+            "confirm_password": "ValidPassword123!",
+        }, format="json")
+        self.assertEqual(resp_17.status_code, status.HTTP_201_CREATED)
+
+        # 5. Profile update bypass attempt with underage DOB is rejected
+        self.client.force_authenticate(user=self.user)
+        update_url = reverse("users:profile")
+        resp_update_bypass = self.client.patch(update_url, {
+            "date_of_birth": dob_15
+        }, format="json")
+        self.assertEqual(resp_update_bypass.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # 6. Firebase social login with underage DOB is rejected (SR-21 / U-10)
+        self.client.force_authenticate(user=None)
+        with patch('users.views.auth_views.verify_firebase_token') as mock_verify:
+            mock_verify.return_value = {
+                'uid': 'firebase_underage_uid_123',
+                'email': 'underage_social@example.com',
+                'email_verified': True,
+                'name': 'Underage Social',
+                'firebase': {'sign_in_provider': 'google.com'}
+            }
+            fb_url = reverse("users:firebase-auth")
+            resp_fb_underage = self.client.post(fb_url, {
+                "firebase_token": "valid_token_mock",
+                "date_of_birth": dob_15
+            }, format="json")
+            self.assertEqual(resp_fb_underage.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertEqual(resp_fb_underage.data.get("code"), "UNDERAGE")
+
+            # 7. Firebase social login with 16+ DOB is accepted
+            mock_verify.return_value = {
+                'uid': 'firebase_valid_uid_123',
+                'email': 'valid_social@example.com',
+                'email_verified': True,
+                'name': 'Valid Social',
+                'firebase': {'sign_in_provider': 'google.com'}
+            }
+            resp_fb_valid = self.client.post(fb_url, {
+                "firebase_token": "valid_token_mock_2",
+                "date_of_birth": dob_16
+            }, format="json")
+            self.assertEqual(resp_fb_valid.status_code, status.HTTP_200_OK)
+
     # =========================================================================
     # U-11: Unicode Name Validation
     # =========================================================================

@@ -38,29 +38,56 @@ WMO_WEATHER_CODES = {
 }
 
 
+DACH_CITY_CENTROIDS = {
+    'munich': (48.14, 11.58),
+    'münchen': (48.14, 11.58),
+    'berlin': (52.52, 13.40),
+    'hamburg': (53.55, 10.00),
+    'frankfurt': (50.11, 8.68),
+    'frankfurt am main': (50.11, 8.68),
+    'cologne': (50.94, 6.96),
+    'köln': (50.94, 6.96),
+    'stuttgart': (48.78, 9.18),
+    'düsseldorf': (51.22, 6.78),
+    'dusseldorf': (51.22, 6.78),
+    'vienna': (48.21, 16.37),
+    'wien': (48.21, 16.37),
+    'zurich': (47.38, 8.54),
+    'zürich': (47.38, 8.54),
+    'london': (51.51, -0.13),
+    'paris': (48.86, 2.35),
+    'new york': (40.71, -74.01),
+}
+
+
 def get_live_weather(lat=None, lon=None, city=None, user=None):
     """
-    Fetches real-time weather from Open-Meteo (100% free, no API key needed).
-    Falls back gracefully to profile city or seasonal estimates if unreachable.
+    Fetches real-time weather from Open-Meteo.
+    Requires client coordinates or maps known city centroids.
+    Returns None if location is unknown rather than defaulting to London (SR-06, SR-20).
     """
-    # Coordinates fallback: Default to London / New York if not provided
-    default_lat, default_lon = 51.5074, -0.1278
-    city_name = city or "London"
+    target_lat = None
+    target_lon = None
+    city_name = city or getattr(user, 'city', None) or "Current Location"
 
     if lat is not None and lon is not None:
         try:
-            target_lat = float(lat)
-            target_lon = float(lon)
+            target_lat = round(float(lat), 2)
+            target_lon = round(float(lon), 2)
             city_name = city or getattr(user, 'city', None) or "Current Location"
         except (ValueError, TypeError):
-            target_lat, target_lon = default_lat, default_lon
-    elif user and getattr(user, 'city', None):
-        city_name = user.city
-        target_lat, target_lon = default_lat, default_lon
-    else:
-        target_lat, target_lon = default_lat, default_lon
+            target_lat, target_lon = None, None
 
-    cache_key = f"live_weather:{round(target_lat, 2)}:{round(target_lon, 2)}"
+    if target_lat is None or target_lon is None:
+        candidate_city = (city or getattr(user, 'city', '') or '').strip().lower()
+        if candidate_city in DACH_CITY_CENTROIDS:
+            target_lat, target_lon = DACH_CITY_CENTROIDS[candidate_city]
+            city_name = city or user.city
+
+    if target_lat is None or target_lon is None:
+        return None
+
+    cache_key = f"live_weather:{target_lat}:{target_lon}"
     cached = cache.get(cache_key)
     if cached:
         return cached
@@ -129,11 +156,12 @@ from django.conf import settings
 
 def get_ai_daily_outfit_recommendation(user, user_items, weather, request=None):
     """
-    Leverages OpenAI GPT-4o as Closly's luxury personal stylist.
-    Selects matching items from the user's available wardrobe for today's weather
-    and produces an inspiring, tailored styling explanation.
-    Rotates items daily to ensure users discover and wear their whole closet.
+    Leverages OpenAI as Closly's luxury personal stylist when MYC_YOURDAY_LLM_ENABLED is True.
+    Defaults to off (SR-05).
     """
+    if not getattr(settings, 'MYC_YOURDAY_LLM_ENABLED', False):
+        return None
+
     api_key = getattr(settings, 'LLM_API_KEY', '') or ''
     if not api_key or not user_items:
         return None
@@ -225,12 +253,17 @@ Respond with ONLY valid JSON:
 }}
 """
 
-        response = client.chat.completions.create(
-            model=model,
-            max_tokens=400,
-            temperature=0.7,
-            messages=[{"role": "user", "content": prompt}]
-        )
+        kwargs = {
+            "model": model,
+            "temperature": 0.7,
+            "messages": [{"role": "user", "content": prompt}],
+        }
+        if any(k in model for k in ("gpt-5", "o1", "o3", "luna")):
+            kwargs["max_completion_tokens"] = 400
+        else:
+            kwargs["max_tokens"] = 400
+
+        response = client.chat.completions.create(**kwargs)
 
         content = response.choices[0].message.content.strip()
         if content.startswith("```"):
@@ -337,9 +370,9 @@ def suggest_daily_outfit(user, weather, request=None):
         return ai_suggestion
 
     # 2. Fallback to deterministic temperature-specific wardrobe logic with daily rotation
-    temp = weather.get("temp_val", 15.0)
-    wind_str = weather.get("wind", "12 km/h")
-    condition = weather.get("condition", "Partly Cloudy")
+    temp = weather.get("temp_val", 18.0) if weather else 18.0
+    wind_str = weather.get("wind", "12 km/h") if weather else "12 km/h"
+    condition = weather.get("condition", "Partly Cloudy") if weather else "Mild & Pleasant"
 
     now = timezone.now()
     user_num = int(str(user.id).replace('-', '')[:8], 16) if hasattr(user, 'id') and user.id else 0

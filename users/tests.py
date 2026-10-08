@@ -1,5 +1,5 @@
 
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 from rest_framework import status
@@ -154,20 +154,21 @@ class UserPreferenceAndLoginTestCase(TestCase):
         self.assertEqual(len(history_res.data['data']), 2)
 
         # 5. Claim purchase points (+200)
-        claim_res = self.client.post(reverse('rewards:claim-purchase'), {
-            'order_id': 'ORDER-99182',
-            'store': 'H&M',
-            'amount': '85.50'
-        }, format='json')
-        self.assertEqual(claim_res.status_code, status.HTTP_200_OK)
-        self.assertEqual(claim_res.data['data']['points_awarded'], 200)
+        with override_settings(MYC_PURCHASE_MANUAL_CLAIM_ENABLED=True):
+            claim_res = self.client.post(reverse('rewards:claim-purchase'), {
+                'order_id': 'ORDER-99182',
+                'store': 'H&M',
+                'amount': '85.50'
+            }, format='json')
+            self.assertEqual(claim_res.status_code, status.HTTP_200_OK)
+            self.assertEqual(claim_res.data['data']['points_awarded'], 200)
 
-        # Duplicate claim should be rejected
-        dup_res = self.client.post(reverse('rewards:claim-purchase'), {
-            'order_id': 'ORDER-99182',
-            'store': 'H&M',
-        }, format='json')
-        self.assertEqual(dup_res.status_code, status.HTTP_400_BAD_REQUEST)
+            # Duplicate claim should be rejected
+            dup_res = self.client.post(reverse('rewards:claim-purchase'), {
+                'order_id': 'ORDER-99182',
+                'store': 'H&M',
+            }, format='json')
+            self.assertEqual(dup_res.status_code, status.HTTP_400_BAD_REQUEST)
 
         # 6. Level up to Silver by adding points to reach 2,000 threshold
         # Current: 170 + 200 = 370. Need 1630 more.
