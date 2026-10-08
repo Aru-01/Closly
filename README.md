@@ -259,91 +259,99 @@ All endpoints are prefixed with `/api/` (except the documentation and public web
 
 ### Prerequisites
 
-- Python 3.12+
-- Docker & Docker Compose (recommended) OR local PostgreSQL 16 & Redis 7
+- Python 3.12+ (in virtual environment)
+- Docker Desktop (for Docker development or background services: Postgres & Redis)
 - Git
-
-### Option 1: Running with Docker (Recommended)
-
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/your-username/my-closly.git
-   cd my-closly
-   ```
-
-2. **Configure environment variables**:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your local credentials and API keys
-   ```
-
-3. **Start the containers**:
-   ```bash
-   docker compose up -d --build
-   ```
-   This starts:
-   - `closly_postgres` on port `5432`
-   - `closly_redis` on port `6379`
-   - `closly_web` (Daphne ASGI server) on port `8000`
-   - `closly_celery_worker` (background tasks)
-   - `closly_celery_beat` (periodic cron scheduler)
-
-4. **Run migrations and create a superuser**:
-   ```bash
-   docker compose exec web python manage.py migrate
-   docker compose exec web python manage.py createsuperuser
-   ```
-
-5. **Visit the app**:
-   - Web API: [http://localhost:8000/](http://localhost:8000/)
-   - Swagger UI: [http://localhost:8000/docs/](http://localhost:8000/docs/)
-   - Django Unfold Admin: [http://localhost:8000/admin/](http://localhost:8000/admin/)
 
 ---
 
-### Option 2: Running Locally without Docker
+### Option A — Local Django Development
 
-1. **Create and activate a virtual environment**:
-   ```bash
-   python -m venv .venv
+Local Django runs directly on your host machine and connects to local PostgreSQL/Redis (or Docker-backed Postgres on port 5433 / Redis on 6379).
+
+1. **Activate your virtual environment**:
+   ```powershell
    # Windows PowerShell:
    .venv\Scripts\Activate.ps1
    # macOS/Linux:
    source .venv/bin/activate
    ```
 
-2. **Install dependencies**:
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   ```
-
-3. **Set up `.env`**:
-   Ensure PostgreSQL and Redis are running locally, or configure SQLite for testing:
-   ```env
-   DEBUG=True
-   SECRET_KEY=your-insecure-dev-key
-   ALLOWED_HOSTS=*
-   DB_ENGINE=django.db.backends.sqlite3
-   DB_NAME=db.sqlite3
-   REDIS_HOST=localhost
-   REDIS_PORT=6379
-   ```
-
-4. **Run migrations & start server**:
+2. **Run migrations**:
    ```bash
    python manage.py migrate
-   daphne -b 127.0.0.1 -p 8000 Config.asgi:application
    ```
 
-5. **Start Celery worker and beat (in separate terminal windows)**:
+3. **Start the Django development server**:
    ```bash
-   # Terminal 2:
-   celery -A Config worker -l info
-
-   # Terminal 3:
-   celery -A Config beat -l info
+   py manage.py runserver
+   # or explicitly bind to IPv4 loopback:
+   py manage.py runserver 127.0.0.1:8000
    ```
+
+4. **Access the application**:
+   - **API Dashboard**: [http://127.0.0.1:8000/](http://127.0.0.1:8000/) or [http://localhost:8000/](http://localhost:8000/)
+   - **Swagger UI**: [http://127.0.0.1:8000/docs/](http://127.0.0.1:8000/docs/)
+   - **System Health**: [http://127.0.0.1:8000/health/](http://127.0.0.1:8000/health/)
+   - **Admin Portal**: [http://127.0.0.1:8000/admin/](http://127.0.0.1:8000/admin/)
+
+5. **Stopping local Django**:
+   - Press `CTRL+C` or `CTRL+BREAK` in the terminal window.
+   - On Windows PowerShell, if a background process holds the port:
+     ```powershell
+     Get-NetTCPConnection -LocalPort 8000 | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+     ```
+
+---
+
+### Option B — Docker Stack Development
+
+Docker runs the entire production-like environment (Postgres 16, Redis 7, Celery Worker, Celery Beat, and Daphne Web server).
+
+1. **Start all services**:
+   ```bash
+   docker-compose up -d
+   ```
+   **Service Port Mappings**:
+   - **Web (Daphne ASGI)**: `http://127.0.0.1:8001/` (mapped to internal container port 8000)
+   - **PostgreSQL**: `127.0.0.1:5433` -> internal port 5432
+   - **Redis**: `127.0.0.1:6379` -> internal port 6379
+   - **Celery Worker & Beat**: running internally in Docker network
+
+2. **Access the Docker application**:
+   - **API Dashboard**: [http://127.0.0.1:8001/](http://127.0.0.1:8001/) or [http://localhost:8001/](http://localhost:8001/)
+   - **Swagger UI**: [http://127.0.0.1:8001/docs/](http://127.0.0.1:8001/docs/)
+   - **System Health**: [http://127.0.0.1:8001/health/](http://127.0.0.1:8001/health/)
+   - **Admin Portal**: [http://127.0.0.1:8001/admin/](http://127.0.0.1:8001/admin/)
+
+3. **Check container status and logs**:
+   ```bash
+   docker-compose ps
+   docker-compose logs -f web
+   ```
+
+4. **Stop Docker stack**:
+   ```bash
+   docker-compose down
+   ```
+
+---
+
+### Development Port Strategy & Port Collision Prevention
+
+To prevent host port collisions between local Django and Docker containers:
+- **Local Django**: Listens on host port **`8000`** (`http://127.0.0.1:8000/`).
+- **Docker Web Container**: Listens on host port **`8001`** (`http://127.0.0.1:8001/`), forwarding to internal container port `8000`.
+- Both environments can run simultaneously without socket collisions.
+- In production, configure `WEB_HOST_PORT=8000` in `.env` if binding directly to port 8000 behind Nginx.
+
+**Troubleshooting Port Collisions**:
+If you receive `bind: Only one usage of each socket address is normally permitted`:
+1. Check what is holding the port:
+   ```powershell
+   Get-NetTCPConnection -LocalPort 8000, 8001 | Format-Table -AutoSize
+   ```
+2. Stop the local process or run `docker-compose down`.
 
 ---
 
@@ -389,6 +397,17 @@ AI_SCAN_CONCURRENCY_LIMIT=15
 
 # Push Notifications
 FIREBASE_CREDENTIALS_PATH=my-closly-firebase-adminsdk.json
+
+# Transactional Email (AWS SES SMTP - Frankfurt eu-central-1)
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=email-smtp.eu-central-1.amazonaws.com
+EMAIL_PORT=587
+EMAIL_USE_TLS=True
+EMAIL_HOST_USER=<AWS_SES_SMTP_USERNAME_e.g._AKIA...>
+EMAIL_HOST_PASSWORD=<AWS_SES_SMTP_PASSWORD>
+DEFAULT_FROM_EMAIL=noreply@myclosly.com
+SERVER_EMAIL=noreply@myclosly.com
+EMAIL_TIMEOUT=10
 
 # Affiliate Data Feeds
 AWIN_FEED_URL=

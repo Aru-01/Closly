@@ -184,9 +184,9 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     preferred_language = models.CharField(
         max_length=10,
-        choices=[('en', 'English'), ('hi', 'Hindi'), ('pt', 'Portuguese')],
+        choices=[('de', 'German'), ('en', 'English')],
         default='en',
-        help_text=_("User's preferred language for API responses")
+        help_text=_("User's preferred language for interface and notifications (de/en)")
     )
 
     referral_code = models.CharField(

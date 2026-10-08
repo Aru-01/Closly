@@ -1,7 +1,7 @@
 services:
   db:
     image: postgres:16-alpine
-    container_name: closly_postgres
+    container_name: myclosly_postgres
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DB_NAME:-Closly}
@@ -16,10 +16,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   redis:
     image: redis:7-alpine
-    container_name: closly_redis
+    container_name: myclosly_redis
     restart: unless-stopped
     ports:
       - "127.0.0.1:6379:6379"
@@ -30,10 +35,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   web:
     build: .
-    container_name: closly_web
+    image: myclosly_app:latest
+    container_name: myclosly_web
     restart: unless-stopped
     command: >
       sh -c "python manage.py migrate --noinput &&
@@ -42,10 +53,12 @@ services:
     env_file:
       - .env
     volumes:
-      - .:/app
       - ./media:/app/media
+      - static_volume:/app/staticfiles
     ports:
-      - "8000:8000"
+      # P-20: Host port binding. Defaults to 8001 for local Docker development to prevent
+      # collision with host runserver (8000), but configurable via WEB_HOST_PORT (e.g. 8000 in prod).
+      - "127.0.0.1:${WEB_HOST_PORT:-8001}:8000"
     environment:
       - DB_ENGINE=django.db.backends.postgresql
       - DB_NAME=${DB_NAME:-Closly}
@@ -57,21 +70,32 @@ services:
       - REDIS_PORT=6379
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - SECURE_SSL_REDIRECT=${DOCKER_SECURE_SSL_REDIRECT:-False}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/health/ping/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   celery_worker:
-    build: .
-    container_name: closly_celery_worker
+    image: myclosly_app:latest
+    container_name: myclosly_celery_worker
     restart: unless-stopped
-    command: celery -A Config worker -l info
+    command: celery -A Config worker -l info --concurrency=4
     env_file:
       - .env
     volumes:
-      - .:/app
       - ./media:/app/media
     environment:
       - DB_ENGINE=django.db.backends.postgresql
@@ -85,20 +109,23 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
     depends_on:
-      db:
+      web:
         condition: service_healthy
       redis:
         condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
   celery_beat:
-    build: .
-    container_name: closly_celery_beat
+    image: myclosly_app:latest
+    container_name: myclosly_celery_beat
     restart: unless-stopped
     command: celery -A Config beat -l info
     env_file:
       - .env
-    volumes:
-      - .:/app
     environment:
       - DB_ENGINE=django.db.backends.postgresql
       - DB_NAME=${DB_NAME:-Closly}
@@ -111,11 +138,17 @@ services:
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
     depends_on:
-      db:
+      web:
         condition: service_healthy
       redis:
         condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
 
 volumes:
   postgres_data:
   redis_data:
+  static_volume:

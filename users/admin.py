@@ -195,17 +195,32 @@ class AccountDeletionRequestAdmin(ModelAdmin):
         return custom_urls + urls
 
     def process_single_approval(self, request, req_id):
+        """
+        Enforce safe two-step POST confirmation for irreversible account purge (P-07).
+        GET: Renders confirmation template with warning.
+        POST: Executes purge_and_anonymize_user atomically.
+        """
         req = self.get_object(request, str(req_id))
-        if req:
-            if req.user:
-                purge_and_anonymize_user(req.user)
-            req.status = 'completed'
-            req.save()
-            self.message_user(
+        if not req:
+            self.message_user(request, "Deletion request not found.", messages.ERROR)
+            return redirect('admin:users_accountdeletionrequest_changelist')
+
+        if request.method != 'POST':
+            return render(
                 request,
-                f"Account deletion for {req.email} accepted. Data export email sent and private data wiped.",
-                messages.SUCCESS
+                'admin/users/accountdeletionrequest/confirm_purge.html',
+                {'req': req, 'opts': self.model._meta}
             )
+
+        if req.user:
+            purge_and_anonymize_user(req.user)
+        req.status = 'completed'
+        req.save()
+        self.message_user(
+            request,
+            f"Account deletion for {req.email} accepted. Data export email sent and private data wiped.",
+            messages.SUCCESS
+        )
         return redirect('admin:users_accountdeletionrequest_changelist')
 
     def changeform_view(self, request, object_id=None, form_url='', extra_context=None):

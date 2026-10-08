@@ -196,7 +196,7 @@ def save_profile_picture_from_url(user, url):
         return False
 
     if not is_safe_avatar_url(url):
-        logger.warning(f"Rejected unsafe avatar URL for user {getattr(user, 'email', '')}: {url}")
+        logger.warning(f"Rejected unsafe avatar URL for user {getattr(user, 'id', '')}: {url}")
         return False
 
     import uuid
@@ -222,12 +222,12 @@ def save_profile_picture_from_url(user, url):
 
                 filename = f"social_{uuid.uuid4().hex[:12]}.jpg"
                 user.profile_picture.save(filename, ContentFile(output_buffer.getvalue()), save=True)
-                logger.info(f"Successfully sanitized and saved social avatar for user {user.email}")
+                logger.info(f"Successfully sanitized and saved social avatar for user {user.id}")
                 return True
         else:
             logger.warning(f"Failed to fetch profile picture from {url}: status {response.status_code}")
     except Exception as e:
-        logger.warning(f"Could not download profile picture from {url} for user {user.email}: {e}")
+        logger.warning(f"Could not download profile picture from {url} for user {user.id}: {e}")
 
     return False
 

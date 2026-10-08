@@ -87,10 +87,11 @@ class ApiRootView(APIView):
 )
 class HealthCheckView(APIView):
     """
-    Production health check and heartbeat endpoint.
+    Production health check and readiness endpoint (P-33, Spec §1.1).
     - Tests database connection
     - Tests Redis connectivity
-    - Returns HTTP 200 if healthy, HTTP 503 if critical service is down
+    - Tests Celery background broker
+    - Returns HTTP 200 if all healthy, HTTP 503 if any required subsystem is down.
     """
     permission_classes = [AllowAny]
     authentication_classes = []
@@ -100,7 +101,7 @@ class HealthCheckView(APIView):
         health_status = {
             'status': 'healthy',
             'timestamp': timezone.now().isoformat(),
-            'service': 'closly_backend',
+            'service': 'myclosly_backend',
             'version': '2.0.0',
             'checks': {},
         }
@@ -119,32 +120,54 @@ class HealthCheckView(APIView):
             is_healthy = False
             health_status['checks']['database'] = {
                 'status': 'down',
-                'error': str(e),
+                'error': 'Database query failed or connection unavailable',
             }
 
-        # 2. Redis / Channel Layer Check
+        # 2. Redis / Cache Check
         try:
             redis_host = getattr(settings, 'REDIS_HOST', '127.0.0.1')
             redis_port = getattr(settings, 'REDIS_PORT', 6379)
             use_in_memory = getattr(settings, 'USE_IN_MEMORY_CHANNELS', False)
             if use_in_memory:
-                health_status['checks']['cache_broker'] = {
+                health_status['checks']['redis'] = {
                     'status': 'up',
                     'backend': 'InMemoryChannelLayer',
                 }
             else:
                 import redis
-                r = redis.Redis(host=redis_host, port=int(redis_port), socket_timeout=2)
+                r = redis.Redis(host=redis_host, port=int(redis_port), socket_timeout=2, socket_connect_timeout=2)
                 r.ping()
-                health_status['checks']['cache_broker'] = {
+                health_status['checks']['redis'] = {
                     'status': 'up',
-                    'backend': 'redis',
                     'host': f"{redis_host}:{redis_port}",
                 }
         except Exception as e:
-            health_status['checks']['cache_broker'] = {
-                'status': 'degraded',
-                'warning': str(e),
+            is_healthy = False
+            health_status['checks']['redis'] = {
+                'status': 'down',
+                'error': 'Redis connection unavailable or ping timed out',
+            }
+
+        # 3. Celery / Background Task Broker Check
+        try:
+            broker_url = getattr(settings, 'CELERY_BROKER_URL', '')
+            if broker_url:
+                from kombu import Connection
+                with Connection(broker_url, connect_timeout=2) as conn:
+                    conn.connect()
+                health_status['checks']['celery_broker'] = {
+                    'status': 'up',
+                }
+            else:
+                health_status['checks']['celery_broker'] = {
+                    'status': 'up',
+                    'backend': 'default',
+                }
+        except Exception as e:
+            is_healthy = False
+            health_status['checks']['celery_broker'] = {
+                'status': 'down',
+                'error': 'Celery broker connection failed',
             }
 
         latency_ms = round((time.time() - start_time) * 1000, 2)
@@ -176,7 +199,7 @@ class PingHeartbeatView(APIView):
         return JsonResponse({
             'status': 'pong',
             'time': timezone.now().isoformat(),
-            'message': 'Closly server is warm and operational.'
+            'message': 'myclosly server is warm and operational.'
         }, status=200)
 
 

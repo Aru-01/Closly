@@ -16,6 +16,7 @@ from .analytics_views import (
 
 from .scanner_views import (
     ClosetAIScanView,
+    ClosetAIScanPollView,
     scan_clothing_image,
 )
 
@@ -34,6 +35,7 @@ __all__ = [
     'ClosetScoreDashboardView',
     'ClosetAuditView',
     'ClosetAIScanView',
+    'ClosetAIScanPollView',
     'scan_clothing_image',
     'FitCheckCreateView',
     'FitCheckDetailView',

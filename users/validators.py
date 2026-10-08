@@ -174,13 +174,17 @@ def validate_date_of_birth(dob):
         )
 
 
-def validate_image_file(image, max_mb=30):
+def validate_image_file(image, max_mb=None):
     """
-    Validate uploaded image file size and format.
-    Default maximum size is 30MB.
+    Validate uploaded image file size, magic bytes, decompression safety, and format.
+    Standardized maximum size is 10MB across all subsystems (P-12).
     """
     if not image:
         return image
+
+    from django.conf import settings
+    if max_mb is None:
+        max_mb = getattr(settings, 'MYC_MAX_UPLOAD_MB', 10)
 
     max_size = max_mb * 1024 * 1024
     if image.size > max_size:
@@ -199,11 +203,13 @@ def validate_image_file(image, max_mb=30):
                 code='invalid_image_format'
             )
 
-    # Verify image integrity and magic bytes with Pillow
+    # Verify image integrity, magic bytes, and decompression bomb protection with Pillow
     if hasattr(image, 'read'):
         try:
             image.seek(0)
             from PIL import Image
+            # Decompression bomb guard: cap maximum pixels at 25 million (~5000x5000)
+            Image.MAX_IMAGE_PIXELS = 25_000_000
             try:
                 import pillow_heif
                 pillow_heif.register_heif_opener()
@@ -214,7 +220,7 @@ def validate_image_file(image, max_mb=30):
             image.seek(0)
         except Exception:
             raise ValidationError(
-                _('Uploaded file is corrupted or not a valid image format.'),
+                _('Uploaded file is corrupted, exceeds safe resolution, or is not a valid image format.'),
                 code='corrupted_image'
             )
 

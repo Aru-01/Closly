@@ -87,11 +87,11 @@ def build_affiliate_url(product, click=None, click_ref=None, surface='for_you') 
         merchant_link = (product.merchant_deep_link or '').strip()
         if _is_usable_web_url(merchant_link):
             if product.source == AffiliateProduct.SOURCE_AWIN:
-                publisher_id = getattr(settings, 'AWIN_PUBLISHER_ID', '2612792')
+                publisher_id = getattr(settings, 'AWIN_PUBLISHER_ID', None) or '2612792'
                 encoded_url = quote(merchant_link, safe='')
                 raw_link = f'https://www.awin1.com/cread.php?awinaffid={publisher_id}&ued={encoded_url}'
             elif product.source == AffiliateProduct.SOURCE_RAKUTEN:
-                rakuten_id = '7OwTtzNBeMo'
+                rakuten_id = getattr(settings, 'RAKUTEN_PUBLISHER_ID', None) or getattr(settings, 'RAKUTEN_PUBLISHER_SID', None) or '7OwTtzNBeMo'
                 encoded_url = quote(merchant_link, safe='')
                 raw_link = f'https://click.linksynergy.com/link?id={rakuten_id}&type=15&murl={encoded_url}'
             else:

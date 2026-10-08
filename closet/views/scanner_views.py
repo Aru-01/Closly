@@ -73,15 +73,108 @@ class ClosetAIScanView(APIView):
                 'errors': {'image': ['Image file is required for AI scanning.']}
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Validate image format and integrity
+        # Validate image format and integrity (P-12: standardized 10MB limit)
         try:
-            validate_image_file(image_file, max_mb=30)
+            validate_image_file(image_file, max_mb=10)
         except Exception as e:
             return Response({
                 'success': False,
                 'message': 'Invalid image file.',
                 'errors': {'image': [str(e)]}
             }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Check for explicit sync mode or auto_save query parameters
+        auto_save_param = request.query_params.get('auto_save', '').lower()
+        save_all_param = request.query_params.get('save_all', '').lower() in ('true', '1', 'yes')
+        sync_param = request.query_params.get('sync', '').lower() in ('true', '1', 'yes')
+        is_sync = sync_param or (auto_save_param in ('true', '1', 'yes', 'all')) or save_all_param
+
+        # P-05: Non-blocking Asynchronous AI Processing by default
+        if not is_sync:
+            from closet.ai.gateway import AIGateway
+            from closet.exceptions import AIServiceUnavailableError, AIDailyLimitExceededError, AIImageValidationError
+            from closet.utils import validate_and_sanitize_image, persist_sanitized_image
+            from closet.models import FitCheck
+            from closet.tasks import process_fit_check_task
+
+            try:
+                AIGateway.check_preconditions(request.user)
+            except AIServiceUnavailableError as e:
+                return Response({
+                    'success': False,
+                    'error_code': 'service_unavailable',
+                    'message': str(e),
+                    'errors': {'server': [str(e)]}
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE, headers={'Retry-After': '5'})
+            except AIDailyLimitExceededError as e:
+                return Response({
+                    'success': False,
+                    'error_code': 'quota_exceeded',
+                    'message': str(e),
+                    'errors': {'quota': [str(e)]}
+                }, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+            try:
+                sanitized_bytes, photo_sha256, mime = validate_and_sanitize_image(image_file)
+            except AIImageValidationError as e:
+                return Response({
+                    'success': False,
+                    'error_code': 'invalid_image',
+                    'message': str(e),
+                    'errors': {'image': [str(e)]}
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            existing_item = ClosetItem.objects.filter(user=request.user, photo_sha256=photo_sha256).first()
+            if existing_item:
+                serializer = ClosetItemSerializer(existing_item, context={'request': request})
+                return Response({
+                    'success': True,
+                    'status': 'dedupe_hit',
+                    'message': f"Item recognized in your digital closet! '{existing_item.name}'.",
+                    'data': {
+                        'item': serializer.data,
+                        'is_duplicate': True,
+                    }
+                }, status=status.HTTP_200_OK)
+
+            saved_path = persist_sanitized_image(
+                sanitized_bytes,
+                folder=f"fit_checks/{request.user.id}",
+                prefix="scan_"
+            )
+
+            fit_check = FitCheck.objects.create(
+                user=request.user,
+                photo=saved_path,
+                photo_sha256=photo_sha256,
+                status='queued'
+            )
+
+            AIGateway.increment_user_quota(request.user)
+
+            try:
+                process_fit_check_task.delay(str(fit_check.id))
+            except Exception as task_err:
+                logger.error(f"Celery task enqueue failed: {task_err}", exc_info=True)
+                fit_check.status = 'failed'
+                fit_check.error_code = 'task_queue_unavailable'
+                fit_check.save(update_fields=['status', 'error_code'])
+                return Response({
+                    'success': False,
+                    'error_code': 'queue_unavailable',
+                    'message': 'Background task queue is temporarily unavailable. Please retry shortly.',
+                    'errors': {'server': ['Task queue unavailable.']}
+                }, status=status.HTTP_503_SERVICE_UNAVAILABLE, headers={'Retry-After': '5'})
+
+            return Response({
+                'success': True,
+                'status': 'queued',
+                'scan_id': str(fit_check.id),
+                'fit_check_id': str(fit_check.id),
+                'poll_url': f"/api/closet/ai-scan/{fit_check.id}/",
+                'poll_after_s': 3,
+                'message': 'Garment image queued for asynchronous AI analysis.'
+            }, status=status.HTTP_202_ACCEPTED)
 
         # Run AI Scanner (protected by killswitch, rate limits, gate, and user-scoped cache)
         try:
@@ -301,5 +394,32 @@ class ClosetAIScanView(APIView):
             'success': True,
             'message': 'Garment image scanned successfully. Pre-fill data generated.',
             'data': client_data
+        }, status=status.HTTP_200_OK)
+
+
+class ClosetAIScanPollView(APIView):
+    """
+    GET /api/closet/ai-scan/<uuid:pk>/
+    Poll status and retrieve result of an asynchronous AI garment scan (P-05).
+    """
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def get(self, request, pk):
+        from closet.models import FitCheck
+        from closet.serializers import FitCheckSerializer
+        fit_check = FitCheck.objects.filter(id=pk, user=request.user).first()
+        if not fit_check:
+            return Response({
+                'success': False,
+                'error_code': 'not_found',
+                'message': 'AI scan job not found.'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = FitCheckSerializer(fit_check, context={'request': request})
+        return Response({
+            'success': True,
+            'status': fit_check.status,
+            'data': serializer.data
         }, status=status.HTTP_200_OK)
 

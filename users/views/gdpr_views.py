@@ -46,15 +46,15 @@ class ProfileDataDeletionAPIView(APIView):
         if user:
             deletion_request, created = ProfileDataDeletionRequest.objects.get_or_create(user=user, defaults={'email': email})
             
-            verification_link = request.build_absolute_uri(
-                reverse('users:verify_profile_data_deletion', kwargs={'token': str(deletion_request.verification_token)})
-            )
+            backend_base = getattr(settings, 'BACKEND_URL', '').rstrip('/')
+            path = reverse('users:verify_profile_data_deletion', kwargs={'token': str(deletion_request.verification_token)})
+            verification_link = f"{backend_base}{path}" if backend_base else request.build_absolute_uri(path)
             
             try:
-                from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@closly.com')
+                from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', 'noreply@myclosly.com')
                 send_mail(
                     'Verify Profile Data Deletion Request',
-                    f'Click the following link to delete your profile data: {verification_link}',
+                    f'Click the following link to confirm profile data erasure: {verification_link}',
                     from_email,
                     [email],
                     fail_silently=False,
@@ -66,9 +66,9 @@ class ProfileDataDeletionAPIView(APIView):
 @extend_schema(
     tags=["Account Privacy & GDPR"],
     summary="Verify Profile Data Erasure Token",
-    description="Validates email token and scrubs profile attributes (name, bio, DOB, picture) while retaining account authentication.",
+    description="Renders confirmation UI on GET; executes profile data erasure strictly on verified POST (P-01).",
     responses={
-        200: OpenApiResponse(description="Profile data scrubbed successfully"),
+        200: OpenApiResponse(description="Confirmation UI rendered on GET; profile data scrubbed on POST"),
         400: OpenApiResponse(description="Invalid or expired verification token"),
     }
 )
@@ -77,6 +77,20 @@ class VerifyProfileDataDeletionView(APIView):
     authentication_classes = []
 
     def get(self, request, token):
+        """Safe GET handler: Validates token and renders confirmation UI without mutating state (P-01)"""
+        try:
+            deletion_request = ProfileDataDeletionRequest.objects.get(verification_token=token, status='pending')
+            return render(request, 'users/confirm_profile_data_deletion.html', {'token': token, 'email': deletion_request.email})
+        except ProfileDataDeletionRequest.DoesNotExist:
+            return standard_response(
+                success=False,
+                message="Invalid or expired verification link.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="INVALID_TOKEN"
+            )
+
+    def post(self, request, token):
+        """Mutating POST handler: Executes profile data erasure only on verified POST submission (P-01)"""
         try:
             deletion_request = ProfileDataDeletionRequest.objects.get(verification_token=token, status='pending')
             if deletion_request.user:
@@ -86,20 +100,25 @@ class VerifyProfileDataDeletionView(APIView):
                 user.gender = None
                 user.occupation = None
                 user.country = None
+                user.city = None
                 user.bio = None
                 if user.profile_picture:
-                    user.profile_picture.delete(save=False)
+                    try:
+                        user.profile_picture.delete(save=False)
+                    except Exception as err:
+                        logger.warning(f"Could not delete profile picture for user {user.id}: {err}")
                 user.save()
-                
-                deletion_request.status = 'completed'
-                deletion_request.save()
-                return render(request, 'users/delete_profile_data_confirmed.html')
-            else:
-                deletion_request.status = 'completed'
-                deletion_request.save()
-                return render(request, 'users/delete_profile_data_confirmed.html')
+            
+            deletion_request.status = 'completed'
+            deletion_request.save()
+            return render(request, 'users/delete_profile_data_confirmed.html')
         except ProfileDataDeletionRequest.DoesNotExist:
-            return standard_response(success=False, message="Invalid or expired verification link.", status_code=status.HTTP_400_BAD_REQUEST)
+            return standard_response(
+                success=False,
+                message="Invalid or expired verification link.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="INVALID_TOKEN"
+            )
 
 
 User = get_user_model()

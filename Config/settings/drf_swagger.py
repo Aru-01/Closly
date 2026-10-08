@@ -1,14 +1,17 @@
 from datetime import timedelta
 from decouple import config
-from .base import SECRET_KEY
+from .base import SECRET_KEY, DEBUG, IS_DEV_ENV
 
-# Django REST Framework Configuration
+# Django REST Framework Configuration (P-16)
 REST_FRAMEWORK = {
     "NUM_PROXIES": 1,
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
     "EXCEPTION_HANDLER": "Config.exceptions.custom_exception_handler",
     "DEFAULT_AUTHENTICATION_CLASSES": (
         "rest_framework_simplejwt.authentication.JWTAuthentication",
+    ),
+    "DEFAULT_PERMISSION_CLASSES": (
+        "rest_framework.permissions.IsAuthenticated",
     ),
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",
@@ -27,19 +30,31 @@ REST_FRAMEWORK = {
     },
 }
 
-# CORS Configuration
-CORS_ALLOW_ALL_ORIGINS = config("CORS_ALLOW_ALL_ORIGINS", default=True, cast=bool)
+# CORS Configuration (P-06)
+CORS_ALLOW_ALL_ORIGINS = config("CORS_ALLOW_ALL_ORIGINS", default=False, cast=bool)
 CORS_ALLOW_CREDENTIALS = True
+raw_cors_origins = config("CORS_ALLOWED_ORIGINS", default="")
 CORS_ALLOWED_ORIGINS = [
     "https://api.myclosly.com",
     "https://myclosly.com",
     "https://www.myclosly.com",
-    "https://charissa-intuitable-corroboratorily.ngrok-free.dev",
-    "http://localhost:3000",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "http://10.0.2.2:8000",
 ]
+for o in raw_cors_origins.split(","):
+    o = o.strip()
+    if o and o not in CORS_ALLOWED_ORIGINS:
+        CORS_ALLOWED_ORIGINS.append(o)
+if IS_DEV_ENV:
+    CORS_ALLOWED_ORIGINS.extend([
+        "https://charissa-intuitable-corroboratorily.ngrok-free.dev",
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8001",
+        "http://127.0.0.1:8001",
+        "http://10.0.2.2:8000",
+        "http://10.0.2.2:8001",
+    ])
+
 CORS_ALLOW_HEADERS = [
     "accept",
     "accept-encoding",
@@ -50,8 +65,9 @@ CORS_ALLOW_HEADERS = [
     "user-agent",
     "x-csrftoken",
     "x-requested-with",
-    "ngrok-skip-browser-warning",
 ]
+if DEBUG:
+    CORS_ALLOW_HEADERS.append("ngrok-skip-browser-warning")
 
 # Simple JWT Configuration (Lifetimes configurable via .env)
 # Default: 30 minutes for access, 30 days for refresh
@@ -101,11 +117,11 @@ SIMPLE_JWT = {
     "SLIDING_TOKEN_REFRESH_LIFETIME": timedelta(days=7),
 }
 
-# OpenAPI & Swagger Documentation Settings (drf-spectacular)
+# OpenAPI & Swagger Documentation Settings (drf-spectacular) (P-18)
 SPECTACULAR_SETTINGS = {
-    'TITLE': 'Closly API Ecosystem',
+    'TITLE': 'myclosly API Ecosystem',
     'DESCRIPTION': (
-        'Comprehensive OpenAPI 3.0 specification for Closly - Intelligent Digital Wardrobe, '
+        'Comprehensive OpenAPI 3.0 specification for myclosly - Intelligent Digital Wardrobe, '
         'Fashion Social Network, AI Stylist & Affiliate E-Commerce Platform.\n\n'
         '### Authentication\n'
         'Most endpoints require a JWT Bearer Token in the `Authorization` header:\n'
@@ -115,6 +131,7 @@ SPECTACULAR_SETTINGS = {
     ),
     'VERSION': '2.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
+    'SERVE_PERMISSIONS': ['rest_framework.permissions.IsAdminUser'] if not IS_DEV_ENV else ['rest_framework.permissions.AllowAny'],
     'COMPONENT_SPLIT_REQUEST': True,
     'SCHEMA_PATH_PREFIX': r'/api/',
     'SWAGGER_UI_SETTINGS': {

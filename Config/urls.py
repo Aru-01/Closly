@@ -2,7 +2,12 @@ from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
-from users.views import PublicProfileWebView, GdprDataExportView, DeviceRegistrationView
+from users.views import (
+    PublicProfileWebView,
+    GdprDataExportView,
+    DeviceRegistrationView,
+    ProtectedMediaServeView,
+)
 from drf_spectacular.views import (
     SpectacularAPIView,
     SpectacularSwaggerView,
@@ -31,7 +36,10 @@ urlpatterns = [
         PostmanCollectionDownloadView.as_view(),
         name="postman-download",
     ),
-    # Health Check & Uptime Heartbeat Pings (prevents cold starts)
+    # Health Check & Uptime Heartbeat Pings (P-33: standardized /health and /v1/health)
+    path("health/", HealthCheckView.as_view(), name="health-check-root"),
+    path("health", HealthCheckView.as_view(), name="health-check-root-noslash"),
+    path("v1/health", HealthCheckView.as_view(), name="v1-health-check"),
     path("api/health/", HealthCheckView.as_view(), name="health-check"),
     path("api/health/ping/", PingHeartbeatView.as_view(), name="health-ping"),
     # Spec root endpoints (#5, #6, #8)
@@ -50,14 +58,18 @@ urlpatterns = [
     path(
         "u/<str:user_id>/", PublicProfileWebView.as_view(), name="public-profile-short"
     ),
-]
-
-from django.views.static import serve
-from django.urls import re_path
-
-urlpatterns += [
-    re_path(r"^media/(?P<path>.*)$", serve, {"document_root": settings.MEDIA_ROOT}),
+    # P-04: Private media delivery with signed tokens or authentication
+    path(
+        "api/media/serve/<path:file_path>",
+        ProtectedMediaServeView.as_view(),
+        name="protected-media-serve",
+    ),
 ]
 
 if settings.DEBUG:
-    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
+    from django.views.static import serve
+    from django.urls import re_path
+    urlpatterns += [
+        re_path(r"^media/(?P<path>.*)$", serve, {"document_root": settings.MEDIA_ROOT}),
+        *static(settings.STATIC_URL, document_root=settings.STATIC_ROOT),
+    ]

@@ -396,7 +396,7 @@ class AccountDeleteSerializer(serializers.Serializer):
 
 
 class LanguagePreferenceSerializer(serializers.Serializer):
-    language = serializers.ChoiceField(choices=[('de', 'German'), ('en', 'English'), ('hi', 'Hindi'), ('pt', 'Portuguese')])
+    language = serializers.ChoiceField(choices=[('de', 'German'), ('en', 'English')])
 
 
 class UserPreferenceSerializer(serializers.ModelSerializer):

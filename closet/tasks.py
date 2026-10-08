@@ -30,7 +30,7 @@ def recalculate_wardrobe_analytics_task(user_id):
         # Update cached stats or reward profile
         profile = UserRewardProfile.objects.filter(user=user).first()
         if profile and total_items > 0:
-            logger.info(f"Recomputed wardrobe analytics for user {user.email}: {total_items} items.")
+            logger.info(f"Recomputed wardrobe analytics for user {user.id}: {total_items} items.")
         return total_items
     except Exception as e:
         logger.error(f"Error recalculating wardrobe analytics for user {user_id}: {e}")

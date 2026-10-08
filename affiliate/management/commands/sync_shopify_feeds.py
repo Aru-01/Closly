@@ -370,7 +370,12 @@ class Command(BaseCommand):
             raise
 
     def _fetch_with_backoff(self, url: str) -> Optional[Dict[str, Any]]:
-        """Fetch JSON with polite spacing and exponential 429 backoff."""
+        """Fetch JSON with polite spacing and exponential 429 backoff (SSRF protected per P-31)."""
+        from users.utils.common_utils import is_ssrf_safe_url
+        if not is_ssrf_safe_url(url, allowed_schemes=('https',)):
+            self.stdout.write(self.style.ERROR(f"  SSRF Guard: Blocked unsafe request to {url}"))
+            return None
+
         max_retries = 3
         backoff_sec = 2.0
 

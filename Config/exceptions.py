@@ -1,3 +1,4 @@
+import uuid
 import logging
 from rest_framework.views import exception_handler
 from rest_framework.response import Response
@@ -12,10 +13,11 @@ logger = logging.getLogger(__name__)
 
 def custom_exception_handler(exc, context):
     """
-    Global exception handler for Closly REST API.
+    Global exception handler for Closly REST API (P-17).
     Guarantees that ALL responses — including unhandled Python exceptions,
-    database errors, and missing object lookups — return consistent JSON
+    database outages, and missing object lookups — return consistent JSON
     instead of raw HTML 500 error pages.
+    Never leaks SQL query details, table constraints, or internal tracebacks.
     """
     # 1. First, check if DRF's built-in handler recognizes this exception
     response = exception_handler(exc, context)
@@ -57,8 +59,9 @@ def custom_exception_handler(exc, context):
         return response
 
     # 2. Handle uncaught exceptions that DRF standard handler returns None for:
+    error_id = str(uuid.uuid4())
     view_name = context.get('view').__class__.__name__ if context.get('view') else 'UnknownView'
-    logger.error(f"Intercepted unhandled exception in {view_name}: {exc}", exc_info=True)
+    logger.error(f"Intercepted unhandled exception [{error_id}] in {view_name}: {exc}", exc_info=True)
 
     # A. Resource Not Found (e.g. Model.DoesNotExist, Http404)
     if isinstance(exc, (ObjectDoesNotExist, Http404)):
@@ -66,7 +69,7 @@ def custom_exception_handler(exc, context):
             "success": False,
             "code": "NOT_FOUND",
             "message": "The requested resource was not found.",
-            "errors": {"detail": str(exc)}
+            "errors": {"detail": "Resource not found."}
         }, status=status.HTTP_404_NOT_FOUND)
 
     # B. Token & Authentication Errors (TokenError, InvalidToken)
@@ -75,19 +78,27 @@ def custom_exception_handler(exc, context):
             "success": False,
             "code": "TOKEN_INVALID",
             "message": "Authentication token is invalid or expired. Please log in again.",
-            "errors": {"detail": str(exc)}
+            "errors": {"detail": "Token invalid or expired."}
         }, status=status.HTTP_401_UNAUTHORIZED)
 
-    # C. Database Constraint / Integrity Errors
-    if isinstance(exc, (IntegrityError, DatabaseError)):
-        err_str = str(exc)
-        friendly_msg = "A record with this information already exists." if "unique constraint" in err_str.lower() else "Database constraint violation."
+    # C. Database Outage & Integrity Errors (P-17: Never leak SQL constraint names or raw SQL)
+    if isinstance(exc, DatabaseError):
+        if isinstance(exc, IntegrityError):
+            return Response({
+                "success": False,
+                "code": "RESOURCE_CONFLICT",
+                "message": "A record with this information already exists.",
+                "errors": {"detail": "Unique constraint or resource conflict."}
+            }, status=status.HTTP_409_CONFLICT)
+
+        # Database connection outage or server-side DB failure -> 503 Service Unavailable
         return Response({
             "success": False,
-            "code": "RESOURCE_CONFLICT",
-            "message": friendly_msg,
-            "errors": {"detail": err_str}
-        }, status=status.HTTP_400_BAD_REQUEST)
+            "code": "DATABASE_UNAVAILABLE",
+            "message": "Database service is temporarily unavailable. Please retry in a few moments.",
+            "error_id": error_id,
+            "errors": {"detail": "Database unavailable."}
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE, headers={'Retry-After': '5'})
 
     # D. Django Validation Errors
     if isinstance(exc, DjangoValidationError):
@@ -95,22 +106,14 @@ def custom_exception_handler(exc, context):
             "success": False,
             "code": "VALIDATION_ERROR",
             "message": "Validation error.",
-            "errors": {"detail": exc.message_dict if hasattr(exc, 'message_dict') else exc.messages}
+            "errors": exc.message_dict if hasattr(exc, 'message_dict') else {"detail": exc.messages}
         }, status=status.HTTP_400_BAD_REQUEST)
 
-    # E. Invalid Parameter / Value / Type / Key Errors
-    if isinstance(exc, (ValueError, KeyError, TypeError)):
-        return Response({
-            "success": False,
-            "code": "INVALID_PARAMETER",
-            "message": f"Invalid parameter or data format: {str(exc)}",
-            "errors": {"detail": str(exc)}
-        }, status=status.HTTP_400_BAD_REQUEST)
-
-    # F. Absolute Fallback for unexpected 500: Return Clean JSON (Never HTML!)
+    # E. Absolute Fallback for unexpected 500: Return Clean Sanitized JSON (Never leak str(exc) or internal paths)
     return Response({
         "success": False,
         "code": "INTERNAL_SERVER_ERROR",
         "message": "An unexpected server error occurred. Please try again.",
-        "errors": {"detail": str(exc)}
+        "error_id": error_id,
+        "errors": {"detail": f"An internal error occurred. Error ID: {error_id}"}
     }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

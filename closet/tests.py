@@ -158,11 +158,27 @@ class ClosetApiTests(TestCase):
         uploaded_file = SimpleUploadedFile("navy_shirt.jpg", file_obj.read(), content_type="image/jpeg")
 
         url = '/api/closet/ai-scan/'
-        response = self.client.post(url, {'image': uploaded_file}, format='multipart')
+        with patch('closet.tasks.process_fit_check_task.delay') as mock_task:
+            response = self.client.post(url, {'image': uploaded_file}, format='multipart')
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertTrue(response.data['success'])
-        data = response.data['data']
+            self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+            self.assertTrue(response.data['success'])
+            self.assertEqual(response.data['status'], 'queued')
+            self.assertIn('scan_id', response.data)
+            self.assertIn('poll_url', response.data)
+            mock_task.assert_called_once()
+
+            # Verify polling endpoint works
+            poll_resp = self.client.get(response.data['poll_url'])
+            self.assertEqual(poll_resp.status_code, status.HTTP_200_OK)
+            self.assertEqual(poll_resp.data['status'], 'queued')
+
+        # Also verify sync fallback mode returns 200 with extracted garment data
+        uploaded_file.seek(0)
+        sync_resp = self.client.post('/api/closet/ai-scan/?sync=true', {'image': uploaded_file}, format='multipart')
+        self.assertEqual(sync_resp.status_code, status.HTTP_200_OK)
+        self.assertTrue(sync_resp.data['success'])
+        data = sync_resp.data['data']
         self.assertIn('name', data)
         self.assertIn('category', data)
         self.assertIn('color', data)
@@ -192,7 +208,7 @@ class ClosetApiTests(TestCase):
 
         uploaded_file = SimpleUploadedFile("screenshot.png", file_obj.read(), content_type="image/png")
         with patch('closet.ai_scanner.scanner.scan_clothing_image', return_value=mock_non_garment):
-            url = '/api/closet/ai-scan/'
+            url = '/api/closet/ai-scan/?sync=true'
             response = self.client.post(url, {'image': uploaded_file}, format='multipart')
             self.assertEqual(response.status_code, status.HTTP_200_OK)
             self.assertFalse(response.data['success'])
@@ -258,13 +274,14 @@ class ClosetApiTests(TestCase):
         file_obj.seek(0)
 
         uploaded_file = SimpleUploadedFile("overload.png", file_obj.read(), content_type="image/png")
-        with patch('closet.ai_scanner.scanner.scan_clothing_image', side_effect=TimeoutError("AI scanning service is currently experiencing very high demand.")):
+        # Test async task dispatch queue failure returns 503 with Retry-After header
+        with patch('closet.tasks.process_fit_check_task.delay', side_effect=Exception("Task queue broker connection failed")):
             url = '/api/closet/ai-scan/'
             response = self.client.post(url, {'image': uploaded_file}, format='multipart')
             self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
             self.assertFalse(response.data['success'])
             self.assertEqual(response.headers.get('Retry-After'), '5')
-            self.assertIn('very high demand', response.data['message'])
+            self.assertIn('queue', response.data['message'].lower())
 
     def test_ai_scan_sha256_cache_hit(self):
         from unittest.mock import patch

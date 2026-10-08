@@ -387,6 +387,11 @@ class OtherUserProfileView(APIView):
             is_online = False
             last_seen = None
 
+        # P-14: Data minimization - country and city only disclosed to self or mutual followers
+        can_view_location = is_self or is_mutual_following
+        disclosed_country = target_user.country if can_view_location else None
+        disclosed_city = target_user.city if can_view_location else None
+
         return Response({
             'success': True,
             'message': f"Profile of {target_user.name or 'User'} retrieved successfully.",
@@ -394,8 +399,8 @@ class OtherUserProfileView(APIView):
                 'id': str(target_user.id),
                 'name': target_user.name,
                 'bio': target_user.bio or '',
-                'country': target_user.country or '',
-                'city': target_user.city or '',
+                'country': disclosed_country,
+                'city': disclosed_city,
                 'profile_picture': pic_url,
                 'current_tier': tier,
                 'is_self': is_self,

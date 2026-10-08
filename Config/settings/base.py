@@ -5,37 +5,54 @@ from decouple import config
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-# Security
-SECRET_KEY = config(
-    "SECRET_KEY",
-    default="django-insecure-ah+qh6%9#=jnm-vw(y9=u3wf5#(30$w%=7#g8xz*r^m&+&l^4z"
-)
-DEBUG = config("DEBUG", default=True, cast=bool)
+# Security (P-03)
+SECRET_KEY = config("SECRET_KEY", default=None)
+if not SECRET_KEY:
+    import django.core.exceptions
+    raise django.core.exceptions.ImproperlyConfigured(
+        "CRITICAL SECURITY FAILURE: SECRET_KEY must be securely defined in environment! No insecure fallbacks permitted."
+    )
+if len(SECRET_KEY) < 50:
+    import django.core.exceptions
+    raise django.core.exceptions.ImproperlyConfigured(
+        "CRITICAL SECURITY FAILURE: SECRET_KEY must be at least 50 characters in length."
+    )
+
+import sys
+IS_TESTING = 'test' in sys.argv or any('test' in arg for arg in sys.argv)
+IS_RUNSERVER = 'runserver' in sys.argv or any('runserver' in arg for arg in sys.argv)
+DEBUG = config("DEBUG", default=False, cast=bool)
+IS_DEV_ENV = DEBUG or IS_RUNSERVER or IS_TESTING
 
 raw_allowed_hosts = config("ALLOWED_HOSTS", default="api.myclosly.com,localhost,127.0.0.1,10.0.2.2")
 ALLOWED_HOSTS = [
     h.strip().replace("https://", "").replace("http://", "").split("/")[0]
     for h in raw_allowed_hosts.split(",")
-    if h.strip()
+    if h.strip() and h.strip() != "*"
 ]
+if IS_DEV_ENV and "testserver" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append("testserver")
 
 CSRF_TRUSTED_ORIGINS = [
     "https://api.myclosly.com",
     "https://*.myclosly.com",
-    "http://api.myclosly.com",
-    "http://188.34.176.78",
-    "http://188.34.176.78:8000",
     "https://charissa-intuitable-corroboratorily.ngrok-free.dev",
-    "https://*.ngrok-free.dev",
-    "https://*.ngrok.io",
-    "http://localhost:8000",
-    "http://127.0.0.1:8000",
-    "http://10.0.2.2:8000",
 ]
+if IS_DEV_ENV:
+    CSRF_TRUSTED_ORIGINS.extend([
+        "http://localhost:8000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8001",
+        "http://127.0.0.1:8001",
+        "http://10.0.2.2:8000",
+        "http://10.0.2.2:8001",
+    ])
 raw_csrf_origins = config("CSRF_TRUSTED_ORIGINS", default="")
 for origin in raw_csrf_origins.split(","):
     origin = origin.strip()
     if origin and origin not in CSRF_TRUSTED_ORIGINS:
+        if not IS_DEV_ENV and origin.startswith("http://"):
+            continue
         CSRF_TRUSTED_ORIGINS.append(origin)
 
 # Application definition
@@ -130,12 +147,12 @@ DATABASES = {
         "PASSWORD": config("DB_PASSWORD", default=""),
         "HOST": db_host,
         "PORT": config("DB_PORT", default="5432"),
-        "CONN_MAX_AGE": config("DB_CONN_MAX_AGE", default=600, cast=int),
+        "CONN_MAX_AGE": config("DB_CONN_MAX_AGE", default=0, cast=int),
     }
 }
 
-# Cache Configuration
-USE_REDIS_CACHE = config("USE_REDIS_CACHE", default=False, cast=bool)
+# Cache Configuration (P-19)
+USE_REDIS_CACHE = config("USE_REDIS_CACHE", default=not DEBUG, cast=bool)
 if USE_REDIS_CACHE:
     redis_cache_host = config("REDIS_HOST", default="127.0.0.1")
     redis_cache_port = config("REDIS_PORT", default="6379")
@@ -143,13 +160,15 @@ if USE_REDIS_CACHE:
         "default": {
             "BACKEND": "django.core.cache.backends.redis.RedisCache",
             "LOCATION": f"redis://{redis_cache_host}:{redis_cache_port}/1",
+            "KEY_PREFIX": "myclosly",
+            "TIMEOUT": 300,
         }
     }
 else:
     CACHES = {
         "default": {
             "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-            "LOCATION": "closly-fast-cache",
+            "LOCATION": "myclosly-fast-cache",
         }
     }
 
@@ -237,24 +256,25 @@ else:
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Email Configuration
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = config("EMAIL_HOST", default="smtp.gmail.com")
+# Email Configuration (Requirement 38, P-29)
+EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
+EMAIL_HOST = config("EMAIL_HOST", default="email-smtp.eu-central-1.amazonaws.com")
 EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
 EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
 EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
 EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
-DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default=EMAIL_HOST_USER)
+DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@myclosly.com")
+SERVER_EMAIL = config("SERVER_EMAIL", default="noreply@myclosly.com")
 EMAIL_TIMEOUT = config("EMAIL_TIMEOUT", default=10, cast=int)
 
 # ==============================================================================
-# MYC_* Centralized Configuration & Brand Architecture (Audit U-10, U-14, U-32)
+# MYC_* Centralized Configuration & Brand Architecture (P-15, P-24)
 # ==============================================================================
-MYC_BRAND_NAME = config("MYC_BRAND_NAME", default="Closly")
-MYC_COMPANY_NAME = config("MYC_COMPANY_NAME", default="Closly Technologies GmbH")
+MYC_BRAND_NAME = config("MYC_BRAND_NAME", default="myclosly")
+MYC_COMPANY_NAME = config("MYC_COMPANY_NAME", default="myclosly Technologies GmbH")
 MYC_SUPPORT_EMAIL = config("MYC_SUPPORT_EMAIL", default="support@myclosly.com")
 MYC_PRIVACY_EMAIL = config("MYC_PRIVACY_EMAIL", default="privacy@myclosly.com")
-MYC_DEEP_LINK_SCHEME = config("MYC_DEEP_LINK_SCHEME", default="closly")
+MYC_DEEP_LINK_SCHEME = config("MYC_DEEP_LINK_SCHEME", default="myclosly")
 MYC_PUBLIC_BASE_URL = config("MYC_PUBLIC_BASE_URL", default="https://myclosly.com")
 MYC_DEFAULT_LANGUAGE = config("MYC_DEFAULT_LANGUAGE", default="de")
 MYC_REGISTRATION_MODE = config("MYC_REGISTRATION_MODE", default="open")  # 'open' or 'invite'
@@ -270,8 +290,14 @@ MYC_REFERRAL_POINTS = config("MYC_REFERRAL_POINTS", default=200, cast=int)
 MYC_LOGIN_HISTORY_RETENTION_DAYS = config("MYC_LOGIN_HISTORY_RETENTION_DAYS", default=90, cast=int)
 MYC_GDPR_JOB_RETENTION_DAYS = config("MYC_GDPR_JOB_RETENTION_DAYS", default=30, cast=int)
 
-# Production Cookie & HSTS Security (Audit U-33)
-if not DEBUG:
+# Production Cookie, SSL & HSTS Security (P-08)
+SECURE_SSL_REDIRECT = False if IS_DEV_ENV else config("SECURE_SSL_REDIRECT", default=True, cast=bool)
+SECURE_REDIRECT_EXEMPT = [
+    r"^health",
+    r"^api/health/",
+    r"^v1/health",
+]
+if not IS_DEV_ENV:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_HTTPONLY = True
@@ -283,13 +309,23 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = config("SECURE_HSTS_SECONDS", default=31536000, cast=int)
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
+else:
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
+    SESSION_COOKIE_HTTPONLY = True
+    CSRF_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    CSRF_COOKIE_SAMESITE = 'Lax'
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    SECURE_HSTS_SECONDS = 0
 
-# Production SECRET_KEY verification (Audit U-36)
+# Production SECRET_KEY verification (P-03)
 if not DEBUG:
-    if not SECRET_KEY or SECRET_KEY.startswith("django-insecure-"):
+    if not SECRET_KEY or SECRET_KEY.startswith("django-insecure-") or len(SECRET_KEY) < 50:
         import django.core.exceptions
         raise django.core.exceptions.ImproperlyConfigured(
-            "CRITICAL SECURITY FAILURE: SECRET_KEY must be securely defined in environment when DEBUG=False!"
+            "CRITICAL SECURITY FAILURE: Production SECRET_KEY must be a cryptographically secure key of at least 50 chars!"
         )
 
 # Firebase Configuration
@@ -297,15 +333,16 @@ FIREBASE_CREDENTIALS_PATH = config(
     "FIREBASE_CREDENTIALS_PATH", default="firebase-credentials.json"
 )
 
-# Affiliate Configurations
+# Affiliate Configurations (P-29 - vendor IDs strictly from env)
 AWIN_FEED_URL = config("AWIN_FEED_URL", default=None)
-AWIN_PUBLISHER_ID = config("AWIN_PUBLISHER_ID", default="2612792")
+AWIN_PUBLISHER_ID = config("AWIN_PUBLISHER_ID", default=None)
 
 RAKUTEN_TOKEN = config("RAKUTEN_TOKEN", default=None)
 RAKUTEN_REFRESH_TOKEN = config("RAKUTEN_REFRESH_TOKEN", default=None)
 RAKUTEN_CLIENT_ID = config("RAKUTEN_CLIENT_ID", default=None)
 RAKUTEN_CLIENT_SECRET = config("RAKUTEN_CLIENT_SECRET", default=None)
-RAKUTEN_PUBLISHER_SID = config("RAKUTEN_PUBLISHER_SID", default="4674442")
+RAKUTEN_PUBLISHER_SID = config("RAKUTEN_PUBLISHER_SID", default=None)
+RAKUTEN_PUBLISHER_ID = config("RAKUTEN_PUBLISHER_ID", default=None)
 
 # ==============================================================================
 # Catalog Feed, Attribution, & Discovery Engine Configurations (02_catalog_feed)
@@ -374,7 +411,7 @@ GEMINI_API_KEY = config("GEMINI_API_KEY", default=None)
 LLM_API_KEY = config("LLM_API_KEY", default="")
 LLM_BASE_URL = config("LLM_BASE_URL", default=None)
 LLM_MODEL = config("LLM_MODEL", default="gpt-4o")
-MAX_IMAGE_SIZE_MB = config("MAX_IMAGE_SIZE_MB", default=5, cast=int)
+MAX_IMAGE_SIZE_MB = config("MAX_IMAGE_SIZE_MB", default=10, cast=int)
 APIFY_API_TOKEN = config("APIFY_API_TOKEN", default="")
 APIFY_GOOGLE_ACTOR = config("APIFY_GOOGLE_ACTOR", default="apify/google-search-scraper")
 DRESS_ANALYZER_DIR = BASE_DIR / "dress-analyzer-ai"

@@ -1,7 +1,10 @@
+import logging
 import secrets
 from datetime import date
 from django.db import transaction
 from .email_utils import send_account_deletion_email
+
+logger = logging.getLogger(__name__)
 
 
 def generate_otp(length=6):
@@ -50,6 +53,83 @@ def get_truncated_ip(ip_address):
         if len(parts) == 4:
             return f"{parts[0]}.{parts[1]}.{parts[2]}.0"
     return ip_str
+
+
+BLOCKED_SSRF_HOSTS = {
+    'localhost',
+    '127.0.0.1',
+    '0.0.0.0',
+    '::1',
+    '169.254.169.254',
+    'metadata.google.internal',
+    'instance-data',
+}
+
+
+def is_ssrf_safe_url(url: str, allowed_schemes=('http', 'https')) -> bool:
+    """
+    Centralized SSRF protection (P-31, Spec Ch5 §4.4).
+    Validates URL before server-side fetch:
+    1. Scheme check (must be in allowed_schemes).
+    2. Hostname blocklist (localhost, link-local, cloud metadata).
+    3. TLD blocklist (.internal, .local, .onion, .arpa, .lan).
+    4. DNS resolution validation: Resolved IP must NOT be loopback, private,
+       link-local, reserved, or multicast.
+    """
+    import ipaddress
+    import socket
+    import urllib.parse
+
+    if not url or not isinstance(url, str):
+        return False
+
+    url_clean = url.strip()
+    try:
+        parsed = urllib.parse.urlsplit(url_clean)
+    except Exception:
+        return False
+
+    if parsed.scheme.lower() not in allowed_schemes:
+        return False
+
+    hostname = (parsed.hostname or '').strip().lower()
+    if not hostname or hostname in BLOCKED_SSRF_HOSTS:
+        return False
+
+    if hostname.endswith(('.internal', '.local', '.onion', '.arpa', '.lan')):
+        return False
+
+    # Prevent direct IP matching blocked list
+    try:
+        direct_ip = ipaddress.ip_address(hostname)
+        if (
+            direct_ip.is_private or
+            direct_ip.is_loopback or
+            direct_ip.is_link_local or
+            direct_ip.is_reserved or
+            direct_ip.is_multicast
+        ):
+            return False
+    except ValueError:
+        pass
+
+    try:
+        addr_infos = socket.getaddrinfo(hostname, None)
+        for _, _, _, _, sockaddr in addr_infos:
+            ip_str = sockaddr[0]
+            ip_obj = ipaddress.ip_address(ip_str)
+            if (
+                ip_obj.is_private or
+                ip_obj.is_loopback or
+                ip_obj.is_link_local or
+                ip_obj.is_reserved or
+                ip_obj.is_multicast
+            ):
+                return False
+    except Exception:
+        return False
+
+    return True
 
 
 def get_user_agent(request):
@@ -204,84 +284,68 @@ def purge_and_anonymize_user(user):
     send_account_deletion_email(user, summary=summary)
 
     with transaction.atomic():
-        # 3. Purge private user content
-        try:
-            from closet.models import ClosetItem, FitCheck
-            for item in ClosetItem.objects.filter(user=user):
-                item.delete()
-            for fc in FitCheck.objects.filter(user=user):
-                fc.delete()
-        except Exception:
-            pass
+        # 3. Purge private user content (P-34)
+        from closet.models import ClosetItem, FitCheck
+        for item in ClosetItem.objects.filter(user=user):
+            item.delete()
+        for fc in FitCheck.objects.filter(user=user):
+            fc.delete()
 
+        from social.models import TodayOutfit, OutfitLike, Story, StoryView, StoryLike, UserFollow
+        TodayOutfit.objects.filter(user=user).delete()
+        OutfitLike.objects.filter(user=user).delete()
+        Story.objects.filter(user=user).delete()
+        StoryView.objects.filter(viewer=user).delete()
+        StoryLike.objects.filter(user=user).delete()
+        UserFollow.objects.filter(follower=user).delete()
+        UserFollow.objects.filter(following=user).delete()
 
-        try:
-            from social.models import TodayOutfit, OutfitLike, Story, StoryView, StoryLike, UserFollow
-            TodayOutfit.objects.filter(user=user).delete()
-            OutfitLike.objects.filter(user=user).delete()
-            Story.objects.filter(user=user).delete()
-            StoryView.objects.filter(viewer=user).delete()
-            StoryLike.objects.filter(user=user).delete()
-            UserFollow.objects.filter(follower=user).delete()
-            UserFollow.objects.filter(following=user).delete()
-        except Exception:
-            pass
+        from notifications.models import Notification
+        Notification.objects.filter(recipient=user).delete()
+        Notification.objects.filter(sender=user).delete()
 
-        try:
-            from notifications.models import Notification
-            Notification.objects.filter(recipient=user).delete()
-            Notification.objects.filter(sender=user).delete()
-        except Exception:
-            pass
 
         # 3.4 Financial Ledger Retention (SR-28):
-        # Financial ledger retention preserved according to project/business retention requirements.
         # Preserves double-entry auditability, but zeroes available balance and pseudonymizes all personal text descriptions.
-        try:
-            from rewards.models import UserRewardProfile, RewardPointTransaction, PointAward, LedgerTxn, AwardStateLog
-            profile = UserRewardProfile.objects.filter(user=user).first()
-            if profile:
-                profile.available_points = 0
-                profile.save(update_fields=['available_points'])
+        from rewards.models import UserRewardProfile, RewardPointTransaction, PointAward, LedgerTxn, AwardStateLog
+        profile = UserRewardProfile.objects.filter(user=user).first()
+        if profile:
+            profile.available_points = 0
+            profile.save(update_fields=['available_points'])
 
-            RewardPointTransaction.objects.filter(user=user).update(
-                description='Historical reward transaction (user pseudonymized for GDPR)'
-            )
-            RewardPointTransaction.objects.filter(reference_id=str(user.id)).update(
-                reference_id='pseudonymized'
-            )
-            PointAward.objects.filter(referred_user=user).update(referred_user=None)
-            LedgerTxn.objects.filter(award__user=user).update(
-                description='Historical ledger transaction (user pseudonymized for GDPR)'
-            )
-            AwardStateLog.objects.filter(award__user=user).update(
-                reason='State transition (user pseudonymized for GDPR)'
-            )
+        RewardPointTransaction.objects.filter(user=user).update(
+            description='Historical reward transaction (user pseudonymized for GDPR)'
+        )
+        RewardPointTransaction.objects.filter(reference_id=str(user.id)).update(
+            reference_id='pseudonymized'
+        )
+        PointAward.objects.filter(referred_user=user).update(referred_user=None)
+        LedgerTxn.objects.filter(award__user=user).update(
+            description='Historical ledger transaction (user pseudonymized for GDPR)'
+        )
+        AwardStateLog.objects.filter(award__user=user).update(
+            reason='State transition (user pseudonymized for GDPR)'
+        )
 
-            # Scrub user reference from affiliate conversions while retaining transaction data
-            from affiliate.models import Conversion
-            Conversion.objects.filter(user=user).update(user=None)
-        except Exception as e:
-            logger.warning(f"Error pseudonymizing financial records for user {user.id}: {e}")
+        # Scrub user reference from affiliate conversions while retaining transaction data
+        from affiliate.models import Conversion
+        Conversion.objects.filter(user=user).update(user=None)
 
-        try:
-            from users.models import UserPreference, UserLoginHistory
-            UserPreference.objects.filter(user=user).delete()
-            UserLoginHistory.objects.filter(user=user).delete()
-        except Exception:
-            pass
+        from users.models import UserPreference, UserLoginHistory
+        UserPreference.objects.filter(user=user).delete()
+        UserLoginHistory.objects.filter(user=user).delete()
 
         # 4. Remove profile picture from disk
         if user.profile_picture:
             try:
                 user.profile_picture.delete(save=False)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"Error deleting profile picture from storage for user {user.id}: {e}")
 
         # 5. Anonymize user record
         hex_id = str(user.id).replace('-', '')[:10]
         user.name = 'Deleted User'
-        user.email = f"deleted_{hex_id}@deleted.closly.app"
+        user.email = f"deleted_{hex_id}@deleted.myclosly.com"
         user.is_active = False
         user.is_email_verified = False
         user.is_subscribed = False
@@ -298,25 +362,26 @@ def purge_and_anonymize_user(user):
         user.referral_code = None
         user.save()
 
-        # 6. Purge external identity records & clear cache
-        if user.firebase_uid:
-            try:
-                from .firebase import delete_firebase_user
-                delete_firebase_user(user.firebase_uid)
-            except Exception:
-                pass
-
+    # 6. Purge external identity records & clear cache outside atomic DB transaction
+    if user.firebase_uid:
         try:
-            from .apple_auth import revoke_apple_token
-            revoke_apple_token(user)
-        except Exception:
-            pass
+            from .firebase import delete_firebase_user
+            delete_firebase_user(user.firebase_uid)
+        except Exception as e:
+            logger.warning(f"Non-critical: Firebase deletion failed for {user.id}: {e}")
 
-        try:
-            from django.core.cache import cache
-            cache.delete(f"user_online_{user.id}")
-            cache.delete(f"user_last_seen_{user.id}")
-        except Exception:
-            pass
+    try:
+        from .apple_auth import revoke_apple_token
+        revoke_apple_token(user)
+    except Exception as e:
+        logger.warning(f"Non-critical: Apple token revocation failed for {user.id}: {e}")
 
+    try:
+        from django.core.cache import cache
+        cache.delete(f"user_online_{user.id}")
+        cache.delete(f"user_last_seen_{user.id}")
+    except Exception as e:
+        logger.warning(f"Non-critical: Cache clear failed for {user.id}: {e}")
+
+    logger.info(f"User {user.id} successfully anonymized and content purged (GDPR).")
     return True

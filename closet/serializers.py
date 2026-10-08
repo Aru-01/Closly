@@ -50,9 +50,9 @@ class ClosetItemSerializer(serializers.ModelSerializer):
         ]
 
     def validate_image(self, value):
-        """Validate cloth image format and max 30MB size"""
+        """Validate cloth image format and max 10MB size (P-12)"""
         if value:
-            return validate_image_file(value, max_mb=30)
+            return validate_image_file(value, max_mb=10)
         return value
 
     def validate_price(self, value):

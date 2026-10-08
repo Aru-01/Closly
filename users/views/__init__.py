@@ -39,6 +39,10 @@ from .profile_views import (
     PublicProfileWebView,
     DeviceRegistrationView,
 )
+from .media_views import (
+    ProtectedMediaServeView,
+    generate_signed_media_url,
+)
 __all__ = [
     'standard_response',
     'delete_profile_data_request_view',

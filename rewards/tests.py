@@ -380,7 +380,7 @@ class RewardPointsTests(TestCase):
         target_user.refresh_from_db()
         self.assertEqual(target_user.name, 'Deleted User')
         self.assertFalse(target_user.is_active)
-        self.assertTrue(target_user.email.endswith('@deleted.closly.app'))
+        self.assertTrue(target_user.email.endswith(('@deleted.myclosly.com', '@deleted.closly.app')))
         self.assertIsNone(target_user.date_of_birth)
         self.assertIsNone(target_user.bio)
 

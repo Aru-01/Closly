@@ -6,6 +6,7 @@ from .views import (
     ClosetAuditView,
     ClosetScoreDashboardView,
     ClosetAIScanView,
+    ClosetAIScanPollView,
     FitCheckCreateView,
     FitCheckDetailView,
     ConsentRecordView,
@@ -26,6 +27,7 @@ urlpatterns = [
     path('clothes/<int:pk>/wear/', WearTodayView.as_view(), name='clothes-wear'),
     path('clothes/<int:pk>/wear-today/', WearTodayView.as_view(), name='clothes-wear-today'),
     path('clothes/ai-scan/', ClosetAIScanView.as_view(), name='clothes-ai-scan'),
+    path('clothes/ai-scan/<uuid:pk>/', ClosetAIScanPollView.as_view(), name='clothes-ai-scan-poll'),
 
     # FitCheck Async AI Processing & Polling (Spec §1.1, §7.2)
     path('fit-checks/', FitCheckCreateView.as_view(), name='fit-check-create'),
@@ -37,8 +39,9 @@ urlpatterns = [
     # AI Usage & Cost Visibility (Spec §3.1, C-05)
     path('costs/', LLMCostLogListView.as_view(), name='closet-costs'),
 
-    # Audit, score & smart AI camera scanning
+    # Audit, score & smart AI camera scanning (P-05: async by default with polling)
     path('audit/', ClosetAuditView.as_view(), name='closet-audit'),
     path('score/', ClosetScoreDashboardView.as_view(), name='closet-score'),
     path('ai-scan/', ClosetAIScanView.as_view(), name='closet-ai-scan'),
+    path('ai-scan/<uuid:pk>/', ClosetAIScanPollView.as_view(), name='closet-ai-scan-poll'),
 ]
