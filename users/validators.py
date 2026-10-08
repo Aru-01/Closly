@@ -189,13 +189,13 @@ def validate_image_file(image, max_mb=30):
             code='image_too_large'
         )
 
-    valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.heic', '.heif']
+    valid_extensions = ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif']
     file_name = getattr(image, 'name', '')
     if '.' in file_name:
         ext = '.' + file_name.lower().split('.')[-1]
         if ext not in valid_extensions:
             raise ValidationError(
-                _('Only JPG, JPEG, PNG, GIF, WebP, and HEIC images are allowed.'),
+                _('Only JPG, JPEG, PNG, WebP, and HEIC images are allowed.'),
                 code='invalid_image_format'
             )
 
@@ -204,6 +204,11 @@ def validate_image_file(image, max_mb=30):
         try:
             image.seek(0)
             from PIL import Image
+            try:
+                import pillow_heif
+                pillow_heif.register_heif_opener()
+            except Exception:
+                pass
             img = Image.open(image)
             img.verify()
             image.seek(0)

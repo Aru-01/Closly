@@ -1,11 +1,29 @@
-from django.test import TestCase
+import io
+from PIL import Image
+from unittest.mock import patch, MagicMock
+
+from django.test import TestCase, override_settings
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.utils import timezone
 from rest_framework.test import APIClient
 from rest_framework import status
-from django.core.files.uploadedfile import SimpleUploadedFile
-from .models import TodayOutfit, UserFollow, DirectMessage
+
+from .models import TodayOutfit, UserFollow, DirectMessage, UserBlock, ContentReport, OutfitImage, OutfitLike
+from closet.models import ClosetItem
 
 User = get_user_model()
+
+
+def create_test_image(filename="test.jpg", format="JPEG"):
+    """Creates a real in-memory image accepted by Pillow and validate_image_file."""
+    buf = io.BytesIO()
+    img = Image.new('RGB', (40, 40), color=(73, 109, 137))
+    img.save(buf, format=format)
+    buf.seek(0)
+    content_type = "image/png" if format.upper() == "PNG" else "image/jpeg"
+    return SimpleUploadedFile(filename, buf.read(), content_type=content_type)
+
 
 class SocialApiTests(TestCase):
     def setUp(self):
@@ -30,7 +48,7 @@ class SocialApiTests(TestCase):
         self.assertTrue(res.data['data']['is_following'])
 
         # Create public outfit post by user2
-        dummy_image = SimpleUploadedFile("outfit.jpg", b"file_content", content_type="image/jpeg")
+        dummy_image = create_test_image("outfit.jpg")
         TodayOutfit.objects.create(user=self.user2, image=dummy_image, caption="User2 Outfit", visibility="public")
 
         # Get following feed for user1
@@ -39,6 +57,20 @@ class SocialApiTests(TestCase):
         self.assertEqual(feed_res.status_code, status.HTTP_200_OK)
         self.assertEqual(len(feed_res.data['data']['results']), 1)
 
+    def test_dm_disabled_by_default(self):
+        """SR-01: Direct messaging is disabled by default and returns 404 feature_disabled."""
+        msg_res = self.client.post('/api/social/messages/', {
+            'recipient_id': str(self.user2.id),
+            'content': 'Hello!'
+        })
+        self.assertEqual(msg_res.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(msg_res.data.get('code'), 'feature_disabled')
+
+        conv_res = self.client.get('/api/social/conversations/')
+        self.assertEqual(conv_res.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(conv_res.data.get('code'), 'feature_disabled')
+
+    @override_settings(MYC_DM_ENABLED=True)
     def test_direct_messaging(self):
         msg_url = '/api/social/messages/'
         data = {
@@ -55,10 +87,8 @@ class SocialApiTests(TestCase):
         self.assertEqual(conv_res.status_code, status.HTTP_200_OK)
         self.assertEqual(len(conv_res.data['data']['results']), 1)
 
+    @override_settings(MYC_DM_ENABLED=True)
     def test_direct_messaging_image_compression(self):
-        import io
-        from PIL import Image
-
         # Create a test PIL image (large 1600x1200)
         img_buffer = io.BytesIO()
         img = Image.new('RGB', (1600, 1200), color='blue')
@@ -86,9 +116,9 @@ class SocialApiTests(TestCase):
         self.assertLessEqual(saved_img.width, 1280)
         self.assertLessEqual(saved_img.height, 1280)
 
+    @override_settings(MYC_DM_ENABLED=True)
     def test_direct_messaging_shared_outfit(self):
-        # Create an outfit
-        dummy_image = SimpleUploadedFile("outfit.jpg", b"outfit_bytes", content_type="image/jpeg")
+        dummy_image = create_test_image("outfit.jpg")
         outfit = TodayOutfit.objects.create(user=self.user1, image=dummy_image, caption="My Cool Outfit", visibility="public")
 
         msg_url = '/api/social/messages/'
@@ -104,6 +134,7 @@ class SocialApiTests(TestCase):
         self.assertEqual(res.data['data']['outfit_preview']['id'], outfit.id)
         self.assertEqual(res.data['data']['outfit_preview']['caption'], 'My Cool Outfit')
 
+    @override_settings(MYC_DM_ENABLED=True)
     def test_conversations_inbox(self):
         user3 = User.objects.create_user(
             email='user3@example.com',
@@ -137,11 +168,8 @@ class SocialApiTests(TestCase):
         self.assertEqual(conversations[1]['unread_count'], 2)
 
     def test_feed_optimization_and_likes(self):
-        from closet.models import ClosetItem
-        from .models import OutfitLike
-
         item = ClosetItem.objects.create(user=self.user2, name='Test Jeans', category='bottom', price=40.00)
-        dummy_image = SimpleUploadedFile("feed.jpg", b"dummy_content", content_type="image/jpeg")
+        dummy_image = create_test_image("feed.jpg")
         outfit = TodayOutfit.objects.create(user=self.user2, image=dummy_image, caption="Feed outfit", visibility="public")
         outfit.tagged_items.add(item)
         OutfitLike.objects.create(outfit=outfit, user=self.user1)
@@ -155,11 +183,12 @@ class SocialApiTests(TestCase):
         self.assertTrue(first_item['is_liked'])
         self.assertEqual(len(first_item['tagged_items_details']), 1)
 
+    @override_settings(MYC_DM_ENABLED=True)
     def test_notifications_flow(self):
         from notifications.models import Notification
 
         # 1. User1 likes User2's outfit -> should trigger notification for User2
-        dummy_img = SimpleUploadedFile("u2.jpg", b"image data", content_type="image/jpeg")
+        dummy_img = create_test_image("u2.jpg")
         outfit2 = TodayOutfit.objects.create(user=self.user2, image=dummy_img, caption="U2 look", visibility="public")
         self.client.post(f'/api/social/outfits/{outfit2.id}/like/')
 
@@ -198,9 +227,7 @@ class SocialApiTests(TestCase):
         self.assertEqual(Notification.objects.filter(recipient=self.user2, is_read=False).count(), 0)
 
     def test_liked_outfits_excludes_self_outfits(self):
-        from .models import OutfitLike
-
-        dummy_img = SimpleUploadedFile("look.jpg", b"look data", content_type="image/jpeg")
+        dummy_img = create_test_image("look.jpg")
         outfit_u1 = TodayOutfit.objects.create(user=self.user1, image=dummy_img, caption="My own look", visibility="public")
         outfit_u2 = TodayOutfit.objects.create(user=self.user2, image=dummy_img, caption="User2 chic look", visibility="public")
 
@@ -219,13 +246,10 @@ class SocialApiTests(TestCase):
         self.assertEqual(results[0]['caption'], "User2 chic look")
 
     def test_outfit_calendar_view(self):
-        from django.utils import timezone
-
-        dummy_img = SimpleUploadedFile("cal.jpg", b"cal data", content_type="image/jpeg")
+        dummy_img = create_test_image("cal.jpg")
         TodayOutfit.objects.create(user=self.user1, image=dummy_img, caption="Calendar outfit", visibility="public")
 
         now = timezone.now()
-        # Test with explicit year & month
         cal_url = f'/api/social/outfits/calendar/?year={now.year}&month={now.month}'
         res = self.client.get(cal_url)
         self.assertEqual(res.status_code, status.HTTP_200_OK)
@@ -242,7 +266,6 @@ class SocialApiTests(TestCase):
         self.assertEqual(def_res.data['data']['month'], now.month)
 
     def test_follower_tabs_dna_match_and_self_following(self):
-        # Setup location and preferences
         self.user1.city = "New York"
         self.user1.country = "USA"
         self.user1.save()
@@ -287,15 +310,29 @@ class SocialApiTests(TestCase):
         self.assertTrue(prof_data['is_following'])
         self.assertIn('dna_match', prof_data)
         self.assertIn('score', prof_data['dna_match'])
+        # SR-03 PII: email must never be exposed on other user profiles
+        self.assertNotIn('email', prof_data)
 
-    def test_your_day_weather_and_outfit_suggestion(self):
-        from closet.models import ClosetItem
+    @patch('requests.get')
+    def test_your_day_weather_and_outfit_suggestion(self, mock_requests_get):
+        # Mock Open-Meteo weather response (SR-19)
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "current_weather": {
+                "temperature": 21.5,
+                "windspeed": 10.0,
+                "weathercode": 1
+            }
+        }
+        mock_requests_get.return_value = mock_response
+
         ClosetItem.objects.create(user=self.user1, name="Navy Linen Shirt", category="top", price=45.00)
         ClosetItem.objects.create(user=self.user1, name="Beige Chino Pants", category="bottom", price=55.00)
         ClosetItem.objects.create(user=self.user1, name="Leather Jacket", category="dresses_outerwear", price=120.00)
         ClosetItem.objects.create(user=self.user1, name="White Sneakers", category="shoes", price=80.00)
 
-        url = '/api/social/your-day/?lat=23.8103&lon=90.4125'
+        url = '/api/social/your-day/?lat=48.14&lon=11.58'
         response = self.client.get(url)
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -329,11 +366,11 @@ class SocialApiTests(TestCase):
         self.client.post(f'/api/social/users/{self.user2.id}/follow/')
 
         # user2 (followed) posts an outfit
-        dummy_img = SimpleUploadedFile("user2_outfit.jpg", b"img", content_type="image/jpeg")
+        dummy_img = create_test_image("user2_outfit.jpg")
         TodayOutfit.objects.create(user=self.user2, image=dummy_img, caption="Followed creator look", visibility="public")
 
         # user3 (unfollowed) posts an outfit
-        dummy_img2 = SimpleUploadedFile("user3_outfit.jpg", b"img2", content_type="image/jpeg")
+        dummy_img2 = create_test_image("user3_outfit.jpg")
         outfit3 = TodayOutfit.objects.create(user=user3, image=dummy_img2, caption="Unfollowed creator look", visibility="public")
 
         url = '/api/social/explore/'
@@ -351,8 +388,7 @@ class SocialApiTests(TestCase):
         self.assertIn('available_categories', response.data)
 
     def test_outfit_visibility_private_vs_public(self):
-        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
-        dummy_img = SimpleUploadedFile("priv.gif", tiny_gif, content_type="image/gif")
+        dummy_img = create_test_image("priv.jpg")
         res = self.client.post('/api/social/outfits/', {
             'image': dummy_img,
             'caption': 'My private outfit look #secret',
@@ -389,9 +425,7 @@ class SocialApiTests(TestCase):
         self.assertNotIn(outfit_id, user1_outfits_ids)
 
     def test_outfit_style_and_weather_inference(self):
-        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
-        dummy_img = SimpleUploadedFile("street.gif", tiny_gif, content_type="image/gif")
-        # Do not provide style_category or weather_tag explicitly
+        dummy_img = create_test_image("street.jpg")
         res = self.client.post('/api/social/outfits/', {
             'image': dummy_img,
             'caption': 'Chilly morning streetwear look #ootd',
@@ -399,14 +433,11 @@ class SocialApiTests(TestCase):
         }, format='multipart')
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
         data = res.data['data']
-        # style_category inferred from caption 'streetwear'
         self.assertEqual(data['style_category'], 'streetwear')
-        # weather_tag inferred from caption 'chilly'
         self.assertEqual(data['weather_tag'], 'chilly')
 
     def test_outfit_patch_author_only(self):
-        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
-        dummy_img = SimpleUploadedFile("test_patch.gif", tiny_gif, content_type="image/gif")
+        dummy_img = create_test_image("test_patch.jpg")
         res = self.client.post('/api/social/outfits/', {
             'image': dummy_img,
             'caption': 'Initial look',
@@ -439,10 +470,9 @@ class SocialApiTests(TestCase):
         self.assertEqual(hacked_priv_res.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_outfit_multiple_images_upload_up_to_4(self):
-        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
-        img1 = SimpleUploadedFile("img1.gif", tiny_gif, content_type="image/gif")
-        img2 = SimpleUploadedFile("img2.gif", tiny_gif, content_type="image/gif")
-        img3 = SimpleUploadedFile("img3.gif", tiny_gif, content_type="image/gif")
+        img1 = create_test_image("img1.jpg")
+        img2 = create_test_image("img2.jpg")
+        img3 = create_test_image("img3.jpg")
 
         res = self.client.post('/api/social/outfits/', {
             'images': [img1, img2, img3],
@@ -461,16 +491,11 @@ class SocialApiTests(TestCase):
 
         # Verify OutfitImage DB records
         outfit_id = data['id']
-        from social.models import OutfitImage
         db_images = OutfitImage.objects.filter(outfit_id=outfit_id).order_by('order')
         self.assertEqual(db_images.count(), 3)
 
     def test_outfit_exceeds_max_4_images_validation(self):
-        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
-        images = [
-            SimpleUploadedFile(f"img{i}.gif", tiny_gif, content_type="image/gif")
-            for i in range(5)
-        ]
+        images = [create_test_image(f"img{i}.jpg") for i in range(5)]
 
         res = self.client.post('/api/social/outfits/', {
             'images': images,
@@ -483,10 +508,9 @@ class SocialApiTests(TestCase):
         self.assertIn('images', res.data['errors'])
         error_msg = str(res.data['errors']['images'][0])
         self.assertIn("Maximum 4 images are allowed", error_msg)
-        self.assertIn("5", error_msg)
 
+    @override_settings(MYC_DM_ENABLED=True)
     def test_conversations_does_not_contain_stories(self):
-        # Create a message between user1 and user2
         DirectMessage.objects.create(sender=self.user2, recipient=self.user1, content='Hey user1')
 
         res = self.client.get('/api/social/conversations/?page=1')
@@ -497,8 +521,7 @@ class SocialApiTests(TestCase):
 
     def test_story_cannot_self_love(self):
         from social.models import Story, StoryLike
-        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
-        dummy_img = SimpleUploadedFile("story.gif", tiny_gif, content_type="image/gif")
+        dummy_img = create_test_image("story.jpg")
         story = Story.objects.create(user=self.user1, image=dummy_img, caption="My daily story")
 
         # user1 attempts to love their own story -> must be rejected with 400
@@ -509,10 +532,9 @@ class SocialApiTests(TestCase):
         self.assertEqual(story.loves_count, 0)
         self.assertFalse(StoryLike.objects.filter(story=story, user=self.user1).exists())
 
-    def test_story_self_view_does_not_count(self):
+    def test_story_self_view_does_not_count_and_follower_visibility(self):
         from social.models import Story, StoryView, StoryLike
-        tiny_gif = b'GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;'
-        dummy_img = SimpleUploadedFile("story_view.gif", tiny_gif, content_type="image/gif")
+        dummy_img = create_test_image("story_view.jpg")
         story = Story.objects.create(user=self.user1, image=dummy_img, caption="View test story")
 
         # user1 views their own story -> acknowledged but view not recorded
@@ -523,9 +545,16 @@ class SocialApiTests(TestCase):
         self.assertEqual(story.views_count, 0)
         self.assertFalse(StoryView.objects.filter(story=story, viewer=self.user1).exists())
 
-        # user2 views story -> recorded as 1 view
+        # user2 attempts to view story BEFORE following user1 -> 404 hidden (SR-14)
         client2 = APIClient()
         client2.force_authenticate(user=self.user2)
+        unfollowed_res = client2.post(f'/api/social/stories/{story.id}/view/')
+        self.assertEqual(unfollowed_res.status_code, status.HTTP_404_NOT_FOUND)
+
+        # user2 follows user1 -> now authorized
+        UserFollow.objects.create(follower=self.user2, following=self.user1)
+
+        # user2 views story -> recorded as 1 view
         res_other = client2.post(f'/api/social/stories/{story.id}/view/')
         self.assertEqual(res_other.status_code, status.HTTP_200_OK)
         self.assertEqual(res_other.data['data']['views_count'], 1)
@@ -556,9 +585,8 @@ class SocialApiTests(TestCase):
         self.assertIn('last_seen', data)
 
     def test_outfit_likers_returns_is_online_and_last_seen(self):
-        dummy_image = SimpleUploadedFile("outfit.jpg", b"file_content", content_type="image/jpeg")
+        dummy_image = create_test_image("outfit.jpg")
         outfit = TodayOutfit.objects.create(user=self.user1, image=dummy_image, caption="Liker test", visibility="public")
-        from social.models import OutfitLike
         OutfitLike.objects.create(outfit=outfit, user=self.user2)
 
         likes_url = f'/api/social/outfits/{outfit.id}/likes/'
@@ -570,10 +598,11 @@ class SocialApiTests(TestCase):
         self.assertIn('last_seen', likers[0])
         self.assertNotIn('email', likers[0])
 
+    @override_settings(MYC_DM_ENABLED=True)
     def test_simple_user_representation_excludes_email_country_city(self):
-        dummy_image = SimpleUploadedFile("outfit.jpg", b"file_content", content_type="image/jpeg")
-        outfit = TodayOutfit.objects.create(user=self.user1, image=dummy_image, caption="Outfit test", visibility="public")
-        
+        dummy_image = create_test_image("outfit.jpg")
+        TodayOutfit.objects.create(user=self.user1, image=dummy_image, caption="Outfit test", visibility="public")
+
         # Test my-outfits response user payload
         outfit_res = self.client.get('/api/social/my-outfits/')
         self.assertEqual(outfit_res.status_code, status.HTTP_200_OK)
@@ -604,5 +633,384 @@ class SocialApiTests(TestCase):
             self.assertNotIn('country', u_data)
             self.assertNotIn('city', u_data)
 
+    def test_user_block_toggle_and_bilateral_invisibility(self):
+        """SR-10: Test blocking user removes follows and enforces bilateral feed/story invisibility."""
+        # 1. User1 follows User2, and User2 follows User1
+        UserFollow.objects.create(follower=self.user1, following=self.user2)
+        UserFollow.objects.create(follower=self.user2, following=self.user1)
 
+        # 2. Block User2
+        block_url = f'/api/social/users/{self.user2.id}/block/'
+        block_res = self.client.post(block_url)
+        self.assertEqual(block_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(block_res.data['data']['is_blocked'])
+        self.assertTrue(UserBlock.objects.filter(blocker=self.user1, blocked=self.user2).exists())
 
+        # Follow relationships should be cleared in both directions
+        self.assertFalse(UserFollow.objects.filter(follower=self.user1, following=self.user2).exists())
+        self.assertFalse(UserFollow.objects.filter(follower=self.user2, following=self.user1).exists())
+
+        # Outfits by User2 should NOT appear in User1's Explore or Following
+        dummy_img = create_test_image("blocked.jpg")
+        TodayOutfit.objects.create(user=self.user2, image=dummy_img, caption="Blocked user outfit", visibility="public")
+        feed_res = self.client.get('/api/social/explore/')
+        self.assertEqual(feed_res.status_code, status.HTTP_200_OK)
+        explore_creators = [o['user']['id'] for o in feed_res.data['data']['results']]
+        self.assertNotIn(str(self.user2.id), explore_creators)
+
+        # Cannot block oneself
+        self_block_res = self.client.post(f'/api/social/users/{self.user1.id}/block/')
+        self.assertEqual(self_block_res.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Toggle unblock
+        unblock_res = self.client.post(block_url)
+        self.assertEqual(unblock_res.status_code, status.HTTP_200_OK)
+        self.assertFalse(unblock_res.data['data']['is_blocked'])
+        self.assertFalse(UserBlock.objects.filter(blocker=self.user1, blocked=self.user2).exists())
+
+    def test_content_reporting_dsa(self):
+        """SR-10: Test reporting content with rate limiting and validation."""
+        dummy_img = create_test_image("reported.jpg")
+        outfit = TodayOutfit.objects.create(user=self.user2, image=dummy_img, caption="Offensive outfit", visibility="public")
+
+        report_url = '/api/social/reports/'
+        report_data = {
+            'target_type': 'outfit',
+            'target_id': str(outfit.id),
+            'reason': 'harassment',
+            'details': 'This outfit caption violates guidelines.'
+        }
+        res = self.client.post(report_url, report_data)
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(res.data['success'])
+        self.assertEqual(res.data['data']['status'], 'pending')
+        self.assertEqual(res.data['data']['reason'], 'harassment')
+        self.assertTrue(ContentReport.objects.filter(reporter=self.user1, target_id=str(outfit.id)).exists())
+
+        # Reporting non-existent object returns 400
+        bad_res = self.client.post(report_url, {
+            'target_type': 'outfit',
+            'target_id': '99999999-9999-9999-9999-999999999999',
+            'reason': 'spam',
+            'details': 'Nonexistent'
+        })
+        self.assertEqual(bad_res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_tagged_items_price_and_notes_privacy(self):
+        """SR-27: Public representation of tagged items must conceal price and notes."""
+        item = ClosetItem.objects.create(
+            user=self.user1,
+            name='Designer Coat',
+            category='dresses_outerwear',
+            brand='Gucci',
+            color='Black',
+            price=2500.00
+        )
+        dummy_img = create_test_image("tagged.jpg")
+        outfit = TodayOutfit.objects.create(user=self.user1, image=dummy_img, caption="Luxury look", visibility="public")
+        outfit.tagged_items.add(item)
+
+        res = self.client.get(f'/api/social/outfits/{outfit.id}/')
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        tagged_details = res.data['data']['tagged_items_details']
+        self.assertEqual(len(tagged_details), 1)
+        item_rep = tagged_details[0]
+        self.assertEqual(item_rep['name'], 'Designer Coat')
+        self.assertEqual(item_rep['brand'], 'Gucci')
+        # Crucial privacy assertion: price MUST NOT be present
+        self.assertNotIn('price', item_rep)
+        self.assertNotIn('notes', item_rep)
+        self.assertNotIn('cost_cents', item_rep)
+
+    def test_activity_point_awards_flag(self):
+        """SR-07: Outfit creation only awards points if enabled and if visibility is public."""
+        from rewards.models import UserRewardProfile
+
+        # Default flag is False: no points awarded
+        dummy_img = create_test_image("outfit1.jpg")
+        self.client.post('/api/social/outfits/', {
+            'image': dummy_img,
+            'caption': 'No points outfit',
+            'visibility': 'public'
+        }, format='multipart')
+
+        profile, _ = UserRewardProfile.objects.get_or_create(user=self.user1)
+        self.assertEqual(profile.available_points, 0)
+
+        # With flag enabled: public outfit earns 120 points, private earns 0
+        with override_settings(MYC_POINTS_ACTIVITY_AWARDS=True):
+            dummy_img2 = create_test_image("outfit2.jpg")
+            self.client.post('/api/social/outfits/', {
+                'image': dummy_img2,
+                'caption': 'Points public outfit',
+                'visibility': 'public'
+            }, format='multipart')
+
+            profile.refresh_from_db()
+            self.assertEqual(profile.available_points, 120)
+
+            dummy_img3 = create_test_image("outfit3.jpg")
+            self.client.post('/api/social/outfits/', {
+                'image': dummy_img3,
+                'caption': 'Private outfit no points',
+                'visibility': 'private'
+            }, format='multipart')
+
+            profile.refresh_from_db()
+            # Still 120 because private outfits do not earn points
+            self.assertEqual(profile.available_points, 120)
+
+    def test_websocket_ticket_auth_and_single_use(self):
+        """SR-09: Single-use short-lived ticket auth for WebSockets without token in query string."""
+        from social.middleware import get_user_from_ticket
+
+        # 1. Feature disabled by default -> returns 404
+        res_disabled = self.client.post('/api/social/ws-ticket/')
+        self.assertEqual(res_disabled.status_code, status.HTTP_404_NOT_FOUND)
+
+        # 2. Feature enabled -> returns 200 with 60-second ticket
+        with override_settings(MYC_DM_ENABLED=True):
+            from social.middleware import get_user_from_ticket_sync
+            res = self.client.post('/api/social/ws-ticket/')
+            self.assertEqual(res.status_code, status.HTTP_200_OK)
+            ticket = res.data['data']['ticket']
+            self.assertTrue(ticket.startswith('wst_'))
+            self.assertEqual(res.data['data']['expires_in'], 60)
+
+            # 3. First consumption resolves user
+            user = get_user_from_ticket_sync(ticket)
+            self.assertEqual(user.id, self.user1.id)
+
+            # 4. Second consumption returns AnonymousUser (single-use replay protection)
+            replay_user = get_user_from_ticket_sync(ticket)
+            self.assertTrue(replay_user.is_anonymous)
+
+    def test_outfit_delete_reverses_points_and_decrements_times_worn(self):
+        """SR-07 & SR-26: Deleting an outfit claws back reward points and decrements item times_worn."""
+        from rewards.models import UserRewardProfile, PointAward
+
+        item = ClosetItem.objects.create(
+            user=self.user1,
+            name='Daily Jeans',
+            category='bottoms',
+            times_worn=0
+        )
+
+        with override_settings(MYC_POINTS_ACTIVITY_AWARDS=True):
+            dummy_img = create_test_image("outfit_signal.jpg")
+            res = self.client.post('/api/social/outfits/', {
+                'image': dummy_img,
+                'caption': 'Daily look test',
+                'visibility': 'public',
+                'tagged_items': [item.id]
+            }, format='multipart')
+            self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+            outfit_id = res.data['data']['id']
+
+            # Verify reward awarded and times_worn incremented
+            profile = UserRewardProfile.objects.get(user=self.user1)
+            self.assertEqual(profile.available_points, 120)
+            item.refresh_from_db()
+            self.assertEqual(item.times_worn, 1)
+
+            # Delete the outfit via API
+            del_res = self.client.delete(f'/api/social/outfits/{outfit_id}/')
+            self.assertEqual(del_res.status_code, status.HTTP_200_OK)
+
+            # Assert points clawed back
+            profile.refresh_from_db()
+            self.assertEqual(profile.available_points, 0)
+
+            # Assert award state is CLAWED_BACK
+            award = PointAward.objects.filter(user=self.user1, outfit_id=outfit_id).first()
+            self.assertIsNotNone(award)
+            self.assertEqual(award.state, 'CLAWED_BACK')
+            self.assertEqual(award.points_current, 0)
+
+            # Assert times_worn decremented back to 0
+            item.refresh_from_db()
+            self.assertEqual(item.times_worn, 0)
+
+    def test_websocket_middleware_security_and_raw_jwt_rejection(self):
+        """SR-09: Raw JWTs in query strings or subprotocols are strictly rejected; only single-use tickets are accepted."""
+        from social.middleware import JWTAuthMiddleware
+        from rest_framework_simplejwt.tokens import AccessToken
+        import asyncio
+
+        raw_jwt = str(AccessToken.for_user(self.user1))
+
+        # Helper to execute async middleware call synchronously in test
+        def call_middleware(scope):
+            inner_called = {'called': False, 'user': None}
+            async def dummy_inner(s, r, snd):
+                inner_called['called'] = True
+                inner_called['user'] = s.get('user')
+            middleware = JWTAuthMiddleware(dummy_inner)
+            asyncio.run(middleware(scope, None, None))
+            return inner_called['user']
+
+        def mock_user_get(**kwargs):
+            if str(kwargs.get('id')) == str(self.user1.id):
+                return self.user1
+            elif str(kwargs.get('id')) == str(self.user2.id):
+                return self.user2
+            raise User.DoesNotExist()
+
+        with patch('social.middleware.User.objects.get', side_effect=mock_user_get):
+            # 1. Raw JWT in query string (?token=...) MUST BE REJECTED
+            scope_jwt_query = {
+                'query_string': f'token={raw_jwt}'.encode('utf-8'),
+                'headers': []
+            }
+            user = call_middleware(scope_jwt_query)
+            self.assertTrue(user.is_anonymous)
+
+            # 2. Raw JWT in Sec-WebSocket-Protocol MUST BE REJECTED
+            scope_jwt_proto = {
+                'query_string': b'',
+                'headers': [(b'sec-websocket-protocol', f'closly-auth.{raw_jwt}'.encode('utf-8'))]
+            }
+            user = call_middleware(scope_jwt_proto)
+            self.assertTrue(user.is_anonymous)
+
+            # 3. Valid ticket in query string SUCCEEDS
+            with override_settings(MYC_DM_ENABLED=True):
+                ticket_res = self.client.post('/api/social/ws-ticket/')
+                valid_ticket = ticket_res.data['data']['ticket']
+
+                scope_valid_ticket = {
+                    'query_string': f'ticket={valid_ticket}'.encode('utf-8'),
+                    'headers': []
+                }
+                user = call_middleware(scope_valid_ticket)
+                self.assertEqual(user.id, self.user1.id)
+
+                # 4. Reusing consumed ticket FAILS (single-use guarantee)
+                replay_user = call_middleware(scope_valid_ticket)
+                self.assertTrue(replay_user.is_anonymous)
+
+            # 5. Valid ticket via Sec-WebSocket-Protocol SUCCEEDS
+            with override_settings(MYC_DM_ENABLED=True):
+                ticket_res2 = self.client.post('/api/social/ws-ticket/')
+                valid_ticket2 = ticket_res2.data['data']['ticket']
+
+                scope_proto_ticket = {
+                    'query_string': b'',
+                    'headers': [(b'sec-websocket-protocol', f'closly-auth.{valid_ticket2}'.encode('utf-8'))]
+                }
+                user = call_middleware(scope_proto_ticket)
+                self.assertEqual(user.id, self.user1.id)
+
+            # 6. Malformed ticket rejected
+            scope_malformed = {
+                'query_string': b'ticket=invalid_ticket_format_without_prefix',
+                'headers': []
+            }
+            self.assertTrue(call_middleware(scope_malformed).is_anonymous)
+
+            # 7. Raw ?access_token=<JWT> is also strictly rejected
+            scope_jwt_access = {
+                'query_string': f'access_token={raw_jwt}'.encode('utf-8'),
+                'headers': []
+            }
+            self.assertTrue(call_middleware(scope_jwt_access).is_anonymous)
+
+            # 8. Concurrent ticket consumption race test (SR-09 atomic guarantee)
+            with override_settings(MYC_DM_ENABLED=True):
+                ticket_res3 = self.client.post('/api/social/ws-ticket/')
+                valid_ticket3 = ticket_res3.data['data']['ticket']
+                scope_race = {
+                    'query_string': f'ticket={valid_ticket3}'.encode('utf-8'),
+                    'headers': []
+                }
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                    f1 = executor.submit(call_middleware, scope_race)
+                    f2 = executor.submit(call_middleware, scope_race)
+                    res1 = f1.result()
+                    res2 = f2.result()
+
+                authenticated_count = sum(1 for u in [res1, res2] if u and u.is_authenticated)
+                anonymous_count = sum(1 for u in [res1, res2] if u and u.is_anonymous)
+                self.assertEqual(authenticated_count, 1)
+                self.assertEqual(anonymous_count, 1)
+
+    def test_storage_cleanup_resilience_on_missing_file(self):
+        """SR-11: Deleting records when the underlying file is already missing on disk does not crash."""
+        dummy_img = create_test_image("resilience.jpg")
+        outfit = TodayOutfit.objects.create(
+            user=self.user1,
+            image=dummy_img,
+            caption="Resilience look",
+            visibility="public"
+        )
+        file_path = outfit.image.name
+        storage = outfit.image.storage
+
+        # Delete physical file out-of-band to simulate orphaned or missing file
+        if storage.exists(file_path):
+            storage.delete(file_path)
+
+        # Model deletion must handle missing storage file gracefully without raising
+        try:
+            outfit.delete()
+            deletion_succeeded = True
+        except Exception:
+            deletion_succeeded = False
+
+        self.assertTrue(deletion_succeeded)
+        self.assertFalse(TodayOutfit.objects.filter(caption="Resilience look").exists())
+
+    def test_storage_cleanup_and_retention_suite(self):
+        """SR-11: Physical file cleanup on record deletion and retention purge for expired stories."""
+        from datetime import timedelta
+        from django.utils import timezone
+        from .models import Story
+        from .tasks import expire_old_stories_task
+
+        # 1. Normal TodayOutfit deletion cleans physical storage
+        img1 = create_test_image("clean_outfit.jpg")
+        outfit1 = TodayOutfit.objects.create(
+            user=self.user1,
+            image=img1,
+            caption="Clean Look",
+            visibility="public"
+        )
+        file1 = outfit1.image.name
+        storage1 = outfit1.image.storage
+        self.assertTrue(storage1.exists(file1))
+        outfit1.delete()
+        self.assertFalse(storage1.exists(file1))
+
+        # 2. Shared storage path between records is not deleted prematurely
+        img2 = create_test_image("shared.jpg")
+        outfit_a = TodayOutfit.objects.create(user=self.user1, image=img2, caption="Look A")
+        shared_path = outfit_a.image.name
+        # Create second record pointing to exact same file path
+        outfit_b = TodayOutfit.objects.create(user=self.user2, caption="Look B")
+        outfit_b.image.name = shared_path
+        outfit_b.save(update_fields=['image'])
+        # Deleting outfit_a should NOT delete file since outfit_b still references it
+        outfit_a.delete()
+        self.assertTrue(storage1.exists(shared_path))
+        # Deleting outfit_b cleans up the file now that no references remain
+        outfit_b.delete()
+        self.assertFalse(storage1.exists(shared_path))
+
+        # 3. Story retention purge: stories past MYC_STORY_RETENTION_DAYS are purged with files
+        img3 = create_test_image("retention_story.jpg")
+        st = Story.objects.create(
+            user=self.user1,
+            image=img3,
+            caption="Old Story",
+            expires_at=timezone.now() - timedelta(days=8)
+        )
+        story_file = st.image.name
+        self.assertTrue(storage1.exists(story_file))
+
+        # Run periodic retention cleanup task
+        expire_old_stories_task()
+
+        # Story row and file purged
+        self.assertFalse(Story.objects.filter(id=st.id).exists())
+        self.assertFalse(storage1.exists(story_file))

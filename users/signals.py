@@ -22,42 +22,20 @@ def _delete_file_safely(field_file):
 
 @receiver(pre_delete, sender=User)
 def cleanup_user_avatar_file(sender, instance, **kwargs):
-    _delete_file_safely(instance.profile_picture)
+    if instance.profile_picture and hasattr(instance.profile_picture, 'storage') and bool(instance.profile_picture.name):
+        try:
+            if instance.profile_picture.storage.exists(instance.profile_picture.name):
+                # Only delete if no other user references the same avatar file
+                if not User.objects.filter(profile_picture=instance.profile_picture.name).exclude(pk=instance.pk).exists():
+                    instance.profile_picture.storage.delete(instance.profile_picture.name)
+                    logger.info(f"Purged storage file: {instance.profile_picture.name}")
+        except Exception as e:
+            logger.warning(f"Could not purge user avatar file {instance.profile_picture.name}: {e}")
 
 
 def register_media_cleanup_signals():
     """
-    Connect pre_delete cleanup handlers for all media-storing models across apps.
+    Ensures media cleanup signals across apps are properly registered.
+    Closet and Social media signals are independently registered via closet.signals and social.signals.
     """
-    try:
-        from closet.models import ClosetItem, FitCheck
-        @receiver(pre_delete, sender=ClosetItem, weak=False)
-        def cleanup_closet_item_image(sender, instance, **kwargs):
-            _delete_file_safely(instance.image)
-
-        @receiver(pre_delete, sender=FitCheck, weak=False)
-        def cleanup_fit_check_photo(sender, instance, **kwargs):
-            _delete_file_safely(instance.photo)
-    except Exception as e:
-        logger.debug(f"Could not register ClosetItem/FitCheck media signal: {e}")
-
-
-    try:
-        from social.models import TodayOutfit, OutfitImage, Story, DirectMessage
-        @receiver(pre_delete, sender=TodayOutfit, weak=False)
-        def cleanup_today_outfit_image(sender, instance, **kwargs):
-            _delete_file_safely(instance.image)
-
-        @receiver(pre_delete, sender=OutfitImage, weak=False)
-        def cleanup_outfit_image(sender, instance, **kwargs):
-            _delete_file_safely(instance.image)
-
-        @receiver(pre_delete, sender=Story, weak=False)
-        def cleanup_story_image(sender, instance, **kwargs):
-            _delete_file_safely(instance.image)
-
-        @receiver(pre_delete, sender=DirectMessage, weak=False)
-        def cleanup_direct_message_image(sender, instance, **kwargs):
-            _delete_file_safely(instance.image)
-    except Exception as e:
-        logger.debug(f"Could not register social media signals: {e}")
+    pass

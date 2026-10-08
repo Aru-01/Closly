@@ -234,12 +234,35 @@ def purge_and_anonymize_user(user):
         except Exception:
             pass
 
+        # 3.4 Financial Ledger Retention (SR-28):
+        # Financial ledger retention preserved according to project/business retention requirements.
+        # Preserves double-entry auditability, but zeroes available balance and pseudonymizes all personal text descriptions.
         try:
-            from rewards.models import UserRewardProfile, RewardPointTransaction
-            RewardPointTransaction.objects.filter(user=user).delete()
-            UserRewardProfile.objects.filter(user=user).delete()
-        except Exception:
-            pass
+            from rewards.models import UserRewardProfile, RewardPointTransaction, PointAward, LedgerTxn, AwardStateLog
+            profile = UserRewardProfile.objects.filter(user=user).first()
+            if profile:
+                profile.available_points = 0
+                profile.save(update_fields=['available_points'])
+
+            RewardPointTransaction.objects.filter(user=user).update(
+                description='Historical reward transaction (user pseudonymized for GDPR)'
+            )
+            RewardPointTransaction.objects.filter(reference_id=str(user.id)).update(
+                reference_id='pseudonymized'
+            )
+            PointAward.objects.filter(referred_user=user).update(referred_user=None)
+            LedgerTxn.objects.filter(award__user=user).update(
+                description='Historical ledger transaction (user pseudonymized for GDPR)'
+            )
+            AwardStateLog.objects.filter(award__user=user).update(
+                reason='State transition (user pseudonymized for GDPR)'
+            )
+
+            # Scrub user reference from affiliate conversions while retaining transaction data
+            from affiliate.models import Conversion
+            Conversion.objects.filter(user=user).update(user=None)
+        except Exception as e:
+            logger.warning(f"Error pseudonymizing financial records for user {user.id}: {e}")
 
         try:
             from users.models import UserPreference, UserLoginHistory

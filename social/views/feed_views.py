@@ -5,8 +5,9 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.contrib.auth import get_user_model
 from django.db.models import Q, Count
+from django.utils import timezone
 
-from social.models import TodayOutfit, OutfitLike, UserFollow
+from social.models import TodayOutfit, OutfitLike, UserFollow, get_blocked_user_ids
 from social.serializers import TodayOutfitSerializer
 
 from social.your_day import get_live_weather, suggest_daily_outfit
@@ -36,14 +37,18 @@ class PublicNewsfeedView(generics.ListAPIView):
     pagination_class = StandardSocialPagination
 
     def get_queryset(self):
-        # Public posts only with optimized prefetching and like count annotation
-        return (
+        user = self.request.user
+        qs = (
             TodayOutfit.objects.filter(visibility='public')
             .select_related('user')
             .prefetch_related('tagged_items', 'images')
             .annotate(_likes_count=Count('likes', distinct=True))
             .order_by('-created_at')
         )
+        blocked_ids = get_blocked_user_ids(user)
+        if blocked_ids:
+            qs = qs.exclude(user_id__in=blocked_ids)
+        return qs
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -92,13 +97,17 @@ class FollowingNewsfeedView(generics.ListAPIView):
     def get_queryset(self):
         # Filter public posts from followed users via subquery for single-query efficiency
         following_subquery = UserFollow.objects.filter(follower=self.request.user).values('following_id')
-        return (
+        qs = (
             TodayOutfit.objects.filter(user_id__in=following_subquery, visibility='public')
             .select_related('user')
             .prefetch_related('tagged_items', 'images')
             .annotate(_likes_count=Count('likes', distinct=True))
             .order_by('-created_at')
         )
+        blocked_ids = get_blocked_user_ids(self.request.user)
+        if blocked_ids:
+            qs = qs.exclude(user_id__in=blocked_ids)
+        return qs
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
@@ -161,22 +170,24 @@ class YourDayOutfitView(APIView):
         weather = get_live_weather(lat=lat, lon=lon, city=city, user=request.user)
         outfit_suggestion = suggest_daily_outfit(user=request.user, weather=weather, request=request)
 
+        weather_data = {
+            'day': weather['day'],
+            'date': weather['date'],
+            'city': weather['city'],
+            'temp': weather['temp'],
+            'condition': weather['condition'],
+            'weather_vibe': weather['weather_vibe'],
+            'humidity': weather['humidity'],
+            'wind': weather['wind'],
+            'pressure': weather['pressure'],
+            'icon': weather['icon']
+        } if weather else None
+
         return Response({
             'success': True,
             'message': "Today's weather and smart daily outfit recommendation generated.",
             'data': {
-                'weather': {
-                    'day': weather['day'],
-                    'date': weather['date'],
-                    'city': weather['city'],
-                    'temp': weather['temp'],
-                    'condition': weather['condition'],
-                    'weather_vibe': weather['weather_vibe'],
-                    'humidity': weather['humidity'],
-                    'wind': weather['wind'],
-                    'pressure': weather['pressure'],
-                    'icon': weather['icon']
-                },
+                'weather': weather_data,
                 'suggested_outfit_today': {
                     'pieces': outfit_suggestion['pieces'],
                     'total_pieces': outfit_suggestion['total_pieces_selected'],
@@ -221,6 +232,8 @@ class ExploreNewsfeedView(generics.ListAPIView):
     def get_queryset(self):
         user = self.request.user
         category = self.request.query_params.get('category', 'trending').lower().strip()
+        now = timezone.now()
+        recent_cutoff = now - timezone.timedelta(days=7)
 
         # Exclude self and users the current user already follows
         following_subquery = UserFollow.objects.filter(follower=user).values('following_id')
@@ -231,27 +244,33 @@ class ExploreNewsfeedView(generics.ListAPIView):
             .exclude(user=user)
             .select_related('user')
             .prefetch_related('tagged_items', 'images')
-            .annotate(_likes_count=Count('likes', distinct=True))
+            .annotate(
+                _likes_count=Count('likes', distinct=True),
+                _recent_likes=Count('likes', filter=Q(likes__created_at__gte=recent_cutoff), distinct=True)
+            )
         )
+
+        blocked_ids = get_blocked_user_ids(user)
+        if blocked_ids:
+            qs = qs.exclude(user_id__in=blocked_ids)
 
         if category == 'adjacent':
             if hasattr(user, 'preferences') and user.preferences.style_match:
                 styles = user.preferences.style_match
                 style_q = Q()
                 for s in styles:
-                    style_q |= Q(user__preferences__style_match__icontains=s) | Q(caption__icontains=s)
-                return qs.filter(style_q).order_by('-_likes_count', '-created_at')
-            return qs.order_by('-_likes_count', '-created_at')
+                    style_q |= Q(user__preferences__style_match__icontains=s) | Q(caption__icontains=s) | Q(style_category__iexact=s)
+                return qs.filter(style_q).order_by('-_recent_likes', '-_likes_count', '-created_at')
+            return qs.order_by('-_recent_likes', '-_likes_count', '-created_at')
 
         elif category in ('minimalist', 'streetwear', 'classic', 'chic', 'casual', 'formal', 'bohemian', 'sporty'):
             cat_q = (
                 Q(style_category__iexact=category) |
-                Q(caption__icontains=category) |
-                Q(user__preferences__style_match__icontains=category)
+                Q(caption__icontains=f"#{category}")
             )
-            return qs.filter(cat_q).order_by('-_likes_count', '-created_at')
+            return qs.filter(cat_q).order_by('-_recent_likes', '-_likes_count', '-created_at')
 
-        return qs.order_by('-_likes_count', '-created_at')
+        return qs.order_by('-_recent_likes', '-_likes_count', '-created_at')
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())

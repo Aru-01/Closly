@@ -5,6 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.pagination import PageNumberPagination
 from drf_spectacular.utils import extend_schema, OpenApiResponse
+from django.utils import timezone
 
 from .models import UserRewardProfile, RewardPointTransaction
 from .serializers import RewardPointTransactionSerializer
@@ -28,7 +29,7 @@ class StandardRewardsPagination(PageNumberPagination):
 @extend_schema(
     tags=["Rewards & Gamification"],
     summary="Rewards Summary & Tier Progress",
-    description="Retrieve available points balance, lifetime points, current tier (Bronze-Diamond), progress to next tier, and 60-day validity details.",
+    description="Retrieve available points balance, lifetime points, current tier (Bronze-Diamond), progress to next tier, and 24-month validity details.",
     responses={
         200: OpenApiResponse(description="Rewards balance and tier details retrieved"),
     }
@@ -36,7 +37,7 @@ class StandardRewardsPagination(PageNumberPagination):
 class RewardPointsSummaryView(APIView):
     """
     API endpoint to retrieve current user's available points, lifetime points,
-    current tier, next tier requirements, and 60-day validity details.
+    current tier, next tier requirements, and 24-month validity details.
     
     GET /api/rewards/points/
     """
@@ -47,8 +48,15 @@ class RewardPointsSummaryView(APIView):
         # 1. Fetch profile once
         profile, _ = UserRewardProfile.objects.get_or_create(user=request.user)
 
-        # 2. Process any expired points in real time using the fetched profile
-        process_expired_points(request.user, profile=profile)
+        # 2. Process any expired points only if unexpired expired records exist (SR-24)
+        has_expired = RewardPointTransaction.objects.filter(
+            user=request.user,
+            is_expired=False,
+            expires_at__lte=timezone.now(),
+            points__gt=0
+        ).exists()
+        if has_expired:
+            process_expired_points(request.user, profile=profile)
 
         tier_info = get_tier_info(profile.lifetime_points, profile.available_points)
 
@@ -65,7 +73,7 @@ class RewardPointsSummaryView(APIView):
                 'tier_progress_percentage': tier_info['tier_progress_percentage'],
                 'exp_summary': tier_info['exp_summary'],
                 'rules': {
-                    'point_validity': '60 days from earn date',
+                    'point_validity': '24 months from earn date',
                     'tier_preservation': 'Tier is based on lifetime achievement points and never degrades upon expiration',
                     'tiers': {
                         'Bronze': '0 - 2,000 pts',
@@ -111,7 +119,14 @@ class RewardPointsHistoryView(generics.ListAPIView):
 
     def get_queryset(self):
         profile = self._get_reward_profile()
-        process_expired_points(self.request.user, profile=profile)
+        has_expired = RewardPointTransaction.objects.filter(
+            user=self.request.user,
+            is_expired=False,
+            expires_at__lte=timezone.now(),
+            points__gt=0
+        ).exists()
+        if has_expired:
+            process_expired_points(self.request.user, profile=profile)
         return RewardPointTransaction.objects.filter(user=self.request.user).order_by('-created_at')
 
     def list(self, request, *args, **kwargs):
@@ -143,6 +158,14 @@ class ClaimPurchaseRewardView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def post(self, request):
+        from django.conf import settings
+        if not getattr(settings, 'MYC_PURCHASE_MANUAL_CLAIM_ENABLED', False):
+            return Response({
+                'success': False,
+                'message': 'Manual purchase claims are currently disabled. Purchase points are credited automatically via verified affiliate transactions.',
+                'code': 'feature_disabled'
+            }, status=status.HTTP_404_NOT_FOUND)
+
         order_id = request.data.get('order_id')
         store = request.data.get('store', 'Affiliate Store')
         amount = request.data.get('amount')
@@ -153,11 +176,12 @@ class ClaimPurchaseRewardView(APIView):
                 'message': 'order_id is required to claim purchase points.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Check for duplicate claim via transactions or conversion
+        order_id_clean = str(order_id).strip()
+
+        # Check for duplicate claim globally (SR-02)
         existing = RewardPointTransaction.objects.filter(
-            user=request.user,
             action_type='make_purchase',
-            reference_id=str(order_id)
+            reference_id=order_id_clean
         ).first()
 
         if existing:
@@ -169,7 +193,7 @@ class ClaimPurchaseRewardView(APIView):
         # Check for existing affiliate conversion
         from affiliate.models import Conversion
         conversion = Conversion.objects.filter(
-            order_reference=str(order_id),
+            order_reference=order_id_clean,
             user=request.user,
         ).first()
 
@@ -179,14 +203,20 @@ class ClaimPurchaseRewardView(APIView):
                 'message': 'Reward points for this order have already been claimed.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        desc = f"Purchase at {store}" + (f" (${amount})" if amount else "")
+        desc = f"Purchase at {store}" + (f" (€{amount})" if amount else "")
         tx = award_points(
             user=request.user,
             action_type='make_purchase',
             description=desc,
-            reference_id=str(order_id),
+            reference_id=order_id_clean,
             points_override=200
         )
+
+        if not tx:
+            return Response({
+                'success': False,
+                'message': 'Failed to process purchase reward claim. Duplicate or invalid order.'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
         if conversion:
             conversion.reward_claimed = True
@@ -198,7 +228,7 @@ class ClaimPurchaseRewardView(APIView):
             'message': 'Successfully claimed 200 reward points for your purchase!',
             'data': {
                 'points_awarded': 200,
-                'validity': '60 days',
+                'validity': '24 months',
                 'order_id': order_id,
                 'transaction_id': tx.id,
                 'verified_conversion': bool(conversion),

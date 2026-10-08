@@ -261,3 +261,90 @@ class DirectMessage(models.Model):
         return f"[{self.message_type}] From {self.sender.email} to {self.recipient.email} at {self.created_at}"
 
 
+class UserBlock(models.Model):
+    """
+    Bilateral block mechanism between users per DSA and App Store guidelines.
+    When user A blocks user B:
+    - User B cannot see user A's profile, outfits, stories, feeds, or followers.
+    - User B cannot message, follow, or interact with user A.
+    - Any existing follow connection between them is dissolved.
+    """
+    blocker = models.ForeignKey(User, on_delete=models.CASCADE, related_name='blocking_set')
+    blocked = models.ForeignKey(User, on_delete=models.CASCADE, related_name='blocked_by_set')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = _('user block')
+        verbose_name_plural = _('user blocks')
+        unique_together = ('blocker', 'blocked')
+        indexes = [
+            models.Index(fields=['blocker', 'blocked']),
+        ]
+
+    def __str__(self):
+        return f"{self.blocker.email} blocked {self.blocked.email}"
+
+
+class ContentReport(models.Model):
+    """
+    DSA Article 16/17 compliant user reporting queue.
+    Allows users to report outfits, stories, messages, and user profiles.
+    """
+    TARGET_TYPE_CHOICES = [
+        ('outfit', 'Today Outfit'),
+        ('story', 'Story'),
+        ('user', 'User Profile'),
+        ('message', 'Direct Message'),
+    ]
+
+    REASON_CHOICES = [
+        ('spam', 'Spam / Commercial advertising'),
+        ('harassment', 'Harassment / Hate speech'),
+        ('nudity', 'Nudity / Sexual content'),
+        ('violence', 'Violence / Self-harm'),
+        ('copyright', 'Copyright infringement'),
+        ('impersonation', 'Impersonation'),
+        ('other', 'Other violation'),
+    ]
+
+    STATUS_CHOICES = [
+        ('pending', 'Pending Review'),
+        ('investigating', 'Investigating'),
+        ('resolved', 'Action Taken'),
+        ('dismissed', 'Dismissed / False Report'),
+    ]
+
+    reporter = models.ForeignKey(User, on_delete=models.CASCADE, related_name='submitted_reports')
+    target_type = models.CharField(max_length=20, choices=TARGET_TYPE_CHOICES)
+    target_id = models.CharField(max_length=100)
+    reason = models.CharField(max_length=30, choices=REASON_CHOICES)
+    details = models.TextField(blank=True, default='')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    moderator_notes = models.TextField(blank=True, default='')
+    action_taken = models.CharField(max_length=100, blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('content report')
+        verbose_name_plural = _('content reports')
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['target_type', 'target_id']),
+        ]
+
+    def __str__(self):
+        return f"Report #{self.id} on {self.target_type}:{self.target_id} by {self.reporter.email} ({self.status})"
+
+
+def get_blocked_user_ids(user):
+    """
+    Returns set of user IDs where user blocked someone OR was blocked by someone (bilateral block).
+    """
+    if not user or not user.is_authenticated:
+        return set()
+    blocking = UserBlock.objects.filter(blocker=user).values_list('blocked_id', flat=True)
+    blocked_by = UserBlock.objects.filter(blocked=user).values_list('blocker_id', flat=True)
+    return set(blocking).union(set(blocked_by))
+

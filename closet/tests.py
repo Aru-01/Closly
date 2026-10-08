@@ -93,7 +93,7 @@ class ClosetApiTests(TestCase):
         bad_format_file = SimpleUploadedFile("test.exe", b"fake binary data", content_type="application/octet-stream")
         with self.assertRaises(ValidationError) as ctx:
             validate_image_file(bad_format_file, max_mb=30)
-        self.assertIn("Only JPG, JPEG, PNG, GIF, WebP, and HEIC", str(ctx.exception))
+        self.assertIn("Only JPG, JPEG, PNG, WebP, and HEIC", str(ctx.exception))
 
         # Test oversized file (> 30MB)
         # Mock size attribute to avoid allocating 31MB in memory

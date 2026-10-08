@@ -52,6 +52,14 @@ class DirectMessageSendView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def post(self, request):
+        from django.conf import settings
+        if not getattr(settings, 'MYC_DM_ENABLED', False):
+            return Response({
+                'success': False,
+                'message': 'Direct messaging is currently disabled.',
+                'code': 'feature_disabled'
+            }, status=status.HTTP_404_NOT_FOUND)
+
         from users.utils import set_user_online
         set_user_online(str(request.user.id))
 
@@ -89,6 +97,13 @@ class DirectMessageSendView(APIView):
                 'message': 'This user is no longer on Closly.'
             }, status=status.HTTP_400_BAD_REQUEST)
 
+        from social.models import get_blocked_user_ids
+        if recipient.id in get_blocked_user_ids(request.user):
+            return Response({
+                'success': False,
+                'message': 'Cannot message this user.'
+            }, status=status.HTTP_403_FORBIDDEN)
+
         shared_product = None
         if product_id:
             try:
@@ -105,7 +120,7 @@ class DirectMessageSendView(APIView):
                 shared_outfit = TodayOutfit.objects.filter(pk=outfit_id).first()
             except (ValueError, TypeError, ValidationError):
                 shared_outfit = None
-            if not shared_outfit:
+            if not shared_outfit or (shared_outfit.visibility != 'public' and shared_outfit.user_id != request.user.id):
                 return Response({'success': False, 'message': 'Shared outfit not found.'}, status=status.HTTP_404_NOT_FOUND)
             message_type = 'outfit'
 
@@ -115,7 +130,10 @@ class DirectMessageSendView(APIView):
                 story_ref = Story.objects.filter(pk=story_id).first()
             except (ValueError, TypeError, ValidationError):
                 story_ref = None
-            if not story_ref:
+            if not story_ref or story_ref.is_expired or not story_ref.is_active:
+                return Response({'success': False, 'message': 'Referenced story not found.'}, status=status.HTTP_404_NOT_FOUND)
+            from social.views.story_views import is_story_visible_to_user
+            if not is_story_visible_to_user(story_ref, request.user):
                 return Response({'success': False, 'message': 'Referenced story not found.'}, status=status.HTTP_404_NOT_FOUND)
             message_type = 'story_reply'
 
@@ -220,6 +238,16 @@ class DirectMessageConversationView(generics.ListAPIView):
     serializer_class = DirectMessageSerializer
     pagination_class = StandardSocialPagination
 
+    def list(self, request, *args, **kwargs):
+        from django.conf import settings
+        if not getattr(settings, 'MYC_DM_ENABLED', False):
+            return Response({
+                'success': False,
+                'message': 'Direct messaging is currently disabled.',
+                'code': 'feature_disabled'
+            }, status=status.HTTP_404_NOT_FOUND)
+        return super().list(request, *args, **kwargs)
+
     def get_queryset(self):
         other_user_id = self.kwargs.get('user_id')
         current_user = self.request.user
@@ -259,6 +287,13 @@ class ConversationListView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def get(self, request):
+        from django.conf import settings
+        if not getattr(settings, 'MYC_DM_ENABLED', False):
+            return Response({
+                'success': False,
+                'message': 'Direct messaging is currently disabled.',
+                'code': 'feature_disabled'
+            }, status=status.HTTP_404_NOT_FOUND)
         user = request.user
         from users.utils import set_user_online
         set_user_online(str(user.id))
@@ -308,4 +343,40 @@ class ConversationListView(APIView):
             'data': serializer.data,
         }, status=status.HTTP_200_OK)
 
+
+@extend_schema(
+    tags=["Social Feed & Network"],
+    summary="Generate One-Time WebSocket Ticket",
+    description="Generates a 60-second single-use ticket for authenticating to ws/chat/ without exposing raw JWTs in query strings (SR-09).",
+    responses={
+        200: OpenApiResponse(description="One-time ticket generated"),
+        404: OpenApiResponse(description="Feature disabled when MYC_DM_ENABLED is False"),
+    }
+)
+class WebSocketTicketCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+    authentication_classes = [JWTAuthentication]
+
+    def post(self, request):
+        from django.conf import settings
+        if not getattr(settings, 'MYC_DM_ENABLED', False):
+            return Response({
+                'success': False,
+                'message': 'Direct messaging and real-time chat are currently disabled.',
+                'code': 'feature_disabled'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+        import secrets
+        from django.core.cache import cache
+        ticket = f"wst_{secrets.token_urlsafe(32)}"
+        cache.set(f"ws_ticket:{ticket}", str(request.user.id), timeout=60)
+        return Response({
+            'success': True,
+            'message': 'One-time WebSocket authentication ticket generated.',
+            'data': {
+                'ticket': ticket,
+                'expires_in': 60,
+                'ws_url': f"/ws/chat/?ticket={ticket}"
+            }
+        }, status=status.HTTP_200_OK)
 

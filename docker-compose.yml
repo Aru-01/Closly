@@ -35,7 +35,10 @@ services:
     build: .
     container_name: closly_web
     restart: unless-stopped
-    command: daphne -b 0.0.0.0 -p 8000 Config.asgi:application
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             daphne -b 0.0.0.0 -p 8000 Config.asgi:application"
     env_file:
       - .env
     volumes:

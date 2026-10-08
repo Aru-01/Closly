@@ -29,7 +29,10 @@ def get_active_stories_for_user(request_user, request=None):
     followed_user_ids = list(
         UserFollow.objects.filter(follower=request_user).values_list('following_id', flat=True)
     )
-    relevant_user_ids = [request_user.id] + followed_user_ids
+    from social.models import get_blocked_user_ids
+    blocked_ids = get_blocked_user_ids(request_user)
+    if blocked_ids:
+        relevant_user_ids = [uid for uid in relevant_user_ids if uid not in blocked_ids]
 
     active_stories = (
         Story.objects.filter(
@@ -38,7 +41,7 @@ def get_active_stories_for_user(request_user, request=None):
             expires_at__gt=now
         )
         .select_related('user')
-        .prefetch_related('views__viewer', 'likes')
+        .prefetch_related('likes')
         .order_by('-created_at')
     )
 
@@ -103,7 +106,23 @@ def get_active_stories_for_user(request_user, request=None):
 
     return groups
 
-User = get_user_model()
+
+def is_story_visible_to_user(story, user):
+    """
+    Determines if a story is visible to a given user:
+    1. Author can always see their own story.
+    2. Other users can see the story only if they follow the author.
+    3. Blocked users can never see each other's stories.
+    """
+    if not user or not user.is_authenticated:
+        return False
+    from social.models import get_blocked_user_ids, UserFollow
+    if story.user_id in get_blocked_user_ids(user):
+        return False
+    if story.user_id == user.id:
+        return True
+    return UserFollow.objects.filter(follower=user, following=story.user).exists()
+
 
 
 @extend_schema(
@@ -241,6 +260,12 @@ class StoryViewRecordView(APIView):
 
     def post(self, request, pk):
         story = get_object_or_404(Story, pk=pk)
+        if not is_story_visible_to_user(story, request.user):
+            return Response({
+                'success': False,
+                'message': 'Story not found.'
+            }, status=status.HTTP_404_NOT_FOUND)
+
         if story.is_expired or not story.is_active:
             return Response({
                 'success': False,
@@ -291,6 +316,12 @@ class StoryLikeToggleView(APIView):
 
     def post(self, request, pk):
         story = get_object_or_404(Story, pk=pk)
+        if not is_story_visible_to_user(story, request.user):
+            return Response({
+                'success': False,
+                'message': 'Story not found.'
+            }, status=status.HTTP_404_NOT_FOUND)
+
         if story.is_expired or not story.is_active:
             return Response({
                 'success': False,
@@ -366,7 +397,21 @@ class StoryReplyView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def post(self, request, pk):
+        from django.conf import settings
+        if not getattr(settings, 'MYC_DM_ENABLED', False):
+            return Response({
+                'success': False,
+                'message': 'Direct messaging and story replies are currently disabled.',
+                'code': 'feature_disabled'
+            }, status=status.HTTP_404_NOT_FOUND)
+
         story = get_object_or_404(Story, pk=pk)
+        if not is_story_visible_to_user(story, request.user):
+            return Response({
+                'success': False,
+                'message': 'Story not found.'
+            }, status=status.HTTP_404_NOT_FOUND)
+
         if story.is_expired or not story.is_active:
             return Response({
                 'success': False,

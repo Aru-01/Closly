@@ -17,6 +17,11 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
 
     async def connect(self):
         self.user = self.scope.get("user")
+        from django.conf import settings
+        if not getattr(settings, 'MYC_DM_ENABLED', False):
+            logger.warning("Rejecting WebSocket connection: MYC_DM_ENABLED is False.")
+            await self.close(code=4404)
+            return
 
         if not self.user or not self.user.is_authenticated:
             logger.warning("Rejecting unauthenticated WebSocket connection attempt.")
@@ -202,9 +207,14 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         from affiliate.models import AffiliateProduct
         from .serializers import DirectMessageSerializer
 
+        from django.core.exceptions import ValidationError
         try:
             recipient = User.objects.get(id=recipient_id, is_active=True)
-        except (User.DoesNotExist, ValueError):
+        except (User.DoesNotExist, ValueError, TypeError, ValidationError):
+            return None
+
+        from .models import get_blocked_user_ids
+        if recipient.id in get_blocked_user_ids(self.user):
             return None
 
         shared_product = None
@@ -216,14 +226,19 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         shared_outfit = None
         if outfit_id:
             shared_outfit = TodayOutfit.objects.filter(id=outfit_id).first()
-            if shared_outfit:
+            if shared_outfit and (shared_outfit.visibility == 'public' or shared_outfit.user_id == sender_id):
                 message_type = 'outfit'
+            else:
+                shared_outfit = None
 
         story_ref = None
         if story_id:
             story_ref = Story.objects.filter(id=story_id).first()
-            if story_ref:
+            from social.views.story_views import is_story_visible_to_user
+            if story_ref and not story_ref.is_expired and story_ref.is_active and is_story_visible_to_user(story_ref, self.user):
                 message_type = 'story_reply'
+            else:
+                story_ref = None
 
         msg = DirectMessage.objects.create(
             sender_id=sender_id,
