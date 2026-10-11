@@ -20,12 +20,12 @@ class Settings:
     def LLM_BASE_URL(self) -> str | None:
         try:
             from django.conf import settings as dj_settings
-            url = getattr(dj_settings, 'LLM_BASE_URL', None)
+            url = getattr(dj_settings, 'LLM_BASE_URL', None) or getattr(dj_settings, 'OPENAI_EU_BASE_URL', None)
             if url:
                 return str(url).strip()
         except Exception:
             pass
-        val = os.getenv("LLM_BASE_URL")
+        val = os.getenv("LLM_BASE_URL") or os.getenv("OPENAI_EU_BASE_URL")
         return val.strip() if val else None
 
     @property

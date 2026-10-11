@@ -256,13 +256,13 @@ else:
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# Email Configuration (Requirement 38, P-29)
+# Email Configuration (Requirement 38, P-29: AWS SES Frankfurt)
 EMAIL_BACKEND = config("EMAIL_BACKEND", default="django.core.mail.backends.smtp.EmailBackend")
 EMAIL_HOST = config("EMAIL_HOST", default="email-smtp.eu-central-1.amazonaws.com")
 EMAIL_PORT = config("EMAIL_PORT", default=587, cast=int)
 EMAIL_USE_TLS = config("EMAIL_USE_TLS", default=True, cast=bool)
-EMAIL_HOST_USER = config("EMAIL_HOST_USER", default="")
-EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default="")
+EMAIL_HOST_USER = config("EMAIL_HOST_USER", default=config("SMTP_Personenname", default=""))
+EMAIL_HOST_PASSWORD = config("EMAIL_HOST_PASSWORD", default=config("SMTP_Passwort", default=""))
 DEFAULT_FROM_EMAIL = config("DEFAULT_FROM_EMAIL", default="noreply@myclosly.com")
 SERVER_EMAIL = config("SERVER_EMAIL", default="noreply@myclosly.com")
 EMAIL_TIMEOUT = config("EMAIL_TIMEOUT", default=10, cast=int)
@@ -420,15 +420,16 @@ AI_SCAN_CONCURRENCY_LIMIT = config("AI_SCAN_CONCURRENCY_LIMIT", default=15, cast
 AI_SCAN_QUEUE_TIMEOUT = config("AI_SCAN_QUEUE_TIMEOUT", default=35, cast=int)
 AI_SCAN_CACHE_TTL = config("AI_SCAN_CACHE_TTL", default=600, cast=int)
 
-# EU Data Routing & AI Gateway Configuration (03_closet_ai_scanner C-03, §7.4)
+# EU Data Routing & AI Gateway Configuration (03_closet_ai_scanner C-03, §7.4, GDPR Residency)
 AI_DATA_REGION = config("AI_DATA_REGION", default="EU")
-AI_PHOTO_PROVIDER = config("AI_PHOTO_PROVIDER", default="openai")
+AI_PHOTO_PROVIDER = config("AI_PHOTO_PROVIDER", default="openai_eu")
 AI_PROVIDER_ALLOWLIST = [
     p.strip()
     for p in config("AI_PROVIDER_ALLOWLIST", default="openai,openai_eu,anthropic_eu,vertex_eu,mock").split(",")
     if p.strip()
 ]
-OPENAI_EU_BASE_URL = config("OPENAI_EU_BASE_URL", default="")
+OPENAI_EU_BASE_URL = config("OPENAI_EU_BASE_URL", default="https://api.openai.com/v1")
+ANTHROPIC_EU_BASE_URL = config("ANTHROPIC_EU_BASE_URL", default="https://api.anthropic.com/v1")
 AI_SAFETY_GATE_ENABLED = config("AI_SAFETY_GATE_ENABLED", default=True, cast=bool)
 AI_SAFETY_PROVIDER = config("AI_SAFETY_PROVIDER", default="openai")  # openai, sightengine, internal
 SIGHTENGINE_API_USER = config("SIGHTENGINE_API_USER", default="")
@@ -456,3 +457,36 @@ MYC_TIER_SILVER_THRESHOLD = config("MYC_TIER_SILVER_THRESHOLD", default=2000, ca
 MYC_TIER_GOLD_THRESHOLD = config("MYC_TIER_GOLD_THRESHOLD", default=5000, cast=int)
 MYC_TIER_PLATINUM_THRESHOLD = config("MYC_TIER_PLATINUM_THRESHOLD", default=10000, cast=int)
 MYC_TIER_DIAMOND_THRESHOLD = config("MYC_TIER_DIAMOND_THRESHOLD", default=50000, cast=int)
+
+# ==============================================================================
+# Sentry Error Tracking (GDPR-compliant with PII filtering)
+# ==============================================================================
+SENTRY_DSN = config("SENTRY_DSN", default="")
+if SENTRY_DSN:
+    import sentry_sdk
+    from sentry_sdk.integrations.django import DjangoIntegration
+    from sentry_sdk.integrations.celery import CeleryIntegration
+    from sentry_sdk.integrations.redis import RedisIntegration
+
+    def sentry_before_send(event, hint):
+        # GDPR PII protection: scrub auth tokens and cookies
+        if 'request' in event and 'headers' in event['request']:
+            headers = event['request']['headers']
+            for header in ['Authorization', 'Cookie', 'X-Awin-Signature']:
+                if header in headers:
+                    headers[header] = '[Filtered]'
+        return event
+
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[
+            DjangoIntegration(),
+            CeleryIntegration(),
+            RedisIntegration(),
+        ],
+        environment=config("SENTRY_ENVIRONMENT", default="production" if not DEBUG else "development"),
+        traces_sample_rate=config("SENTRY_TRACES_SAMPLE_RATE", default=0.1, cast=float),
+        profiles_sample_rate=config("SENTRY_PROFILES_SAMPLE_RATE", default=0.1, cast=float),
+        send_default_pii=False,
+        before_send=sentry_before_send,
+    )

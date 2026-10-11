@@ -1,6 +1,5 @@
 import base64
 import json
-from fastapi import UploadFile
 from llm_client import llm_client
 from config import settings
 from schemas import DressAnalysisResult
@@ -254,22 +253,4 @@ def _sanitize_price(raw_json: dict) -> dict:
     price.setdefault("range_max", float(default_max))
     price.setdefault("confidence", "medium")
     raw_json["estimated_price"] = price
-    return raw_json
-
-
-
-async def analyze_dress_image(file: UploadFile) -> DressAnalysisResult:
-    file_bytes = await file.read()
-    validate_image_size(file_bytes)
-
-    mime_type = file.content_type or "image/jpeg"
-    base64_image = encode_image_to_base64(file_bytes)
-
-    raw_json = call_llm_for_analysis(base64_image, mime_type)
-
-    raw_json = resolve_brand(raw_json)
-    raw_json = _sanitize_brand(raw_json)
-    raw_json = _sanitize_price(raw_json)
-
-    result = DressAnalysisResult(**raw_json)
-    return result
+    return raw_json

@@ -43,6 +43,10 @@ from .media_views import (
     ProtectedMediaServeView,
     generate_signed_media_url,
 )
+from .invite_views import (
+    InviteListView,
+    InviteRedeemView,
+)
 __all__ = [
     'standard_response',
     'delete_profile_data_request_view',
@@ -71,5 +75,7 @@ __all__ = [
     'ShareProfileAPIView',
     'PublicProfileWebView',
     'DeviceRegistrationView',
+    'InviteListView',
+    'InviteRedeemView',
 ]
 

@@ -10,8 +10,6 @@ from closet.utils import validate_and_sanitize_image, persist_sanitized_image
 from closet.exceptions import AIServiceUnavailableError, AIDailyLimitExceededError
 from closet.models import FitCheck, ClosetItem
 
-from .gemini_client import call_gemini_vision_api
-
 logger = logging.getLogger(__name__)
 
 
@@ -61,15 +59,6 @@ def scan_clothing_image(image_file, request=None, user=None):
         raise
     except Exception as e:
         logger.error(f"AI Gateway photo analysis failed: {e}", exc_info=True)
-
-    # Secondary fallback: Gemini Vision if configured
-    if not garment_data:
-        gemini_key = getattr(settings, 'GEMINI_API_KEY', None)
-        if gemini_key:
-            try:
-                garment_data = call_gemini_vision_api(sanitized_bytes, mime, gemini_key)
-            except Exception as e:
-                logger.error(f"Gemini vision fallback failed: {e}", exc_info=True)
 
     # Strict production rule (C-04): Never fabricate fake garments on provider failure!
     if not garment_data:

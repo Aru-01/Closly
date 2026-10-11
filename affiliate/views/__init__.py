@@ -30,6 +30,11 @@ from .webhook_views import (
     AwinWebhookView,
 )
 
+from .sprint_views import (
+    StyleSprintView,
+    StyleSprintSwipeView,
+)
+
 __all__ = [
     'NewsfeedPagination',
     'ForYouPagination',
@@ -44,4 +49,6 @@ __all__ = [
     'SavedProductsListView',
     'EventBatchView',
     'AwinWebhookView',
+    'StyleSprintView',
+    'StyleSprintSwipeView',
 ]

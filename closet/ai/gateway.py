@@ -78,10 +78,14 @@ class AIGateway:
 
     @staticmethod
     def verify_provider_and_region():
-        """Asserts EU routing and allowed providers."""
-        region = getattr(settings, 'AI_DATA_REGION', 'EU')
-        provider = getattr(settings, 'AI_PHOTO_PROVIDER', 'openai')
-        allowlist = getattr(settings, 'AI_PROVIDER_ALLOWLIST', ['openai', 'openai_eu', 'anthropic_eu', 'mock'])
+        """Asserts EU routing and allowed providers under GDPR."""
+        region = str(getattr(settings, 'AI_DATA_REGION', 'EU')).strip().upper()
+        if region != 'EU':
+            logger.error(f"AI_DATA_REGION '{region}' is not compliant with EU GDPR residency requirements.")
+            raise AIServiceUnavailableError("AI data routing rejected: Non-EU data routing is forbidden under GDPR compliance.")
+
+        provider = getattr(settings, 'AI_PHOTO_PROVIDER', 'openai_eu')
+        allowlist = getattr(settings, 'AI_PROVIDER_ALLOWLIST', ['openai', 'openai_eu', 'anthropic_eu', 'vertex_eu', 'mock'])
 
         if provider not in allowlist:
             logger.error(f"Configured AI provider '{provider}' is not in the allowlist {allowlist}.")

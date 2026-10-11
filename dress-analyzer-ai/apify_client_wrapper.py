@@ -27,37 +27,4 @@ def search_brand_from_logo_text(logo_text: str, max_results: int = 5) -> list:
         results.append(item)
 
     return results
-
-
-def search_brand_by_reverse_image(image_url: str, max_results: int = 5) -> list:
-    """
-    Runs reverse image search via Apify using a public image URL,
-    to identify the brand from an unrecognized/local logo.
-    """
-    run_input = {
-        "imageUrl": image_url,   # exact field name — verify against the actor you choose in Apify console
-        "maxResults": max_results,
-    }
-
-    run = _apify_client.actor("REPLACE_WITH_REVERSE_IMAGE_SEARCH_ACTOR_ID").call(run_input=run_input)
-
-    results = []
-    for item in _apify_client.dataset(run["defaultDatasetId"]).iterate_items():
-        results.append(item)
-
-    return results
-
-
-def verify_brand_with_reverse_image_search(image_url: str) -> str | None:
-    try:
-        results = search_brand_by_reverse_image(image_url)
-    except Exception:
-        return None
-
-    if not results:
-        return None
-
-    # Adjust field names below to match the actual actor's output structure
-    top_item = results[0]
-    matched_title = top_item.get("title") or top_item.get("pageTitle")
-    return matched_title
+

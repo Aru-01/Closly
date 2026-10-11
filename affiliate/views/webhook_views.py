@@ -9,6 +9,7 @@ Receives, validates, and records affiliate purchase conversions with:
 - Reward points reconciliation with rewards service
 """
 import decimal
+import hashlib
 import hmac
 import logging
 import uuid
@@ -43,27 +44,72 @@ def _normalize_conversion_status(raw_status: str) -> str:
 
 
 def _validate_webhook_auth(request) -> bool:
-    """Validate webhook secret token from Authorization header or X-Awin-Token."""
+    """
+    Validates webhook authenticity with strict fail-closed security:
+    1. Fails closed if MYC_AWIN_WEBHOOK_SECRET is not configured or empty.
+    2. Enforces timestamp freshness if timestamp header is provided (max 300s clock drift).
+    3. Validates HMAC-SHA256 signature calculated over raw request.body.
+    4. Supports Bearer token and X-Awin-Token matching secret for server-to-server postback.
+    """
     secret = getattr(settings, 'MYC_AWIN_WEBHOOK_SECRET', None)
-    if not secret:
-        # If no secret configured in environment, allow in dev/test
-        return True
+    if not secret or not str(secret).strip():
+        logger.error("AWIN Webhook: Unauthorized. MYC_AWIN_WEBHOOK_SECRET is not configured (fail-closed).")
+        return False
 
-    # 1. Check Authorization: Bearer <secret>
-    auth_header = request.META.get('HTTP_AUTHORIZATION', '')
-    if auth_header.startswith('Bearer '):
-        token = auth_header[7:].strip()
-        if hmac.compare_digest(token, secret):
+    secret_str = str(secret).strip()
+    secret_bytes = secret_str.encode('utf-8')
+
+    # 1. Timestamp freshness verification (replay attack prevention)
+    raw_timestamp = (
+        request.META.get('HTTP_X_AWIN_TIMESTAMP') or
+        request.META.get('HTTP_X_TIMESTAMP') or
+        request.headers.get('X-Awin-Timestamp') or
+        request.headers.get('X-Timestamp')
+    )
+    if raw_timestamp:
+        try:
+            ts_val = float(str(raw_timestamp).strip())
+            now_ts = timezone.now().timestamp()
+            # 300s (5 minutes) maximum allowable time drift
+            if abs(now_ts - ts_val) > 300:
+                logger.warning(f"AWIN Webhook: Request timestamp {ts_val} exceeds 300s freshness window.")
+                return False
+        except (ValueError, TypeError):
+            logger.warning(f"AWIN Webhook: Malformed timestamp header '{raw_timestamp}'.")
+            return False
+
+    # 2. Strict HMAC-SHA256 signature over raw payload bytes
+    sig_header = (
+        request.META.get('HTTP_X_AWIN_SIGNATURE') or
+        request.META.get('HTTP_X_SIGNATURE') or
+        request.META.get('HTTP_X_HUB_SIGNATURE_256') or
+        request.headers.get('X-Awin-Signature') or
+        request.headers.get('X-Signature')
+    )
+    if sig_header:
+        candidate_sig = str(sig_header).strip()
+        if candidate_sig.startswith('sha256='):
+            candidate_sig = candidate_sig[7:].strip()
+        body_bytes = request.body or b''
+        expected_sig = hmac.new(secret_bytes, body_bytes, hashlib.sha256).hexdigest()
+        if hmac.compare_digest(candidate_sig.lower(), expected_sig.lower()):
             return True
 
-    # 2. Check X-Awin-Token or X-Awin-Signature
-    custom_token = request.META.get('HTTP_X_AWIN_TOKEN') or request.META.get('HTTP_X_AWIN_SIGNATURE', '')
-    if custom_token and hmac.compare_digest(custom_token.strip(), secret):
+    # 3. Check Authorization: Bearer <secret>
+    auth_header = request.META.get('HTTP_AUTHORIZATION', '') or request.headers.get('Authorization', '')
+    if auth_header.startswith('Bearer '):
+        token = auth_header[7:].strip()
+        if hmac.compare_digest(token, secret_str):
+            return True
+
+    # 4. Check custom header X-Awin-Token
+    custom_token = request.META.get('HTTP_X_AWIN_TOKEN') or request.headers.get('X-Awin-Token')
+    if custom_token and hmac.compare_digest(str(custom_token).strip(), secret_str):
         return True
 
-    # 3. Check query param ?token=
+    # 5. Check query param ?token=
     query_token = request.query_params.get('token', '')
-    if query_token and hmac.compare_digest(query_token.strip(), secret):
+    if query_token and hmac.compare_digest(str(query_token).strip(), secret_str):
         return True
 
     return False

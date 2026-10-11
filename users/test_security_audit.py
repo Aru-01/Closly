@@ -163,6 +163,7 @@ class SecurityAuditTestCase(TestCase):
                 "id_token": "valid_token",
                 "email": "victim@example.com",
                 "photo_url": "http://169.254.169.254/latest/meta-data/",
+                "date_of_birth": "2000-01-01",
             },
             format="json",
         )
@@ -251,8 +252,24 @@ class SecurityAuditTestCase(TestCase):
         }, format="json")
         self.assertEqual(resp_update_bypass.status_code, status.HTTP_400_BAD_REQUEST)
 
-        # 6. Firebase social login with underage DOB is rejected (SR-21 / U-10)
+        # 5. Firebase social login without DOB for new user is rejected (U-10 / Task 1.2)
         self.client.force_authenticate(user=None)
+        with patch('users.views.auth_views.verify_firebase_token') as mock_verify:
+            mock_verify.return_value = {
+                'uid': 'firebase_no_dob_uid_123',
+                'email': 'no_dob_social@example.com',
+                'email_verified': True,
+                'name': 'No DOB Social',
+                'firebase': {'sign_in_provider': 'google.com'}
+            }
+            fb_url = reverse("users:firebase-auth")
+            resp_fb_no_dob = self.client.post(fb_url, {
+                "firebase_token": "valid_token_mock_nodob",
+            }, format="json")
+            self.assertEqual(resp_fb_no_dob.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertEqual(resp_fb_no_dob.data.get("code"), "DOB_REQUIRED")
+
+        # 6. Firebase social login with underage DOB is rejected (SR-21 / U-10)
         with patch('users.views.auth_views.verify_firebase_token') as mock_verify:
             mock_verify.return_value = {
                 'uid': 'firebase_underage_uid_123',
@@ -440,8 +457,11 @@ class SecurityAuditTestCase(TestCase):
         resp = self.client.post(url)
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
 
-        # User is deleted from database
-        self.assertFalse(User.objects.filter(pk=self.user.pk).exists())
+        # User is anonymized and deactivated in database per GDPR Art. 17 / SR-28
+        self.user.refresh_from_db()
+        self.assertFalse(self.user.is_active)
+        self.assertEqual(self.user.name, 'Deleted User')
+        self.assertTrue(self.user.email.startswith('deleted_'))
         del_req.refresh_from_db()
         self.assertEqual(del_req.status, "completed")
 
@@ -612,7 +632,7 @@ class SecurityAuditTestCase(TestCase):
         self.assertEqual(initial_points, 0)
 
         # 2. OTP verification activates the referral reward and awards points
-        verify_url = reverse("users:verify_otp")
+        verify_url = reverse("users:verify-otp")
         verify_resp = self.client.post(verify_url, {"email": friend.email, "otp": friend.otp}, format="json")
         self.assertEqual(verify_resp.status_code, status.HTTP_200_OK)
 
@@ -656,7 +676,7 @@ class SecurityAuditTestCase(TestCase):
 
         # 2. Device registration records push_notification consent
         self.client.force_authenticate(user=user)
-        device_url = reverse("users:device_registration")
+        device_url = reverse("users:devices")
         dev_resp = self.client.post(device_url, {"apns_token": "a" * 64, "prefs": {"likes": True}}, format="json")
         self.assertIn(dev_resp.status_code, [status.HTTP_200_OK, status.HTTP_201_CREATED])
 
@@ -702,13 +722,16 @@ class SecurityAuditTestCase(TestCase):
         self.assertIn(5, job.steps_done)
         self.assertIn(9, job.steps_done)
         self.assertIsNotNone(job.finished_at)
-
-        # Confirm user row was erased
-        self.assertFalse(User.objects.filter(id=victim_id).exists())
+        # Confirm user was anonymized and PII purged (GDPR Art. 17 / SR-28)
+        victim.refresh_from_db()
+        self.assertFalse(victim.is_active)
+        self.assertEqual(victim.name, 'Deleted User')
+        self.assertTrue(victim.email.startswith('deleted_'))
+        self.assertFalse(victim.has_usable_password())
 
     def test_account_deletion_re_request_creates_fresh_record(self):
         """U-27: Multiple deletion requests must produce distinct fresh records."""
-        url = reverse("users:request_account_deletion_api")
+        url = reverse("users:delete-account-request")
         payload = {"name": self.user.name, "email": self.user.email}
 
         resp1 = self.client.post(url, payload, format="json")
@@ -728,7 +751,7 @@ class SecurityAuditTestCase(TestCase):
 
     def test_gdpr_data_export_endpoint(self):
         self.client.force_authenticate(user=self.user)
-        url = reverse("users:gdpr_export")
+        url = reverse("users:gdpr-export")
         resp = self.client.get(url)
         self.assertEqual(resp.status_code, status.HTTP_200_OK)
         self.assertTrue(resp.data.get("success"))
@@ -747,18 +770,18 @@ class SecurityAuditTestCase(TestCase):
 
     def test_email_enumeration_protection_on_unauthenticated_endpoints(self):
         # 1. Resend OTP with non-existent email returns 200 with generic response
-        resend_url = reverse("users:resend_otp")
+        resend_url = reverse("users:resend-otp")
         res_resp = self.client.post(resend_url, {"email": "nobody_exists@example.com"}, format="json")
         self.assertEqual(res_resp.status_code, status.HTTP_200_OK)
 
         # 2. Verify OTP with non-existent email returns generic 400
-        verify_url = reverse("users:verify_otp")
+        verify_url = reverse("users:verify-otp")
         v_resp = self.client.post(verify_url, {"email": "nobody_exists@example.com", "otp": "999999"}, format="json")
         self.assertEqual(v_resp.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(v_resp.data.get("code"), "INVALID_OTP")
 
         # 3. Password reset request with non-existent email returns 200 generic
-        pwd_url = reverse("users:password_reset_request")
+        pwd_url = reverse("users:password-reset")
         p_resp = self.client.post(pwd_url, {"email": "nobody_exists@example.com"}, format="json")
         self.assertEqual(p_resp.status_code, status.HTTP_200_OK)
 
@@ -789,7 +812,7 @@ class SecurityAuditTestCase(TestCase):
 
         # 3. Share URL includes username
         self.client.force_authenticate(user=self.user)
-        share_url = reverse("users:share_profile")
+        share_url = reverse("users:profile-share")
         share_resp = self.client.get(share_url)
         self.assertEqual(share_resp.status_code, status.HTTP_200_OK)
         self.assertIn("fashionista_99", share_resp.data.get("data", {}).get("share_url", ""))
@@ -864,4 +887,98 @@ class SecurityAuditTestCase(TestCase):
 
         purge_completed_gdpr_jobs_task()
         self.assertFalse(DeletionJob.objects.filter(pk=old_job.pk).exists())
+
+    # =========================================================================
+    # V1-API-01, V1-API-02, V1-API-10: Dedicated Invite Gate & DSA Reporting
+    # =========================================================================
+
+    def test_get_v1_invites_allocates_five_codes(self):
+        """GET /v1/invites ensures an authenticated user receives 5 distinct invite codes."""
+        self.client.force_authenticate(user=self.user)
+        resp = self.client.get("/v1/invites")
+        self.assertEqual(resp.status_code, status.HTTP_200_OK)
+        self.assertTrue(resp.data.get("success"))
+        self.assertEqual(resp.data.get("count"), 5)
+        self.assertEqual(len(resp.data.get("data")), 5)
+
+        first_codes = [item["code"] for item in resp.data["data"]]
+        self.assertEqual(len(set(first_codes)), 5)
+
+        # Idempotent second fetch returns the same 5 codes without duplicating
+        resp2 = self.client.get("/v1/invites")
+        self.assertEqual(resp2.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp2.data.get("count"), 5)
+        second_codes = [item["code"] for item in resp2.data["data"]]
+        self.assertEqual(first_codes, second_codes)
+
+    def test_redeem_v1_invites_flow_and_validation(self):
+        """POST /v1/invites/redeem validates and atomically claims single-use codes."""
+        other_user = User.objects.create_user(
+            email="other_sharer@example.com",
+            name="Other Sharer",
+            password="StrongPassword123!",
+        )
+        invite = Invite.objects.create(code="EXCLUSIVE_2026", kind="standard", owner_user=other_user)
+
+        # 1. Invalid/Nonexistent code
+        self.client.force_authenticate(user=self.user)
+        bad_resp = self.client.post("/v1/invites/redeem", {"code": "NONEXISTENT_CODE"}, format="json")
+        self.assertEqual(bad_resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(bad_resp.data.get("code"), "INVITE_INVALID")
+
+        # 2. Self-redeem not allowed
+        self.client.force_authenticate(user=other_user)
+        self_resp = self.client.post("/v1/invites/redeem", {"code": "EXCLUSIVE_2026"}, format="json")
+        self.assertEqual(self_resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(self_resp.data.get("code"), "INVITE_SELF_REDEEM_NOT_ALLOWED")
+
+        # 3. Successful redemption by valid user
+        self.client.force_authenticate(user=self.user)
+        good_resp = self.client.post("/v1/invites/redeem", {"code": "EXCLUSIVE_2026"}, format="json")
+        self.assertEqual(good_resp.status_code, status.HTTP_200_OK)
+        self.assertTrue(good_resp.data.get("success"))
+
+        invite.refresh_from_db()
+        self.assertEqual(invite.used_by, self.user)
+        self.assertIsNotNone(invite.used_at)
+
+        # 4. User cannot claim another invite code
+        third_user = User.objects.create_user(
+            email="third@example.com",
+            name="Third",
+            password="StrongPassword123!",
+        )
+        second_invite = Invite.objects.create(code="SECOND_CODE", kind="standard", owner_user=third_user)
+        already_claimed_resp = self.client.post("/v1/invites/redeem", {"code": "SECOND_CODE"}, format="json")
+        self.assertEqual(already_claimed_resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(already_claimed_resp.data.get("code"), "INVITE_ALREADY_CLAIMED")
+
+        # 5. Already used code fails with INVITE_ALREADY_USED for new user
+        fresh_user = User.objects.create_user(
+            email="fresh@example.com",
+            name="Fresh",
+            password="StrongPassword123!",
+        )
+        self.client.force_authenticate(user=fresh_user)
+        reused_resp = self.client.post("/v1/invites/redeem", {"code": "EXCLUSIVE_2026"}, format="json")
+        self.assertEqual(reused_resp.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(reused_resp.data.get("code"), "INVITE_ALREADY_USED")
+
+        # 6. Bypass code succeeds
+        bypass_resp = self.client.post("/v1/invites/redeem", {"code": "APPLE_REVIEW"}, format="json")
+        self.assertEqual(bypass_resp.status_code, status.HTTP_200_OK)
+        self.assertTrue(bypass_resp.data.get("success"))
+
+    def test_post_v1_reports_dsa_notice_intake(self):
+        """POST /v1/reports receives DSA Article 16 notice and action submissions."""
+        self.client.force_authenticate(user=self.user)
+        report_payload = {
+            "target_type": "user",
+            "target_id": str(self.user.id),
+            "reason": "harassment",
+            "details": "DSA Article 16 notice test report submission.",
+        }
+        resp = self.client.post("/v1/reports", report_payload, format="json")
+        self.assertEqual(resp.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(resp.data.get("success"))
 

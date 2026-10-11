@@ -16,18 +16,10 @@ from .views import (
 app_name = 'closet'
 
 urlpatterns = [
-    # Wardrobe items (both 'items' and 'clothes' endpoints supported for mobile developer convenience)
+    # Wardrobe items (Canonical REST: /items/)
     path('items/', ClosetItemListCreateView.as_view(), name='item-list-create'),
     path('items/<int:pk>/', ClosetItemDetailView.as_view(), name='item-detail'),
     path('items/<int:pk>/wear-today/', WearTodayView.as_view(), name='wear-today'),
-    path('items/<int:pk>/wear/', WearTodayView.as_view(), name='wear-today-alias'),
-
-    path('clothes/', ClosetItemListCreateView.as_view(), name='clothes-list-create'),
-    path('clothes/<int:pk>/', ClosetItemDetailView.as_view(), name='clothes-detail'),
-    path('clothes/<int:pk>/wear/', WearTodayView.as_view(), name='clothes-wear'),
-    path('clothes/<int:pk>/wear-today/', WearTodayView.as_view(), name='clothes-wear-today'),
-    path('clothes/ai-scan/', ClosetAIScanView.as_view(), name='clothes-ai-scan'),
-    path('clothes/ai-scan/<uuid:pk>/', ClosetAIScanPollView.as_view(), name='clothes-ai-scan-poll'),
 
     # FitCheck Async AI Processing & Polling (Spec §1.1, §7.2)
     path('fit-checks/', FitCheckCreateView.as_view(), name='fit-check-create'),

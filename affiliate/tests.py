@@ -678,7 +678,7 @@ class AffiliateFavoritesTests(APITestCase):
 
     def test_favorite_toggle_and_explicit_actions(self):
         """Test atomic toggle, explicit action='save', and explicit action='remove'."""
-        url = reverse('affiliate:product-love', kwargs={'pk': self.product.pk})
+        url = reverse('affiliate:product-favorite', kwargs={'pk': self.product.pk})
 
         # 1. Explicit save action
         res_save = self.client.post(url, data={'action': 'save'}, format='json')
@@ -900,6 +900,51 @@ class AffiliateConversionWebhookTests(APITestCase):
             res = self.client.post(self.webhook_url, data={'id': 'tx-1'}, format='json')
             self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
 
+    def test_unconfigured_webhook_secret_fails_closed(self):
+        """When MYC_AWIN_WEBHOOK_SECRET is None or empty, requests must fail-closed (401)."""
+        with self.settings(MYC_AWIN_WEBHOOK_SECRET=None):
+            res = self.client.post(self.webhook_url, data={'id': 'tx-1'}, format='json')
+            self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_authorized_webhook_hmac_signature(self):
+        """Valid HMAC-SHA256 signature calculated over raw body allows ingestion."""
+        import json
+        import hashlib
+        import hmac
+        payload = {
+            'id': 'tx-hmac-1',
+            'clickref': str(self.click_ref),
+            'amount': '85.00',
+            'commission': '8.50',
+            'currency': 'GBP',
+            'status': 'pending',
+        }
+        raw_body = json.dumps(payload).encode('utf-8')
+        sig = hmac.new(self.secret.encode('utf-8'), raw_body, hashlib.sha256).hexdigest()
+
+        with self.settings(MYC_AWIN_WEBHOOK_SECRET=self.secret):
+            res = self.client.post(
+                self.webhook_url,
+                data=raw_body,
+                content_type='application/json',
+                HTTP_X_AWIN_SIGNATURE=f"sha256={sig}"
+            )
+            self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+    def test_stale_timestamp_webhook_rejected(self):
+        """Webhook with timestamp older than 300s is rejected due to replay prevention."""
+        payload = {'id': 'tx-stale-1', 'clickref': str(self.click_ref)}
+        stale_ts = timezone.now().timestamp() - 600  # 10 minutes ago
+        with self.settings(MYC_AWIN_WEBHOOK_SECRET=self.secret):
+            res = self.client.post(
+                self.webhook_url,
+                data=payload,
+                format='json',
+                HTTP_AUTHORIZATION=f'Bearer {self.secret}',
+                HTTP_X_AWIN_TIMESTAMP=str(stale_ts)
+            )
+            self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
     def test_authorized_webhook_bearer_token(self):
         """Valid Bearer token allows webhook ingestion."""
         payload = {
@@ -1032,4 +1077,106 @@ class AffiliateConversionWebhookTests(APITestCase):
         conv = Conversion.objects.get(conversion_id='tx-direct-500')
         self.assertEqual(conv.product, self.product)
         self.assertEqual(conv.brand, self.brand)
+
+
+class StyleSprintTests(APITestCase):
+    """
+    Tests for Style Sprint daily 10-card deck and pgvector taste vector learning (F2 / V1-API-10).
+    """
+
+    def setUp(self):
+        self.user = User.objects.create_user(
+            name='Sprint User',
+            email='stylesprint@example.com',
+            password='Password123!',
+            date_of_birth='2000-01-01',
+        )
+        self.client.force_authenticate(user=self.user)
+
+        self.brand = Brand.objects.create(
+            name='Sprint Brand',
+            slug='sprint-brand',
+            kind=Brand.KIND_AWIN,
+            status=Brand.STATUS_ACTIVE,
+            currency='EUR',
+        )
+
+        # Create 15 active EUR products for the candidate deck
+        self.products = []
+        for i in range(15):
+            p = AffiliateProduct.objects.create(
+                aw_product_id=f'sprint_item_{i}',
+                name=f'Sprint Item {i}',
+                brand='Sprint Brand',
+                price=decimal.Decimal('49.99'),
+                currency='EUR',
+                is_active=True,
+                aw_deep_link=f'https://example.com/sprint/{i}',
+            )
+            self.products.append(p)
+
+    def test_get_style_sprint_deck(self):
+        """GET /api/v1/feed/sprint/ returns 10 cards for today."""
+        url = reverse('affiliate:style-sprint')
+        response = self.client.get(url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(response.data['completed'])
+        self.assertEqual(response.data['total_cards'], 10)
+        self.assertEqual(len(response.data['cards']), 10)
+        self.assertEqual(response.data['remaining_count'], 10)
+
+    def test_swipe_right_creates_event_and_updates_taste_vector(self):
+        """POST /api/v1/feed/sprint/swipe/ records like event and updates taste vector."""
+        url = reverse('affiliate:style-sprint-swipe')
+        payload = {
+            'product_id': self.products[0].id,
+            'action': 'like',
+        }
+        response = self.client.post(url, payload)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['total_swiped_today'], 1)
+        self.assertFalse(response.data['completed'])
+        self.assertEqual(response.data['remaining_count'], 9)
+
+        # Verify Event was created
+        event = Event.objects.filter(
+            user=self.user,
+            product=self.products[0],
+            source='sprint',
+            event_type=Event.TYPE_LIKE,
+        ).first()
+        self.assertIsNotNone(event)
+
+    def test_swipe_up_saves_product_to_favorites(self):
+        """Swiping up saves item to ProductFavorite."""
+        url = reverse('affiliate:style-sprint-swipe')
+        payload = {
+            'product_id': self.products[1].id,
+            'action': 'save',
+        }
+        response = self.client.post(url, payload)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+        self.assertTrue(
+            ProductFavorite.objects.filter(user=self.user, product=self.products[1]).exists()
+        )
+
+    def test_batch_swipes_and_deck_completion(self):
+        """Submitting 10 swipes completes today's sprint."""
+        url = reverse('affiliate:style-sprint-swipe')
+        swipes = [
+            {'product_id': self.products[i].id, 'action': 'like' if i % 2 == 0 else 'skip'}
+            for i in range(10)
+        ]
+        response = self.client.post(url, {'swipes': swipes}, format='json')
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data['completed'])
+        self.assertEqual(response.data['remaining_count'], 0)
+
+        # GET deck now returns completed=True with empty cards
+        deck_res = self.client.get(reverse('affiliate:style-sprint'))
+        self.assertEqual(deck_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(deck_res.data['completed'])
+        self.assertEqual(len(deck_res.data['cards']), 0)
+
 

@@ -111,10 +111,11 @@ def execute_gdpr_deletion_job(self, job_id):
             job.steps_done = steps_done
             job.save(update_fields=['steps_done'])
 
-        # Step 5: Delete/anonymize applicable database rows
+        # Step 5: Delete/anonymize applicable database rows (GDPR Art. 17 & SR-28)
         if 5 not in steps_done:
             if user:
-                user.delete()
+                from users.utils.common_utils import purge_and_anonymize_user
+                purge_and_anonymize_user(user)
             steps_done.append(5)
             job.steps_done = steps_done
             job.save(update_fields=['steps_done'])

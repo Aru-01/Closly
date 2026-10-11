@@ -5,6 +5,11 @@ from django.utils.translation import gettext_lazy as _
 from django.db.models.functions import Lower
 from .managers import UserManager
 import uuid
+try:
+    from pgvector.django import VectorField, HnswIndex
+except ImportError:
+    VectorField = None
+    HnswIndex = None
 
 
 def profile_picture_upload_path(instance, filename):
@@ -807,4 +812,68 @@ class Device(models.Model):
 
     def __str__(self):
         return f"Device {self.platform} for {self.user.email} (last seen {self.last_seen})"
+
+
+class StyleProfile(models.Model):
+    """
+    User taste profile vector storing dynamically adapted aesthetic vectors (AC-01 / V1-API-03).
+    Captures onboarding seed vector and updated preference centroids from swipes, saves, and clicks.
+    """
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='style_profile',
+        verbose_name=_('user'),
+        help_text=_("User associated with this taste profile"),
+    )
+    taste_vector = VectorField(
+        dimensions=768,
+        null=True,
+        blank=True,
+        help_text=_("Current learned 768-dim user taste vector centroid"),
+    ) if VectorField else models.BinaryField(
+        null=True,
+        blank=True,
+        help_text=_("Fallback binary representation when pgvector is uninstalled"),
+    )
+    seed_vector = VectorField(
+        dimensions=768,
+        null=True,
+        blank=True,
+        help_text=_("Initial onboarding seed vector before interaction updates"),
+    ) if VectorField else models.BinaryField(
+        null=True,
+        blank=True,
+        help_text=_("Fallback binary representation when pgvector is uninstalled"),
+    )
+    vector_version = models.CharField(
+        _('vector version'),
+        max_length=64,
+        default='fashion-siglip-v1',
+        help_text=_("Embedding model version"),
+    )
+    interaction_count = models.PositiveIntegerField(
+        _('interaction count'),
+        default=0,
+        help_text=_("Count of user feedback actions (swipes/saves) incorporated into taste vector"),
+    )
+    last_calculated_at = models.DateTimeField(_('last calculated at'), null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('style profile')
+        verbose_name_plural = _('style profiles')
+        indexes = [
+            HnswIndex(
+                name='style_prof_hnsw_idx',
+                fields=['taste_vector'],
+                m=16,
+                ef_construction=64,
+                opclasses=['vector_cosine_ops'],
+            )
+        ] if HnswIndex else []
+
+    def __str__(self):
+        return f"StyleProfile for {self.user.email} (interactions: {self.interaction_count})"
 

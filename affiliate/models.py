@@ -3,6 +3,11 @@ import decimal
 from django.db import models
 from django.utils.translation import gettext_lazy as _
 from django.conf import settings
+try:
+    from pgvector.django import VectorField, HnswIndex
+except ImportError:
+    VectorField = None
+    HnswIndex = None
 
 
 class Brand(models.Model):
@@ -686,3 +691,49 @@ class Conversion(models.Model):
 
     def __str__(self):
         return f"{self.source.upper()} Conversion {self.conversion_id} ({self.status}) - {self.sale_amount} {self.currency}"
+
+
+class ProductEmbedding(models.Model):
+    """
+    Stores 768-dimensional FashionSigLIP embeddings for affiliate products (AC-01 / V1-API-10).
+    Enables sub-100ms cosine similarity vector search in PostgreSQL via pgvector and HNSW index.
+    """
+    product = models.OneToOneField(
+        AffiliateProduct,
+        on_delete=models.CASCADE,
+        related_name='embedding',
+        verbose_name=_('affiliate product'),
+        help_text=_("Associated affiliate product row"),
+    )
+    embedding = VectorField(
+        dimensions=768,
+        help_text=_("768-dimensional multimodal vision/text vector embedding (FashionSigLIP)"),
+    ) if VectorField else models.BinaryField(
+        null=True,
+        blank=True,
+        help_text=_("Fallback binary representation when pgvector is uninstalled"),
+    )
+    model_version = models.CharField(
+        _('model version'),
+        max_length=64,
+        default='fashion-siglip-v1',
+        help_text=_("Embedding model identifier used for computation"),
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = _('product embedding')
+        verbose_name_plural = _('product embeddings')
+        indexes = [
+            HnswIndex(
+                name='prod_embed_hnsw_idx',
+                fields=['embedding'],
+                m=16,
+                ef_construction=64,
+                opclasses=['vector_cosine_ops'],
+            )
+        ] if HnswIndex else []
+
+    def __str__(self):
+        return f"ProductEmbedding for Product {self.product_id} ({self.model_version})"

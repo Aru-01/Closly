@@ -76,7 +76,6 @@ urlpatterns = [
     # Direct Messaging, Inbox & Single-Use WS Tickets (SR-09)
     path('ws-ticket/', WebSocketTicketCreateView.as_view(), name='ws-ticket'),
     path('messages/', DirectMessageSendView.as_view(), name='message-send'),
-    path('messages/inbox/', ConversationListView.as_view(), name='messages-inbox'),
     path('conversations/', ConversationListView.as_view(), name='conversations-list'),
     path('messages/<str:user_id>/', DirectMessageConversationView.as_view(), name='message-conversation'),
 ]

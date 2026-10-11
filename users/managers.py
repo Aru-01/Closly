@@ -105,10 +105,10 @@ class UserManager(BaseUserManager):
         # Create superuser using create_user method
         return self.create_user(email, name, password, **extra_fields)
     
-    def create_firebase_user(self, email, name, firebase_uid, auth_provider='google', photo_url=None, email_verified=True, **extra_fields):
+    def create_firebase_user(self, email, name, firebase_uid, auth_provider='google', photo_url=None, email_verified=True, date_of_birth=None, **extra_fields):
         """
         Create or retrieve user from Firebase authentication (Google, Apple, etc.)
-        Requires verified email from token. Links existing accounts safely.
+        Requires verified email from token. Enforces 16+ age gate. Links existing accounts safely.
         
         Args:
             email (str): Verified email from Firebase ID token
@@ -117,6 +117,7 @@ class UserManager(BaseUserManager):
             auth_provider (str): Whitelisted authentication provider ('google', 'apple')
             photo_url (str): Verified avatar URL from provider token
             email_verified (bool): Provider email verification claim (must be True)
+            date_of_birth (date|str|None): User's date of birth (enforces 16+ age gate)
             **extra_fields: Additional fields
             
         Returns:
@@ -125,16 +126,29 @@ class UserManager(BaseUserManager):
         if not email or not email_verified:
             raise ValueError(_("Firebase authentication requires a verified email address from the identity provider."))
 
+        from django.conf import settings
+        min_age = getattr(settings, 'MYC_MIN_AGE', 16)
+        if date_of_birth:
+            from .utils import validate_age
+            if not validate_age(date_of_birth, min_age=min_age):
+                raise ValueError(_(f"User must be at least {min_age} years old to register."))
+
         normalized_email = self.normalize_email(email)
 
         # 1. First, check if user already exists with this Firebase UID
         if firebase_uid:
             user = self.filter(firebase_uid=firebase_uid).first()
             if user:
+                update_fields = []
                 # Update name if previously placeholder and better name is provided
                 if name and (not user.name or user.name.startswith('user_')):
                     user.name = name
-                    user.save(update_fields=['name'])
+                    update_fields.append('name')
+                if date_of_birth and not user.date_of_birth:
+                    user.date_of_birth = date_of_birth
+                    update_fields.append('date_of_birth')
+                if update_fields:
+                    user.save(update_fields=update_fields)
                 # Download and set profile picture if user doesn't have one yet
                 if photo_url and not user.profile_picture:
                     from .utils import save_profile_picture_from_url
@@ -158,6 +172,9 @@ class UserManager(BaseUserManager):
             if name and not user.name:
                 user.name = name
                 update_fields.append('name')
+            if date_of_birth and not user.date_of_birth:
+                user.date_of_birth = date_of_birth
+                update_fields.append('date_of_birth')
             if update_fields:
                 user.save(update_fields=update_fields)
             if photo_url and not user.profile_picture:
@@ -173,6 +190,8 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault('auth_provider', auth_provider)
         extra_fields.setdefault('is_email_verified', True)
         extra_fields.setdefault('is_active', True)
+        if date_of_birth:
+            extra_fields['date_of_birth'] = date_of_birth
         
         new_user = self.create_user(normalized_email, name, password=None, **extra_fields)
 

@@ -61,3 +61,5 @@ pydantic==2.13.5
 python-dotenv==1.2.3
 apify-client==3.2.0
 pillow-heif==1.8.0
+pgvector==0.5.1
+sentry-sdk==2.71.0

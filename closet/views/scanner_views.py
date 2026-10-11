@@ -83,318 +83,91 @@ class ClosetAIScanView(APIView):
                 'errors': {'image': [str(e)]}
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Check for explicit sync mode or auto_save query parameters
-        auto_save_param = request.query_params.get('auto_save', '').lower()
-        save_all_param = request.query_params.get('save_all', '').lower() in ('true', '1', 'yes')
-        sync_param = request.query_params.get('sync', '').lower() in ('true', '1', 'yes')
-        is_sync = sync_param or (auto_save_param in ('true', '1', 'yes', 'all')) or save_all_param
+        # P-05 & SPEC-RULE-01: Pure Asynchronous AI Processing via Background Worker (HTTP 202)
+        from closet.ai.gateway import AIGateway
+        from closet.exceptions import AIServiceUnavailableError, AIDailyLimitExceededError, AIImageValidationError
+        from closet.utils import validate_and_sanitize_image, persist_sanitized_image
+        from closet.models import FitCheck
+        from closet.tasks import process_fit_check_task
 
-        # P-05: Non-blocking Asynchronous AI Processing by default
-        if not is_sync:
-            from closet.ai.gateway import AIGateway
-            from closet.exceptions import AIServiceUnavailableError, AIDailyLimitExceededError, AIImageValidationError
-            from closet.utils import validate_and_sanitize_image, persist_sanitized_image
-            from closet.models import FitCheck
-            from closet.tasks import process_fit_check_task
-
-            try:
-                AIGateway.check_preconditions(request.user)
-            except AIServiceUnavailableError as e:
-                return Response({
-                    'success': False,
-                    'error_code': 'service_unavailable',
-                    'message': str(e),
-                    'errors': {'server': [str(e)]}
-                }, status=status.HTTP_503_SERVICE_UNAVAILABLE, headers={'Retry-After': '5'})
-            except AIDailyLimitExceededError as e:
-                return Response({
-                    'success': False,
-                    'error_code': 'quota_exceeded',
-                    'message': str(e),
-                    'errors': {'quota': [str(e)]}
-                }, status=status.HTTP_429_TOO_MANY_REQUESTS)
-
-            try:
-                sanitized_bytes, photo_sha256, mime = validate_and_sanitize_image(image_file)
-            except AIImageValidationError as e:
-                return Response({
-                    'success': False,
-                    'error_code': 'invalid_image',
-                    'message': str(e),
-                    'errors': {'image': [str(e)]}
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            existing_item = ClosetItem.objects.filter(user=request.user, photo_sha256=photo_sha256).first()
-            if existing_item:
-                serializer = ClosetItemSerializer(existing_item, context={'request': request})
-                return Response({
-                    'success': True,
-                    'status': 'dedupe_hit',
-                    'message': f"Item recognized in your digital closet! '{existing_item.name}'.",
-                    'data': {
-                        'item': serializer.data,
-                        'is_duplicate': True,
-                    }
-                }, status=status.HTTP_200_OK)
-
-            saved_path = persist_sanitized_image(
-                sanitized_bytes,
-                folder=f"fit_checks/{request.user.id}",
-                prefix="scan_"
-            )
-
-            fit_check = FitCheck.objects.create(
-                user=request.user,
-                photo=saved_path,
-                photo_sha256=photo_sha256,
-                status='queued'
-            )
-
-            AIGateway.increment_user_quota(request.user)
-
-            try:
-                process_fit_check_task.delay(str(fit_check.id))
-            except Exception as task_err:
-                logger.error(f"Celery task enqueue failed: {task_err}", exc_info=True)
-                fit_check.status = 'failed'
-                fit_check.error_code = 'task_queue_unavailable'
-                fit_check.save(update_fields=['status', 'error_code'])
-                return Response({
-                    'success': False,
-                    'error_code': 'queue_unavailable',
-                    'message': 'Background task queue is temporarily unavailable. Please retry shortly.',
-                    'errors': {'server': ['Task queue unavailable.']}
-                }, status=status.HTTP_503_SERVICE_UNAVAILABLE, headers={'Retry-After': '5'})
-
-            return Response({
-                'success': True,
-                'status': 'queued',
-                'scan_id': str(fit_check.id),
-                'fit_check_id': str(fit_check.id),
-                'poll_url': f"/api/closet/ai-scan/{fit_check.id}/",
-                'poll_after_s': 3,
-                'message': 'Garment image queued for asynchronous AI analysis.'
-            }, status=status.HTTP_202_ACCEPTED)
-
-        # Run AI Scanner (protected by killswitch, rate limits, gate, and user-scoped cache)
         try:
-            from closet.ai_scanner.scanner import scan_clothing_image
-            scanned_data = scan_clothing_image(image_file, request=request, user=request.user)
-        except TimeoutError as e:
-            logger.warning(f"AI Scan 503 TimeoutError under high traffic: {e}")
+            AIGateway.check_preconditions(request.user)
+        except AIServiceUnavailableError as e:
             return Response({
                 'success': False,
-                'message': 'AI scanning service is currently experiencing very high demand. Please try again in a few moments.',
-                'errors': {'server': ['AI scanning service queue timeout. Please retry in a few moments.']}
+                'error_code': 'service_unavailable',
+                'message': str(e),
+                'errors': {'server': [str(e)]}
             }, status=status.HTTP_503_SERVICE_UNAVAILABLE, headers={'Retry-After': '5'})
-        except Exception as e:
-            from closet.exceptions import AIServiceUnavailableError, AIDailyLimitExceededError, AIImageValidationError
-            from closet.ai.safety import AISafetyBlockedError, AISafetyError
-            if isinstance(e, AISafetyBlockedError):
-                return Response({
-                    'success': False,
-                    'error_code': 'nsfw_blocked',
-                    'message': str(e),
-                    'errors': {'safety': ['Uploaded image violates content safety guidelines.']}
-                }, status=status.HTTP_400_BAD_REQUEST)
-            if isinstance(e, AISafetyError):
-                return Response({
-                    'success': False,
-                    'error_code': 'safety_service_unavailable',
-                    'message': str(e),
-                    'errors': {'safety': [str(e)]}
-                }, status=status.HTTP_503_SERVICE_UNAVAILABLE, headers={'Retry-After': '5'})
-            if isinstance(e, AIServiceUnavailableError):
-                return Response({
-                    'success': False,
-                    'message': str(e),
-                    'errors': {'server': [str(e)]}
-                }, status=status.HTTP_503_SERVICE_UNAVAILABLE, headers={'Retry-After': '5'})
-            if isinstance(e, AIDailyLimitExceededError):
-                return Response({
-                    'success': False,
-                    'message': str(e),
-                    'errors': {'quota': [str(e)]}
-                }, status=status.HTTP_429_TOO_MANY_REQUESTS)
-            if isinstance(e, AIImageValidationError):
-                return Response({
-                    'success': False,
-                    'message': 'Invalid garment image.',
-                    'errors': {'image': [str(e)]}
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            logger.error("Failed to scan garment image", exc_info=True)
+        except AIDailyLimitExceededError as e:
             return Response({
                 'success': False,
-                'message': 'Failed to scan garment image due to an internal processing error. Please try again with a clear photo.',
-                'errors': {'server': ['Internal image processing error.']}
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                'error_code': 'quota_exceeded',
+                'message': str(e),
+                'errors': {'quota': [str(e)]}
+            }, status=status.HTTP_429_TOO_MANY_REQUESTS)
 
-
-        # Check if the uploaded image contains an actual wearable clothing item
-        if not scanned_data.get('is_garment', True):
+        try:
+            sanitized_bytes, photo_sha256, mime = validate_and_sanitize_image(image_file)
+        except AIImageValidationError as e:
             return Response({
                 'success': False,
-                'is_garment': False,
-                'message': scanned_data.get('message') or "The uploaded image does not appear to be a clothing item. Please capture or upload a clear photo of a garment.",
-                'notes': scanned_data.get('notes', ''),
-            }, status=status.HTTP_200_OK)
+                'error_code': 'invalid_image',
+                'message': str(e),
+                'errors': {'image': [str(e)]}
+            }, status=status.HTTP_400_BAD_REQUEST)
 
-        # Check for auto_save
-        auto_save_param = request.query_params.get('auto_save', '').lower()
-        save_all_param = request.query_params.get('save_all', '').lower() in ('true', '1', 'yes')
-        is_save_all = (auto_save_param == 'all') or save_all_param
-        auto_save = auto_save_param in ('true', '1', 'yes', 'all') or save_all_param
-
-        if auto_save:
-            from rewards.services import award_points
-            from rewards.models import RewardPointTransaction
-            from django.conf import settings
-            from django.utils import timezone
-            from django.db import models
-            from closet.models import FitCheck
-
-            fit_check_obj = None
-            if scanned_data.get('fit_check_id'):
-                fit_check_obj = FitCheck.objects.filter(id=scanned_data['fit_check_id']).first()
-
-            # Deduplication: Re-wear existing item if identical photo was already scanned by this user (C-07)
-            if scanned_data.get('is_duplicate') and scanned_data.get('existing_item_id'):
-                existing_id = scanned_data['existing_item_id']
-                ClosetItem.objects.filter(id=existing_id, user=request.user).update(
-                    times_worn=models.F('times_worn') + 1,
-                    last_worn_at=timezone.now()
-                )
-                existing_item = ClosetItem.objects.get(id=existing_id, user=request.user)
-                serializer = ClosetItemSerializer(existing_item, context={'request': request})
-                return Response({
-                    'success': True,
-                    'message': f"Item recognized in your digital closet! Updated wear count for '{existing_item.name}' to {existing_item.times_worn}.",
-                    'data': {
-                        'item': serializer.data,
-                        'is_duplicate': True,
-                        'style_vibe': scanned_data.get('style_vibe'),
-                        'visual_match_score': scanned_data.get('visual_match_score'),
-                    }
-                }, status=status.HTTP_200_OK)
-
-            if is_save_all and scanned_data.get('is_full_outfit') and scanned_data.get('detected_items'):
-                # Save all detected outfit pieces into closet
-                created_items = []
-                for piece in scanned_data['detected_items']:
-                    piece_price = piece.get('price', 35.00)
-                    try:
-                        if isinstance(piece_price, str):
-                            piece_price = float(piece_price.replace('$', '').replace('€', '').replace('£', '').replace(',', '').strip())
-                        else:
-                            piece_price = float(piece_price)
-                    except (ValueError, TypeError):
-                        piece_price = 35.00
-
-                    piece_item = ClosetItem.objects.create(
-                        user=request.user,
-                        fit_check=fit_check_obj,
-                        name=piece.get('name', 'Wardrobe Essential'),
-                        category=piece.get('category', 'top'),
-                        color=piece.get('color', 'Neutral'),
-                        brand=piece.get('brand', 'N/A'),
-                        price=piece_price,
-                        currency='EUR',
-                        style_vibe=piece.get('style_vibe', ''),
-                        source='scan',
-                        photo_sha256=scanned_data.get('photo_sha256', ''),
-                        image=scanned_data.get('saved_image_path', '')
-                    )
-                    # Check daily points award limit to prevent exploit (C-07)
-                    daily_awards = RewardPointTransaction.objects.filter(
-                        user=request.user,
-                        action_type='add_closet_item',
-                        created_at__date=timezone.now().date()
-                    ).count()
-                    if daily_awards < getattr(settings, 'MYC_CLOSET_ITEM_POINTS_DAILY_LIMIT', 10):
-                        try:
-                            award_points(
-                                user=request.user,
-                                action_type='add_closet_item',
-                                description=f"Auto-scanned & added '{piece_item.name}' to closet",
-                                reference_id=str(piece_item.id)
-                            )
-                        except Exception as e:
-                            logger.warning(f"Error awarding points: {e}")
-                    created_items.append(piece_item)
-
-                serializer = ClosetItemSerializer(created_items, many=True, context={'request': request})
-                return Response({
-                    'success': True,
-                    'message': f"Full outfit look scanned and all {len(created_items)} pieces saved to closet.",
-                    'data': {
-                        'saved_pieces_count': len(created_items),
-                        'items': serializer.data,
-                        'style_vibe': scanned_data.get('style_vibe'),
-                        'visual_match_score': scanned_data.get('visual_match_score'),
-                    }
-                }, status=status.HTTP_201_CREATED)
-
-            # Single item auto-save
-            item_price = scanned_data.get('price', 35.00)
-            try:
-                if isinstance(item_price, str):
-                    item_price = float(item_price.replace('$', '').replace('€', '').replace('£', '').replace(',', '').strip())
-                else:
-                    item_price = float(item_price)
-            except (ValueError, TypeError):
-                item_price = 35.00
-
-            item = ClosetItem.objects.create(
-                user=request.user,
-                fit_check=fit_check_obj,
-                name=scanned_data.get('name', 'Wardrobe Essential'),
-                category=scanned_data.get('category', 'top'),
-                color=scanned_data.get('color', 'Neutral'),
-                brand=scanned_data.get('brand', 'N/A'),
-                price=item_price,
-                currency='EUR',
-                style_vibe=scanned_data.get('style_vibe', ''),
-                source='scan',
-                photo_sha256=scanned_data.get('photo_sha256', ''),
-                image=scanned_data.get('saved_image_path', '')
-            )
-
-            # Check daily points award limit (C-07)
-            daily_awards = RewardPointTransaction.objects.filter(
-                user=request.user,
-                action_type='add_closet_item',
-                created_at__date=timezone.now().date()
-            ).count()
-            if daily_awards < getattr(settings, 'MYC_CLOSET_ITEM_POINTS_DAILY_LIMIT', 10):
-                try:
-                    award_points(
-                        user=request.user,
-                        action_type='add_closet_item',
-                        description=f"Auto-scanned & added '{item.name}' to closet",
-                        reference_id=str(item.id)
-                    )
-                except Exception as e:
-                    logger.warning(f"Error awarding points: {e}")
-
-            serializer = ClosetItemSerializer(item, context={'request': request})
+        existing_item = ClosetItem.objects.filter(user=request.user, photo_sha256=photo_sha256).first()
+        if existing_item:
+            serializer = ClosetItemSerializer(existing_item, context={'request': request})
             return Response({
                 'success': True,
-                'message': f"Garment scanned and automatically saved to closet as '{item.name}'.",
+                'status': 'dedupe_hit',
+                'message': f"Item recognized in your digital closet! '{existing_item.name}'.",
                 'data': {
                     'item': serializer.data,
-                    'style_vibe': scanned_data.get('style_vibe'),
-                    'visual_match_score': scanned_data.get('visual_match_score'),
+                    'is_duplicate': True,
                 }
-            }, status=status.HTTP_201_CREATED)
+            }, status=status.HTTP_200_OK)
 
-        client_data = {k: v for k, v in scanned_data.items() if k not in ('saved_image_path', 'is_garment')}
+        saved_path = persist_sanitized_image(
+            sanitized_bytes,
+            folder=f"fit_checks/{request.user.id}",
+            prefix="scan_"
+        )
+
+        fit_check = FitCheck.objects.create(
+            user=request.user,
+            photo=saved_path,
+            photo_sha256=photo_sha256,
+            status='queued'
+        )
+
+        AIGateway.increment_user_quota(request.user)
+
+        try:
+            process_fit_check_task.delay(str(fit_check.id))
+        except Exception as task_err:
+            logger.error(f"Celery task enqueue failed: {task_err}", exc_info=True)
+            fit_check.status = 'failed'
+            fit_check.error_code = 'task_queue_unavailable'
+            fit_check.save(update_fields=['status', 'error_code'])
+            return Response({
+                'success': False,
+                'error_code': 'queue_unavailable',
+                'message': 'Background task queue is temporarily unavailable. Please retry shortly.',
+                'errors': {'server': ['Task queue unavailable.']}
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE, headers={'Retry-After': '5'})
 
         return Response({
             'success': True,
-            'message': 'Garment image scanned successfully. Pre-fill data generated.',
-            'data': client_data
-        }, status=status.HTTP_200_OK)
+            'status': 'queued',
+            'scan_id': str(fit_check.id),
+            'fit_check_id': str(fit_check.id),
+            'poll_url': f"/api/closet/ai-scan/{fit_check.id}/",
+            'poll_after_s': 3,
+            'message': 'Garment image queued for asynchronous AI analysis.'
+        }, status=status.HTTP_202_ACCEPTED)
 
 
 class ClosetAIScanPollView(APIView):

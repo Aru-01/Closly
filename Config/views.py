@@ -1,9 +1,8 @@
 import time
-import os
 from django.conf import settings
 from django.db import connection
 from django.shortcuts import render
-from django.http import JsonResponse, FileResponse, Http404
+from django.http import JsonResponse
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -19,7 +18,9 @@ START_TIME = time.time()
     summary="API Root Gateway Dashboard",
     description="Returns interactive HTML gateway dashboard in browser, or JSON API directory if requested via API client.",
     responses={
-        200: OpenApiResponse(description="API Gateway Directory and service index metadata")
+        200: OpenApiResponse(
+            description="API Gateway Directory and service index metadata"
+        )
     },
 )
 class ApiRootView(APIView):
@@ -28,52 +29,76 @@ class ApiRootView(APIView):
     - If accessed from a web browser, renders an elegant, dark-themed API dashboard.
     - If accessed via JSON API client, returns structured API metadata and endpoint index.
     """
+
     permission_classes = [AllowAny]
     authentication_classes = []
 
     def get(self, request):
-        accept_header = request.headers.get('Accept', '')
-        if 'text/html' in accept_header and not request.query_params.get('format') == 'json':
+        accept_header = request.headers.get("Accept", "")
+        if (
+            "text/html" in accept_header
+            and not request.query_params.get("format") == "json"
+        ):
             return self._render_html_dashboard(request)
 
-        return Response({
-            'success': True,
-            'service': 'Closly Backend API Gateway',
-            'version': '2.0.0',
-            'status': 'operational',
-            'timestamp': timezone.now().isoformat(),
-            'documentation': {
-                'swagger_ui': request.build_absolute_uri('/docs/'),
-                'swagger_ui_alt': request.build_absolute_uri('/api/docs/'),
-                'redoc': request.build_absolute_uri('/api/redoc/'),
-                'openapi_schema': request.build_absolute_uri('/api/schema/'),
-                'postman_collection': request.build_absolute_uri('/api/docs/postman/'),
+        return Response(
+            {
+                "success": True,
+                "service": "Closly Backend API Gateway",
+                "version": "2.0.0",
+                "status": "operational",
+                "timestamp": timezone.now().isoformat(),
+                "documentation": {
+                    "swagger_ui": request.build_absolute_uri("/docs/"),
+                    "swagger_ui_alt": request.build_absolute_uri("/api/docs/"),
+                    "redoc": request.build_absolute_uri("/api/redoc/"),
+                    "openapi_schema": request.build_absolute_uri("/api/schema/"),
+                },
+                "heartbeat": {
+                    "health_check": request.build_absolute_uri("/api/health/"),
+                    "ping": request.build_absolute_uri("/api/health/ping/"),
+                },
+                "modules": {
+                    "users_and_auth": request.build_absolute_uri("/api/users/"),
+                    "digital_closet": request.build_absolute_uri("/api/closet/"),
+                    "social_stories_chat": request.build_absolute_uri("/api/social/"),
+                    "affiliate_newsfeed": request.build_absolute_uri("/api/affiliate/"),
+                    "rewards_and_points": request.build_absolute_uri("/api/rewards/"),
+                    "notifications": request.build_absolute_uri("/api/notifications/"),
+                    "legal": request.build_absolute_uri("/api/legal/"),
+                },
+                "realtime": {
+                    "websocket_chat": (
+                        (
+                            (
+                                (
+                                    "wss://"
+                                    if (request.is_secure() or not settings.DEBUG)
+                                    else "ws://"
+                                )
+                                + request.get_host()
+                                + "/ws/chat/?ticket=<60S_ONE_TIME_TICKET> (obtain via POST /api/social/ws-ticket/)"
+                            )
+                        )
+                        if getattr(settings, "MYC_DM_ENABLED", False)
+                        else None
+                    ),
+                },
             },
-            'heartbeat': {
-                'health_check': request.build_absolute_uri('/api/health/'),
-                'ping': request.build_absolute_uri('/api/health/ping/'),
-            },
-            'modules': {
-                'users_and_auth': request.build_absolute_uri('/api/users/'),
-                'digital_closet': request.build_absolute_uri('/api/closet/'),
-                'social_stories_chat': request.build_absolute_uri('/api/social/'),
-                'affiliate_newsfeed': request.build_absolute_uri('/api/affiliate/'),
-                'rewards_and_points': request.build_absolute_uri('/api/rewards/'),
-                'notifications': request.build_absolute_uri('/api/notifications/'),
-                'legal': request.build_absolute_uri('/api/legal/'),
-            },
-            'realtime': {
-                'websocket_chat': ((('wss://' if (request.is_secure() or not settings.DEBUG) else 'ws://') + request.get_host() + '/ws/chat/?ticket=<60S_ONE_TIME_TICKET> (obtain via POST /api/social/ws-ticket/)')) if getattr(settings, 'MYC_DM_ENABLED', False) else None,
-            }
-        }, status=status.HTTP_200_OK)
+            status=status.HTTP_200_OK,
+        )
 
     def _render_html_dashboard(self, request):
         uptime_seconds = int(time.time() - START_TIME)
         uptime_str = f"{uptime_seconds // 3600}h {(uptime_seconds % 3600) // 60}m {uptime_seconds % 60}s"
-        return render(request, 'api_dashboard.html', {
-            'uptime_str': uptime_str,
-            'current_year': timezone.now().year,
-        })
+        return render(
+            request,
+            "api_dashboard.html",
+            {
+                "uptime_str": uptime_str,
+                "current_year": timezone.now().year,
+            },
+        )
 
 
 @extend_schema(
@@ -82,7 +107,9 @@ class ApiRootView(APIView):
     description="Tests PostgreSQL database and Redis connectivity and returns operational health status.",
     responses={
         200: OpenApiResponse(description="All core subsystems are healthy"),
-        503: OpenApiResponse(description="One or more critical subsystems are degraded or down"),
+        503: OpenApiResponse(
+            description="One or more critical subsystems are degraded or down"
+        ),
     },
 )
 class HealthCheckView(APIView):
@@ -93,17 +120,18 @@ class HealthCheckView(APIView):
     - Tests Celery background broker
     - Returns HTTP 200 if all healthy, HTTP 503 if any required subsystem is down.
     """
+
     permission_classes = [AllowAny]
     authentication_classes = []
 
     def get(self, request):
         start_time = time.time()
         health_status = {
-            'status': 'healthy',
-            'timestamp': timezone.now().isoformat(),
-            'service': 'myclosly_backend',
-            'version': '2.0.0',
-            'checks': {},
+            "status": "healthy",
+            "timestamp": timezone.now().isoformat(),
+            "service": "myclosly_backend",
+            "version": "2.0.0",
+            "checks": {},
         }
         is_healthy = True
 
@@ -112,69 +140,78 @@ class HealthCheckView(APIView):
             with connection.cursor() as cursor:
                 cursor.execute("SELECT 1;")
                 cursor.fetchone()
-            health_status['checks']['database'] = {
-                'status': 'up',
-                'engine': settings.DATABASES['default']['ENGINE'].split('.')[-1],
+            health_status["checks"]["database"] = {
+                "status": "up",
+                "engine": settings.DATABASES["default"]["ENGINE"].split(".")[-1],
             }
         except Exception as e:
             is_healthy = False
-            health_status['checks']['database'] = {
-                'status': 'down',
-                'error': 'Database query failed or connection unavailable',
+            health_status["checks"]["database"] = {
+                "status": "down",
+                "error": "Database query failed or connection unavailable",
             }
 
         # 2. Redis / Cache Check
         try:
-            redis_host = getattr(settings, 'REDIS_HOST', '127.0.0.1')
-            redis_port = getattr(settings, 'REDIS_PORT', 6379)
-            use_in_memory = getattr(settings, 'USE_IN_MEMORY_CHANNELS', False)
+            redis_host = getattr(settings, "REDIS_HOST", "127.0.0.1")
+            redis_port = getattr(settings, "REDIS_PORT", 6379)
+            use_in_memory = getattr(settings, "USE_IN_MEMORY_CHANNELS", False)
             if use_in_memory:
-                health_status['checks']['redis'] = {
-                    'status': 'up',
-                    'backend': 'InMemoryChannelLayer',
+                health_status["checks"]["redis"] = {
+                    "status": "up",
+                    "backend": "InMemoryChannelLayer",
                 }
             else:
                 import redis
-                r = redis.Redis(host=redis_host, port=int(redis_port), socket_timeout=2, socket_connect_timeout=2)
+
+                r = redis.Redis(
+                    host=redis_host,
+                    port=int(redis_port),
+                    socket_timeout=2,
+                    socket_connect_timeout=2,
+                )
                 r.ping()
-                health_status['checks']['redis'] = {
-                    'status': 'up',
-                    'host': f"{redis_host}:{redis_port}",
+                health_status["checks"]["redis"] = {
+                    "status": "up",
+                    "host": f"{redis_host}:{redis_port}",
                 }
         except Exception as e:
             is_healthy = False
-            health_status['checks']['redis'] = {
-                'status': 'down',
-                'error': 'Redis connection unavailable or ping timed out',
+            health_status["checks"]["redis"] = {
+                "status": "down",
+                "error": "Redis connection unavailable or ping timed out",
             }
 
         # 3. Celery / Background Task Broker Check
         try:
-            broker_url = getattr(settings, 'CELERY_BROKER_URL', '')
+            broker_url = getattr(settings, "CELERY_BROKER_URL", "")
             if broker_url:
                 from kombu import Connection
+
                 with Connection(broker_url, connect_timeout=2) as conn:
                     conn.connect()
-                health_status['checks']['celery_broker'] = {
-                    'status': 'up',
+                health_status["checks"]["celery_broker"] = {
+                    "status": "up",
                 }
             else:
-                health_status['checks']['celery_broker'] = {
-                    'status': 'up',
-                    'backend': 'default',
+                health_status["checks"]["celery_broker"] = {
+                    "status": "up",
+                    "backend": "default",
                 }
         except Exception as e:
             is_healthy = False
-            health_status['checks']['celery_broker'] = {
-                'status': 'down',
-                'error': 'Celery broker connection failed',
+            health_status["checks"]["celery_broker"] = {
+                "status": "down",
+                "error": "Celery broker connection failed",
             }
 
         latency_ms = round((time.time() - start_time) * 1000, 2)
-        health_status['latency_ms'] = latency_ms
+        health_status["latency_ms"] = latency_ms
 
-        http_status = status.HTTP_200_OK if is_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
-        health_status['status'] = 'healthy' if is_healthy else 'unhealthy'
+        http_status = (
+            status.HTTP_200_OK if is_healthy else status.HTTP_503_SERVICE_UNAVAILABLE
+        )
+        health_status["status"] = "healthy" if is_healthy else "unhealthy"
 
         return Response(health_status, status=http_status)
 
@@ -183,49 +220,23 @@ class HealthCheckView(APIView):
     tags=["System Gateway & Heartbeat"],
     summary="Uptime Ping Heartbeat",
     description="High-frequency, ultra-lightweight ping response (~1ms) for uptime monitoring and container warming.",
-    responses={
-        200: OpenApiResponse(description="Pong heartbeat response")
-    },
+    responses={200: OpenApiResponse(description="Pong heartbeat response")},
 )
 class PingHeartbeatView(APIView):
     """
     Lightweight, high-frequency ping endpoint (~1ms response time).
     Use this endpoint in external uptime monitors to keep the app and container warm.
     """
+
     permission_classes = [AllowAny]
     authentication_classes = []
 
     def get(self, request):
-        return JsonResponse({
-            'status': 'pong',
-            'time': timezone.now().isoformat(),
-            'message': 'myclosly server is warm and operational.'
-        }, status=200)
-
-
-@extend_schema(
-    tags=["System Gateway & Heartbeat"],
-    summary="Download Postman Collection",
-    description="Directly serves the latest Postman Collection JSON file for mobile and frontend developers.",
-    responses={
-        200: OpenApiResponse(description="Postman Collection JSON attachment"),
-        404: OpenApiResponse(description="Postman collection file not found"),
-    },
-)
-class PostmanCollectionDownloadView(APIView):
-    """
-    Directly serves the latest Postman collection JSON file for developers.
-    """
-    permission_classes = [AllowAny]
-    authentication_classes = []
-
-    def get(self, request):
-        postman_file = os.path.join(settings.BASE_DIR, 'MyClosly_API_Postman_Collection.json')
-        if os.path.exists(postman_file):
-            response = FileResponse(
-                open(postman_file, 'rb'),
-                content_type='application/json'
-            )
-            response['Content-Disposition'] = 'attachment; filename="MyClosly_API_Postman_Collection.json"'
-            return response
-        raise Http404("Postman collection file not found.")
+        return JsonResponse(
+            {
+                "status": "pong",
+                "time": timezone.now().isoformat(),
+                "message": "myclosly server is warm and operational.",
+            },
+            status=200,
+        )

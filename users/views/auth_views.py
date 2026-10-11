@@ -386,9 +386,18 @@ class FirebaseAuthView(APIView):
                 else:
                     name = f"user_{firebase_uid[:8]}"
                 
-                # Validate date of birth against 16+ age gate (U-10)
+                # Validate date of birth against 16+ age gate (U-10, SR-21)
                 dob = serializer.validated_data.get('date_of_birth')
                 min_age = getattr(settings, 'MYC_MIN_AGE', 16)
+                if is_new_user and not dob:
+                    return standard_response(
+                        success=False,
+                        message="Date of birth is required for registration.",
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        code="DOB_REQUIRED",
+                        errors={'date_of_birth': ['Date of birth is required for social registration.']}
+                    )
+
                 if dob:
                     from users.utils import validate_age
                     if not validate_age(dob, min_age=min_age):
@@ -396,7 +405,8 @@ class FirebaseAuthView(APIView):
                             success=False,
                             message=f"You must be at least {min_age} years old to register.",
                             status_code=status.HTTP_400_BAD_REQUEST,
-                            code="UNDERAGE"
+                            code="UNDERAGE",
+                            errors={'date_of_birth': [f'You must be at least {min_age} years old to register.']}
                         )
 
                 # Extract avatar URL strictly from token picture claim (U-07)
@@ -410,7 +420,8 @@ class FirebaseAuthView(APIView):
                         firebase_uid=firebase_uid,
                         auth_provider=auth_provider,
                         photo_url=photo_url,
-                        email_verified=True
+                        email_verified=True,
+                        date_of_birth=dob
                     )
                     
                     if is_new_user:

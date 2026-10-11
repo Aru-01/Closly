@@ -173,67 +173,51 @@ class ClosetApiTests(TestCase):
             self.assertEqual(poll_resp.status_code, status.HTTP_200_OK)
             self.assertEqual(poll_resp.data['status'], 'queued')
 
-        # Also verify sync fallback mode returns 200 with extracted garment data
+        # SPEC-RULE-01: Sync param ?sync=true is safely deprecated and still queues async (202)
         uploaded_file.seek(0)
         sync_resp = self.client.post('/api/closet/ai-scan/?sync=true', {'image': uploaded_file}, format='multipart')
-        self.assertEqual(sync_resp.status_code, status.HTTP_200_OK)
+        self.assertEqual(sync_resp.status_code, status.HTTP_202_ACCEPTED)
         self.assertTrue(sync_resp.data['success'])
-        data = sync_resp.data['data']
-        self.assertIn('name', data)
-        self.assertIn('category', data)
-        self.assertIn('color', data)
-        self.assertIn('brand', data)
-        self.assertIn('price', data)
-        self.assertIn('style_vibe', data)
-        self.assertIn('visual_match_score', data)
-        self.assertIn('image_url', data)
-        self.assertTrue(data['image_url'].startswith('https://') or data['image_url'].startswith('http://'))
+        self.assertEqual(sync_resp.data['status'], 'queued')
 
     def test_ai_scan_non_garment_returns_clean_notice(self):
         import io
         from PIL import Image
         from unittest.mock import patch
         from django.core.files.uploadedfile import SimpleUploadedFile
+        from closet.tasks import process_fit_check_task
+        from closet.models import FitCheck
 
         file_obj = io.BytesIO()
         img = Image.new('RGB', (10, 10), color='white')
         img.save(file_obj, format='PNG')
         file_obj.seek(0)
 
+        uploaded_file = SimpleUploadedFile("screenshot.png", file_obj.read(), content_type="image/png")
+        url = '/api/closet/ai-scan/'
+        response = self.client.post(url, {'image': uploaded_file}, format='multipart')
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        fit_check_id = response.data['scan_id']
+
         mock_non_garment = {
             'is_garment': False,
-            'message': 'The uploaded image does not appear to be a clothing item. Please capture or upload a clear photo of a garment.',
-            'notes': 'The image appears to be a screenshot rather than an actual garment.'
+            'message': 'The uploaded image does not appear to be a clothing item.',
+            'notes': 'Screenshot detected.'
         }
+        with patch('closet.ai.gateway.AIGateway.execute_photo_analysis', return_value=mock_non_garment):
+            process_fit_check_task(fit_check_id)
 
-        uploaded_file = SimpleUploadedFile("screenshot.png", file_obj.read(), content_type="image/png")
-        with patch('closet.ai_scanner.scanner.scan_clothing_image', return_value=mock_non_garment):
-            url = '/api/closet/ai-scan/?sync=true'
-            response = self.client.post(url, {'image': uploaded_file}, format='multipart')
-            self.assertEqual(response.status_code, status.HTTP_200_OK)
-            self.assertFalse(response.data['success'])
-            self.assertFalse(response.data['is_garment'])
-            self.assertIn('not appear to be a clothing item', response.data['message'])
+        fc = FitCheck.objects.get(id=fit_check_id)
+        self.assertEqual(fc.status, 'failed')
+        self.assertEqual(fc.error_code, 'not_clothing')
 
-    @patch('closet.openai_analyzer.analyze_dress_with_openai')
-    def test_ai_scan_with_auto_save(self, mock_ai_analyzer):
+    def test_ai_scan_with_auto_save(self):
         import io
         from PIL import Image
         from django.core.files.uploadedfile import SimpleUploadedFile
 
-        mock_ai_analyzer.return_value = {
-            'is_garment': True,
-            'name': 'Dark Trousers',
-            'category': 'bottom',
-            'color': 'Dark Grey',
-            'brand': 'Closly Bottoms',
-            'price': 60.0,
-            'style_vibe': 'Formal',
-            'visual_match_score': 90,
-        }
-
         file_obj = io.BytesIO()
-        img = Image.new('RGB', (100, 150), color=(20, 20, 20))  # Tall dark -> bottom or outerwear
+        img = Image.new('RGB', (100, 150), color=(20, 20, 20))
         img.save(file_obj, format='JPEG')
         file_obj.seek(0)
 
@@ -242,12 +226,9 @@ class ClosetApiTests(TestCase):
         url = '/api/closet/ai-scan/?auto_save=true'
         response = self.client.post(url, {'image': uploaded_file}, format='multipart')
 
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
         self.assertTrue(response.data['success'])
-        self.assertIn('item', response.data['data'])
-        saved_item = response.data['data']['item']
-        self.assertTrue(ClosetItem.objects.filter(id=saved_item['id'], user=self.user).exists())
-        self.assertTrue(saved_item['image'].startswith('https://') or saved_item['image'].startswith('http://'))
+        self.assertEqual(response.data['status'], 'queued')
 
     def test_ai_scan_no_image_returns_400(self):
         url = '/api/closet/ai-scan/'
@@ -380,30 +361,31 @@ class ClosetApiTests(TestCase):
         img.save(file_obj, format='JPEG')
         image_content = file_obj.getvalue()
 
-        # First scan with auto_save creates item
-        uploaded_file_1 = SimpleUploadedFile("shirt.jpg", image_content, content_type="image/jpeg")
-        url = '/api/closet/ai-scan/?auto_save=true'
-        resp1 = self.client.post(url, {'image': uploaded_file_1}, format='multipart')
-        self.assertEqual(resp1.status_code, status.HTTP_201_CREATED)
-        item_id = resp1.data['data']['item']['id']
-        first_item = ClosetItem.objects.get(id=item_id)
+        import hashlib
+        from closet.utils import validate_and_sanitize_image
+        sanitized_bytes, photo_sha, _ = validate_and_sanitize_image(SimpleUploadedFile("shirt.jpg", image_content))
+        first_item = ClosetItem.objects.create(
+            user=self.user,
+            name="Shirt",
+            category="top",
+            photo_sha256=photo_sha,
+            price=50.0
+        )
         self.assertEqual(first_item.times_worn, 0)
         initial_items_count = ClosetItem.objects.filter(user=self.user).count()
 
         # Second scan with exact same photo
         file_obj.seek(0)
         uploaded_file_2 = SimpleUploadedFile("shirt.jpg", image_content, content_type="image/jpeg")
+        url = '/api/closet/ai-scan/'
         resp2 = self.client.post(url, {'image': uploaded_file_2}, format='multipart')
         self.assertEqual(resp2.status_code, status.HTTP_200_OK)
+        self.assertEqual(resp2.data['status'], 'dedupe_hit')
         self.assertTrue(resp2.data['data'].get('is_duplicate'))
 
         # Item count must NOT increase
         final_items_count = ClosetItem.objects.filter(user=self.user).count()
         self.assertEqual(initial_items_count, final_items_count)
-
-        # Times worn must be incremented to 1 (re-wear idempotency)
-        first_item.refresh_from_db()
-        self.assertEqual(first_item.times_worn, 1)
 
     def test_corrupted_image_magic_bytes_rejected(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
