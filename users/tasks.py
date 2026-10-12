@@ -50,7 +50,6 @@ def execute_gdpr_deletion_job(self, job_id):
     Asynchronously executes a 9-step GDPR erasure sequence (U-04, U-15, U-27).
     Resumable via job.steps_done tracking. Retryable on failure.
     """
-    from datetime import timedelta
     from django.utils import timezone
     from django.core.cache import cache
     from users.models import DeletionJob, GdprAction, User
@@ -210,4 +209,27 @@ def purge_completed_gdpr_jobs_task():
     count, _ = DeletionJob.objects.filter(status='done', finished_at__lt=cutoff).delete()
     logger.info(f"Purged {count} completed GDPR deletion jobs older than {retention_days} days.")
     return count
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=30)
+def export_user_data_task(self, user_id):
+    """
+    Asynchronous Celery task for compiling GDPR Article 20 personal data export archive.
+    """
+    from django.contrib.auth import get_user_model
+    from users.services.gdpr_services import generate_and_dispatch_user_export_archive
+
+    User = get_user_model()
+    try:
+        user = User.objects.get(id=user_id)
+        archive_path = generate_and_dispatch_user_export_archive(user)
+        logger.info(f"GDPR Data Export archive generated for user {user_id} at {archive_path}")
+        return archive_path
+    except User.DoesNotExist:
+        logger.error(f"Cannot export data: user {user_id} not found.")
+        return None
+    except Exception as exc:
+        logger.error(f"Error compiling GDPR data export for user {user_id}: {exc}")
+        raise self.retry(exc=exc)
+
 

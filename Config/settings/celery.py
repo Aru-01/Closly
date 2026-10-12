@@ -42,6 +42,7 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 from celery.schedules import crontab
+
 CELERY_TIMEZONE = config("CELERY_TIMEZONE", default="Europe/Berlin")
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS = True
@@ -49,11 +50,19 @@ CELERY_WORKER_CANCEL_LONG_RUNNING_TASKS_ON_CONNECTION_LOSS = True
 # Production Task Execution Hardening (P-21)
 CELERY_TASK_ACKS_LATE = True
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
-CELERY_TASK_TIME_LIMIT = config("CELERY_TASK_TIME_LIMIT", default=900, cast=int)         # 15 minutes hard timeout
-CELERY_TASK_SOFT_TIME_LIMIT = config("CELERY_TASK_SOFT_TIME_LIMIT", default=840, cast=int)  # 14 minutes soft timeout
-CELERY_RESULT_EXPIRES = config("CELERY_RESULT_EXPIRES", default=3600, cast=int)          # 1 hour result TTL
+CELERY_TASK_TIME_LIMIT = config(
+    "CELERY_TASK_TIME_LIMIT", default=900, cast=int
+)  # 15 minutes hard timeout
+CELERY_TASK_SOFT_TIME_LIMIT = config(
+    "CELERY_TASK_SOFT_TIME_LIMIT", default=840, cast=int
+)  # 14 minutes soft timeout
+CELERY_RESULT_EXPIRES = config(
+    "CELERY_RESULT_EXPIRES", default=3600, cast=int
+)  # 1 hour result TTL
 
-CELERY_TASK_ALWAYS_EAGER = config("CELERY_TASK_ALWAYS_EAGER", default=("test" in sys.argv), cast=bool)
+CELERY_TASK_ALWAYS_EAGER = config(
+    "CELERY_TASK_ALWAYS_EAGER", default=("test" in sys.argv), cast=bool
+)
 CELERY_TASK_EAGER_PROPAGATES = True
 
 # Standardized deterministic crontab schedules (P-21)
@@ -62,13 +71,23 @@ CELERY_BEAT_SCHEDULE = {
         "task": "social.tasks.expire_old_stories_task",
         "schedule": crontab(minute=0),  # Top of every hour
     },
+    "sync-approved-brands-daily": {
+        "task": "affiliate.tasks.sync_approved_brands_task",
+        "schedule": crontab(
+            hour=1, minute=30
+        ),  # 01:30 Berlin time (Two-Step Sync Step 1: Discover approved brands)
+    },
     "sync-awin-feeds-daily": {
         "task": "affiliate.tasks.sync_awin_feeds_task",
-        "schedule": crontab(hour=2, minute=0),  # 02:00 Berlin time
+        "schedule": crontab(
+            hour=2, minute=0
+        ),  # 02:00 Berlin time (Two-Step Sync Step 2A: Ingest AWIN products)
     },
     "sync-rakuten-feeds-daily": {
         "task": "affiliate.tasks.sync_rakuten_feeds_task",
-        "schedule": crontab(hour=2, minute=30),  # 02:30 Berlin time
+        "schedule": crontab(
+            hour=2, minute=30
+        ),  # 02:30 Berlin time (Two-Step Sync Step 2B: Ingest Rakuten products)
     },
     "aggregate-feed-impressions-daily": {
         "task": "affiliate.tasks.aggregate_feed_impressions_daily_task",
@@ -93,5 +112,21 @@ CELERY_BEAT_SCHEDULE = {
     "purge-completed-gdpr-jobs-daily": {
         "task": "users.tasks.purge_completed_gdpr_jobs_task",
         "schedule": crontab(hour=4, minute=45),  # 04:45 Berlin time
+    },
+    "generate-missing-embeddings-daily": {
+        "task": "affiliate.tasks.generate_missing_embeddings_task",
+        "schedule": crontab(hour=5, minute=0),  # 05:00 Berlin time
+    },
+    "reconcile-awin-transactions-daily": {
+        "task": "affiliate.tasks.reconcile_awin_transactions_task",
+        "schedule": crontab(
+            hour=6, minute=0
+        ),  # Exactly 06:00 AM Berlin time (AWIN sales reconciliation)
+    },
+    "reconcile-rakuten-transactions-daily": {
+        "task": "affiliate.tasks.reconcile_rakuten_transactions_task",
+        "schedule": crontab(
+            hour=6, minute=30
+        ),  # Exactly 06:30 AM Berlin time (Rakuten sales reconciliation)
     },
 }

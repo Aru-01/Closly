@@ -533,7 +533,7 @@ class SocialApiTests(TestCase):
         self.assertFalse(StoryLike.objects.filter(story=story, user=self.user1).exists())
 
     def test_story_self_view_does_not_count_and_follower_visibility(self):
-        from social.models import Story, StoryView, StoryLike
+        from social.models import Story, StoryView
         dummy_img = create_test_image("story_view.jpg")
         story = Story.objects.create(user=self.user1, image=dummy_img, caption="View test story")
 
@@ -762,8 +762,6 @@ class SocialApiTests(TestCase):
 
     def test_websocket_ticket_auth_and_single_use(self):
         """SR-09: Single-use short-lived ticket auth for WebSockets without token in query string."""
-        from social.middleware import get_user_from_ticket
-
         # 1. Feature disabled by default -> returns 404
         res_disabled = self.client.post('/api/social/ws-ticket/')
         self.assertEqual(res_disabled.status_code, status.HTTP_404_NOT_FOUND)

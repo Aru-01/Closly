@@ -17,8 +17,8 @@ from .analytics_views import (
 from .scanner_views import (
     ClosetAIScanView,
     ClosetAIScanPollView,
-    scan_clothing_image,
 )
+from closet.ai_scanner import scan_clothing_image
 
 from .fit_check_views import (
     FitCheckCreateView,

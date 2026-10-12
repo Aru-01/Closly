@@ -1,51 +1,22 @@
-import secrets
 import logging
-from django.utils import timezone
-from django.db import transaction
-from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import status, serializers
+from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from drf_spectacular.utils import extend_schema, OpenApiResponse
 
-from users.models import Invite
-from users.utils.error_codes import (
-    INVITE_INVALID,
-    INVITE_ALREADY_USED,
-    INVITE_EXPIRED,
+from users.serializers import (
+    InviteSerializer,
+    InviteRedeemInputSerializer,
 )
+from users.services import (
+    get_or_create_user_invites,
+    redeem_invite_code,
+)
+from users.utils.error_codes import INVITE_INVALID
 
 logger = logging.getLogger(__name__)
-
-
-class InviteSerializer(serializers.ModelSerializer):
-    is_used = serializers.SerializerMethodField()
-
-    class Meta:
-        model = Invite
-        fields = [
-            'code',
-            'kind',
-            'is_used',
-            'used_at',
-            'expires_at',
-            'created_at',
-        ]
-        read_only_fields = fields
-
-    def get_is_used(self, obj):
-        return bool(obj.used_by_id or obj.used_at)
-
-
-class InviteRedeemInputSerializer(serializers.Serializer):
-    code = serializers.CharField(
-        required=True,
-        max_length=64,
-        trim_whitespace=True,
-        help_text="Single-use invite access code"
-    )
 
 
 @extend_schema(
@@ -59,33 +30,15 @@ class InviteRedeemInputSerializer(serializers.Serializer):
 )
 class InviteListView(APIView):
     """
-    Returns 5 single-use invite codes for the authenticated user.
-    Auto-generates codes up to 5 if needed (V1-API-02 / U-08).
+    Skinny View: Returns 5 single-use invite codes for the authenticated user.
+    Delegates code provisioning to the service layer (V1-API-02 / U-08).
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
     def get(self, request):
-        user = request.user
-        existing_invites = list(Invite.objects.filter(owner_user=user).order_by('created_at')[:5])
-        current_count = len(existing_invites)
-
-        if current_count < 5:
-            new_invites = []
-            for _ in range(5 - current_count):
-                for _attempt in range(10):
-                    candidate_code = f"CLO-{secrets.token_hex(4).upper()}"
-                    if not Invite.objects.filter(code=candidate_code).exists():
-                        inv = Invite.objects.create(
-                            code=candidate_code,
-                            kind='standard',
-                            owner_user=user,
-                        )
-                        new_invites.append(inv)
-                        break
-            existing_invites.extend(new_invites)
-
-        serializer = InviteSerializer(existing_invites[:5], many=True)
+        invites = get_or_create_user_invites(request.user, quota=5)
+        serializer = InviteSerializer(invites, many=True)
         return Response({
             'success': True,
             'count': len(serializer.data),
@@ -106,8 +59,8 @@ class InviteListView(APIView):
 )
 class InviteRedeemView(APIView):
     """
-    Validates and consumes a single-use invite code.
-    Fails closed on nonexistent, expired, self-owned, or previously used codes.
+    Skinny View: Validates and consumes a single-use invite code.
+    Delegates all verification and atomic row locking to the service layer.
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
@@ -122,80 +75,18 @@ class InviteRedeemView(APIView):
                 'code': INVITE_INVALID,
             }, status=status.HTTP_400_BAD_REQUEST)
 
-        code_str = serializer.validated_data['code'].strip().upper()
-        user = request.user
+        raw_code = serializer.validated_data['code']
+        success, data, error_message, error_code = redeem_invite_code(request.user, raw_code)
 
-        # Check if user already claimed an invite
-        if Invite.objects.filter(used_by=user).exists():
+        if not success:
             return Response({
                 'success': False,
-                'message': 'You have already redeemed an invite code.',
-                'code': 'INVITE_ALREADY_CLAIMED',
+                'message': error_message,
+                'code': error_code,
             }, status=status.HTTP_400_BAD_REQUEST)
-
-        # Check bypass codes (e.g. TestFlight or App Store review)
-        bypass_codes = getattr(settings, 'MYC_INVITE_BYPASS_CODES', ['APPLE_REVIEW', 'TESTFLIGHT_BETA'])
-        if code_str in bypass_codes:
-            return Response({
-                'success': True,
-                'message': 'Bypass invite code accepted.',
-                'data': {
-                    'code': code_str,
-                    'kind': 'review',
-                    'used_at': timezone.now(),
-                }
-            }, status=status.HTTP_200_OK)
-
-        invite = Invite.objects.filter(code=code_str).first()
-        if not invite:
-            return Response({
-                'success': False,
-                'message': 'Invalid invite code.',
-                'code': INVITE_INVALID,
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        if invite.owner_user_id == user.id:
-            return Response({
-                'success': False,
-                'message': 'You cannot redeem an invite code that you own.',
-                'code': 'INVITE_SELF_REDEEM_NOT_ALLOWED',
-            }, status=status.HTTP_400_BAD_REQUEST)
-
-        if not invite.is_valid():
-            if invite.used_by_id or invite.used_at:
-                return Response({
-                    'success': False,
-                    'message': 'This invite code has already been claimed.',
-                    'code': INVITE_ALREADY_USED,
-                }, status=status.HTTP_400_BAD_REQUEST)
-            if invite.expires_at and timezone.now() > invite.expires_at:
-                return Response({
-                    'success': False,
-                    'message': 'This invite code has expired.',
-                    'code': INVITE_EXPIRED,
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-        with transaction.atomic():
-            locked_invite = Invite.objects.select_for_update().get(id=invite.id)
-            if locked_invite.used_by_id is not None or locked_invite.used_at is not None:
-                return Response({
-                    'success': False,
-                    'message': 'This invite code has already been claimed.',
-                    'code': INVITE_ALREADY_USED,
-                }, status=status.HTTP_400_BAD_REQUEST)
-
-            locked_invite.used_by = user
-            locked_invite.used_at = timezone.now()
-            locked_invite.save(update_fields=['used_by', 'used_at'])
-
-        logger.info(f"User {user.id} ({user.email}) successfully redeemed invite code {locked_invite.code}")
 
         return Response({
             'success': True,
             'message': 'Invite code redeemed successfully.',
-            'data': {
-                'code': locked_invite.code,
-                'kind': locked_invite.kind,
-                'used_at': locked_invite.used_at,
-            }
+            'data': data,
         }, status=status.HTTP_200_OK)

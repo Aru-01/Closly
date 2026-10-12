@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
-from users.models import UserPreference
+from users.models import UserPreference, Device
 from users.validators import (
     validate_name,
     validate_date_of_birth,
@@ -176,10 +176,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
         """Build full public profile share URL using username or UUID handle (U-13, U-32)"""
         handle = obj.username or str(obj.id)
         from django.conf import settings
-        base_url = getattr(settings, 'MYC_PUBLIC_BASE_URL', 'https://myclosly.com').rstrip('/')
         request = self.context.get('request')
         if request is not None:
             return request.build_absolute_uri(f"/u/{handle}/")
+        base_url = (getattr(settings, 'MYC_PUBLIC_BASE_URL', '') or getattr(settings, 'BACKEND_URL', '')).rstrip('/')
+        if not base_url:
+            base_url = 'http://localhost:8000'
         return f"{base_url}/u/{handle}/"
 
     def get_points_summary(self, obj):
@@ -406,7 +408,6 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
     style_match_options = serializers.SerializerMethodField(read_only=True)
     dress_for_options = serializers.SerializerMethodField(read_only=True)
     body_size_options = serializers.SerializerMethodField(read_only=True)
-    skin_tone_options = serializers.SerializerMethodField(read_only=True)
     clothing_category_options = serializers.SerializerMethodField(read_only=True)
     brand_options = serializers.SerializerMethodField(read_only=True)
     price_band_options = serializers.SerializerMethodField(read_only=True)
@@ -417,14 +418,8 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
             'style_match',
             'what_do_you_dress_for',
             'body_type',
-            'height_cm',
-            'weight_kg',
-            'chest',
-            'waist',
-            'hip',
             'body_size',
             'shoe_size',
-            'skin_tone',
             'color_palette',
             'clothing_categories',
             'preferred_brands',
@@ -438,7 +433,6 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
             'style_match_options',
             'dress_for_options',
             'body_size_options',
-            'skin_tone_options',
             'clothing_category_options',
             'brand_options',
             'price_band_options',
@@ -450,7 +444,6 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
             'style_match_options',
             'dress_for_options',
             'body_size_options',
-            'skin_tone_options',
             'clothing_category_options',
             'brand_options',
             'price_band_options',
@@ -493,13 +486,6 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
             for key, label in UserPreference.BODY_SIZE_CHOICES
         ]
 
-    def get_skin_tone_options(self, obj):
-        """Returns list of {hex, label} for frontend color picker."""
-        return [
-            {'hex': hex_code, 'label': label}
-            for hex_code, label in UserPreference.SKIN_TONE_CHOICES
-        ]
-
     def get_clothing_category_options(self, obj):
         """Returns the full nested clothing category tree."""
         return UserPreference.CLOTHING_CATEGORY_OPTIONS
@@ -523,16 +509,6 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
         valid = [k for k, _ in UserPreference.BODY_SIZE_CHOICES]
         if value not in valid:
             raise serializers.ValidationError(f"Invalid body size. Valid: {valid}")
-        return value
-
-    def validate_skin_tone(self, value):
-        if not value:
-            return value
-        valid = [h for h, _ in UserPreference.SKIN_TONE_CHOICES]
-        if value not in valid:
-            raise serializers.ValidationError(
-                f"Invalid skin tone. Valid hex codes: {valid}"
-            )
         return value
 
     def validate_clothing_categories(self, value):
@@ -579,21 +555,7 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
         return instance
 
 
-class DeviceSerializer(serializers.ModelSerializer):
-    """
-    Serializer for push notification device registration (U-29).
-    """
-    class Meta:
-        from users.models import Device
-        model = Device
-        fields = ['apns_token', 'platform', 'prefs', 'last_seen', 'created_at']
-        read_only_fields = ['last_seen', 'created_at']
-
-    def validate_apns_token(self, value):
-        if not value or not value.strip():
-            raise serializers.ValidationError("APNs device token cannot be empty.")
-        return value.strip()
-
+from users.serializers.device_serializers import DeviceSerializer
 
 # Backward-compatibility aliases
 ClosetPointTransactionSerializer = RewardPointTransactionSerializer

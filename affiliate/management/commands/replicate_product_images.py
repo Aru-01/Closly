@@ -4,7 +4,7 @@ Management command to replicate external merchant images to S3/CDN storage (Audi
 """
 from django.core.management.base import BaseCommand
 from django.db.models import Q
-from affiliate.models import AffiliateProduct, Brand
+from affiliate.models import AffiliateProduct
 from affiliate.services.image_cdn import fetch_and_replicate_image
 
 

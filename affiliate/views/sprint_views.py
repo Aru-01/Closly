@@ -1,34 +1,27 @@
-"""
-affiliate/views/sprint_views.py
-================================
-Style Sprint (Daily 10-Card Swipe Deck) API Views (F2 / V1-API-10).
-Features:
-- GET /api/v1/feed/sprint/ : Returns daily 10-card swipe deck for today.
-- POST /api/v1/feed/sprint/swipe/ : Submits swipe interactions (single or batch)
-  updating Event log and StyleProfile taste vectors via pgvector EMA.
-"""
-from zoneinfo import ZoneInfo
+import logging
 from django.utils import timezone
-from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from affiliate.models import AffiliateProduct, Event, ProductFavorite
 from affiliate.serializers import AffiliateProductListSerializer
 from affiliate.services.vector_engine import (
     get_style_sprint_deck,
-    update_user_taste_vector,
     BERLIN_TZ,
 )
+from affiliate.services.sprint_services import (
+    process_swipe_interactions,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class StyleSprintView(APIView):
     """
+    Skinny View: Returns the daily personalized 10-card fashion swipe deck for Berlin date.
     GET /api/v1/feed/sprint/
-    Returns the daily personalized 10-card fashion swipe deck for Berlin date.
     """
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
@@ -64,20 +57,16 @@ class StyleSprintView(APIView):
 
 class StyleSprintSwipeView(APIView):
     """
+    Skinny View: Records swipe interactions (like / skip / save) on Style Sprint cards.
+    Delegates bulk event logging and taste vector adjustment to sprint_services.
     POST /api/v1/feed/sprint/swipe/
-    Records swipe interactions (like / skip / save) on Style Sprint cards.
-    Updates behavioral events and adjusts the user's 768-dim taste vector.
     """
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        today_berlin = timezone.now().astimezone(BERLIN_TZ).date()
-
-        # Support both single swipe object and batch swipes array
         raw_swipes = request.data.get('swipes')
         if raw_swipes is None:
-            # Single swipe payload
             product_id = request.data.get('product_id')
             action = request.data.get('action') or request.data.get('direction', 'like')
             if not product_id:
@@ -93,76 +82,10 @@ class StyleSprintSwipeView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        processed_count = 0
-        for item in raw_swipes:
-            p_id = item.get('product_id')
-            act = str(item.get('action') or item.get('direction') or 'like').strip().lower()
-
-            try:
-                product = AffiliateProduct.objects.get(id=p_id)
-            except (AffiliateProduct.DoesNotExist, ValueError, TypeError):
-                continue
-
-            # Normalize event type
-            if act in ('right', 'like', 'love'):
-                event_type = Event.TYPE_LIKE
-                event_act = 'like'
-            elif act in ('left', 'skip', 'dislike'):
-                event_type = Event.TYPE_SKIP
-                event_act = 'skip'
-            elif act in ('up', 'save', 'favorite'):
-                event_type = Event.TYPE_SAVE
-                event_act = 'save'
-                ProductFavorite.objects.get_or_create(user=request.user, product=product)
-            else:
-                event_type = Event.TYPE_LIKE
-                event_act = 'like'
-
-            # Record event log
-            Event.objects.create(
-                user=request.user,
-                product=product,
-                event_class=Event.CLASS_INTERACTION,
-                event_type=event_type,
-                source='sprint',
-                berlin_day=today_berlin,
-            )
-
-            # Update StyleProfile taste vector with EMA
-            update_user_taste_vector(request.user, product.id, event_act)
-            processed_count += 1
-
-        # Calculate current total swiped count today
-        current_swiped = Event.objects.filter(
+        processed_count, current_swiped, is_completed, points_awarded = process_swipe_interactions(
             user=request.user,
-            source='sprint',
-            berlin_day=today_berlin,
-        ).values('product_id').distinct().count()
-
-        is_completed = current_swiped >= 10
-        points_awarded = 0
-
-        # Award completion points if user reached 10 cards today
-        if is_completed:
-            try:
-                from rewards.models import PointAward
-                # Check if completion award already granted today
-                already_awarded = PointAward.objects.filter(
-                    user=request.user,
-                    reason__icontains='Style Sprint daily',
-                    created_at__date=today_berlin,
-                ).exists()
-
-                if not already_awarded:
-                    PointAward.objects.create(
-                        user=request.user,
-                        points=50,
-                        reason=f"Style Sprint daily completion ({today_berlin})",
-                        status='confirmed',
-                    )
-                    points_awarded = 50
-            except Exception:
-                pass
+            raw_swipes=raw_swipes,
+        )
 
         return Response({
             'status': 'success',

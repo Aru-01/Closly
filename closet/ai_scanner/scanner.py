@@ -1,6 +1,3 @@
-import os
-import io
-import uuid
 import logging
 from django.conf import settings
 from django.core.cache import cache

@@ -47,7 +47,6 @@ class FirebaseAuthentication(authentication.BaseAuthentication):
             
             # Extract user information from token
             firebase_uid = decoded_token.get('uid')
-            email = decoded_token.get('email')
             
             if not firebase_uid:
                 raise exceptions.AuthenticationFailed('Invalid Firebase token: missing UID')
@@ -71,7 +70,7 @@ class FirebaseAuthentication(authentication.BaseAuthentication):
             # Re-raise our custom authentication errors
             raise
         
-        except Exception as e:
+        except Exception:
             # For any other error, return None (not authenticated via Firebase)
             # This allows the request to try other authentication methods (JWT)
             return None

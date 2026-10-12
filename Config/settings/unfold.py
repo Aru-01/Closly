@@ -61,12 +61,24 @@ UNFOLD = {
                         "icon": "chat",
                         "link": reverse_lazy("admin:social_directmessage_changelist"),
                     },
+                    {
+                        "title": "Content Reports (DSA)",
+                        "icon": "flag",
+                        "link": reverse_lazy("admin:social_contentreport_changelist"),
+                    },
                 ],
             },
             {
                 "title": "Affiliate & Loyalty",
                 "separator": True,
                 "items": [
+                    {
+                        "title": "Brands Registry",
+                        "icon": "storefront",
+                        "link": reverse_lazy(
+                            "admin:affiliate_brand_changelist"
+                        ),
+                    },
                     {
                         "title": "Affiliate Products",
                         "icon": "shopping_bag",

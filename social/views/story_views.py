@@ -29,6 +29,7 @@ def get_active_stories_for_user(request_user, request=None):
     followed_user_ids = list(
         UserFollow.objects.filter(follower=request_user).values_list('following_id', flat=True)
     )
+    relevant_user_ids = followed_user_ids + [request_user.id]
     from social.models import get_blocked_user_ids
     blocked_ids = get_blocked_user_ids(request_user)
     if blocked_ids:
@@ -60,7 +61,6 @@ def get_active_stories_for_user(request_user, request=None):
     )
 
     # Group stories by author
-    from collections import defaultdict
     grouped = defaultdict(list)
     for story in active_stories:
         grouped[story.user_id].append(story)

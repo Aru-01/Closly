@@ -1,5 +1,5 @@
 import logging
-from django.shortcuts import render, get_object_or_404
+from django.shortcuts import render
 from django.contrib.auth import get_user_model
 from rest_framework import status
 from rest_framework.views import APIView
@@ -7,13 +7,12 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
 
-from users.authentication import FirebaseAuthentication
 from users.serializers import (
     UserProfileSerializer,
     UserProfileUpdateSerializer,
     LanguagePreferenceSerializer,
 )
-from drf_spectacular.utils import extend_schema, OpenApiResponse
+from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiExample
 from .base import standard_response
 
 logger = logging.getLogger(__name__)
@@ -175,21 +174,18 @@ class UserPreferenceView(APIView):
     {
         "style_match": ["minimalist", "classic"],
         "body_type": "hourglass",
-        "height_cm": 165,
-        "weight_kg": 60,
-        "chest": "36 inches",
-        "waist": "30 inches",
-        "hip": "38 inches",
         "body_size": "m",
         "shoe_size": "UK 8",
-
-        "skin_tone": "#F0B27A",
         "color_palette": "neutral_minimalist",
         "clothing_categories": {
             "tops": ["shirts", "hoodies"],
             "shoes": ["sneakers", "boots"]
         },
-        "preferred_brands": ["zara", "nike", "uniqlo"]
+        "preferred_brands": ["zara", "nike", "uniqlo"],
+        "price_band": "mid_range",
+        "gender_prefs": ["women", "unisex"],
+        "clothing_sizes": ["M", "EU 38"],
+        "blocked_brands": ["shein"]
     }
     """
     permission_classes = [IsAuthenticated]
@@ -265,7 +261,12 @@ class ShareProfileAPIView(APIView):
         # Build share handle from username (fallback to UUID), never email (U-13)
         handle = user.username or str(user.id)
         from django.conf import settings
-        backend_url = getattr(settings, "MYC_PUBLIC_BASE_URL", "https://myclosly.com").rstrip("/")
+        backend_url = (getattr(settings, "MYC_PUBLIC_BASE_URL", "") or getattr(settings, "BACKEND_URL", "")).rstrip("/")
+        if not backend_url and request is not None:
+            backend_url = request.build_absolute_uri('/')[:-1]
+        if not backend_url:
+            backend_url = "http://localhost:8000"
+
         scheme = getattr(settings, "MYC_DEEP_LINK_SCHEME", "closly")
         share_url = f"{backend_url}/u/{handle}/"
         referral_code = user.referral_code
@@ -286,17 +287,17 @@ class ShareProfileAPIView(APIView):
 
 @extend_schema(
     tags=["User Profile & Preferences"],
-    summary="Public Web Profile Landing Page",
-    description="Renders luxury mobile-first web landing page for a shared profile with deep-link CTA into Closly app.",
+    summary="Public Profile Preview / Landing Page",
+    description="Retrieves public profile data via JSON for API/Postman or renders web landing page with deep-link CTA into Closly app.",
     responses={
-        200: OpenApiResponse(description="HTML profile page rendered"),
+        200: OpenApiResponse(description="Public profile data retrieved or HTML page rendered"),
         404: OpenApiResponse(description="User profile not found"),
     }
 )
 class PublicProfileWebView(APIView):
     """
-    Public web landing page for a shared profile.
-    Renders mobile-first luxury profile view with deep-link into Closly app.
+    Public landing page and API resolver for a shared profile.
+    Renders mobile-first luxury profile view or returns JSON profile data.
     
     GET /u/<str:user_id>/ (UUID or unique username lookup, U-13)
     """
@@ -330,6 +331,55 @@ class PublicProfileWebView(APIView):
         followers_count = profile_user.followers_set.count()
         recent_outfits = profile_user.today_outfits.filter(visibility='public')[:6]
 
+        from django.conf import settings
+        scheme = getattr(settings, 'MYC_DEEP_LINK_SCHEME', 'closly')
+        handle = profile_user.username or str(profile_user.id)
+        deep_link = f"{scheme}://user/{handle}"
+
+        # Content negotiation: return JSON for API clients / Postman, HTML for browsers
+        accept = request.headers.get('Accept', '')
+        user_agent = request.headers.get('User-Agent', '')
+        is_html_browser = 'text/html' in accept or ('Mozilla' in user_agent and request.query_params.get('format') != 'json')
+
+        if not is_html_browser or request.query_params.get('format') == 'json':
+            profile_pic_url = None
+            if profile_user.profile_picture:
+                profile_pic_url = request.build_absolute_uri(profile_user.profile_picture.url)
+
+            return standard_response(
+                success=True,
+                message="User public profile retrieved successfully.",
+                data={
+                    'user': {
+                        'id': str(profile_user.id),
+                        'name': profile_user.name,
+                        'username': profile_user.username,
+                        'bio': profile_user.bio,
+                        'country': profile_user.country,
+                        'city': profile_user.city,
+                        'profile_picture': profile_pic_url,
+                        'tier': tier,
+                    },
+                    'stats': {
+                        'closet_count': closet_count,
+                        'outfit_count': outfit_count,
+                        'followers_count': followers_count,
+                    },
+                    'deep_link': deep_link,
+                    'recent_outfits': [
+                        {
+                            'id': o.id,
+                            'caption': o.caption,
+                            'style_category': o.style_category,
+                            'weather_tag': o.weather_tag,
+                        }
+                        for o in recent_outfits
+                    ]
+                },
+                status_code=status.HTTP_200_OK,
+                code="PROFILE_RETRIEVED"
+            )
+
         context = {
             'profile_user': profile_user,
             'tier': tier,
@@ -337,65 +387,12 @@ class PublicProfileWebView(APIView):
             'outfit_count': outfit_count,
             'followers_count': followers_count,
             'recent_outfits': recent_outfits,
+            'deep_link': deep_link,
+            'deep_link_scheme': scheme,
         }
         return render(request, 'users/public_profile.html', context)
 
+# Re-export for backward compatibility
+from users.views.device_views import DeviceRegistrationView
 
-@extend_schema(
-    tags=["User Profile & Preferences"],
-    summary="Register Push Device Token (U-29)",
-    description="Register or update APNs push notification device token and preferences for the authenticated user.",
-    responses={
-        200: OpenApiResponse(description="Device token registered/updated successfully"),
-        400: OpenApiResponse(description="Validation error"),
-    }
-)
-class DeviceRegistrationView(APIView):
-    """
-    Push device registration endpoint (U-29).
-    POST /devices / POST /api/users/devices/
-    """
-    permission_classes = [IsAuthenticated]
-    authentication_classes = [JWTAuthentication]
-
-    def post(self, request):
-        from users.serializers.profile_serializers import DeviceSerializer
-        from users.models import Device
-        from django.utils import timezone
-        from users.utils.common_utils import record_user_consent
-
-        serializer = DeviceSerializer(data=request.data)
-        if serializer.is_valid():
-            apns_token = serializer.validated_data['apns_token']
-            platform = serializer.validated_data.get('platform', 'ios')
-            prefs = serializer.validated_data.get('prefs', {})
-
-            device, created = Device.objects.update_or_create(
-                apns_token=apns_token,
-                defaults={
-                    'user': request.user,
-                    'platform': platform,
-                    'prefs': prefs,
-                    'last_seen': timezone.now(),
-                }
-            )
-
-            # Record consent for push notifications (Consent System, U-21)
-            record_user_consent(request.user, 'push_notification', granted=True, request=request)
-
-            return standard_response(
-                success=True,
-                message="Device registered successfully.",
-                data=DeviceSerializer(device).data,
-                status_code=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
-                code="DEVICE_REGISTERED"
-            )
-
-        return standard_response(
-            success=False,
-            message="Device registration failed.",
-            errors=serializer.errors,
-            status_code=status.HTTP_400_BAD_REQUEST,
-            code="VALIDATION_ERROR"
-        )
 

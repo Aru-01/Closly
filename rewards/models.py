@@ -57,6 +57,16 @@ class LedgerAccount(models.Model):
             ),
         ]
 
+    @classmethod
+    def get_or_create_user_account(cls, user):
+        account, _ = cls.objects.get_or_create(kind='user_available', user=user)
+        return account
+
+    @classmethod
+    def get_system_reserve_account(cls):
+        account, _ = cls.objects.get_or_create(kind='marketing_expense', user=None)
+        return account
+
     def __str__(self):
         if self.user:
             return f"LedgerAccount({self.kind}, user={self.user.email})"
@@ -182,8 +192,24 @@ class LedgerTxn(models.Model):
         verbose_name_plural = _('ledger transactions')
         ordering = ['-created_at']
 
+    def validate_balanced(self):
+        """
+        Mathematically enforces that Sum(Debits) + Sum(Credits) == 0.
+        Raises ValidationError if entries do not sum to zero.
+        """
+        from django.core.exceptions import ValidationError
+        total = self.entries.aggregate(total=models.Sum('points'))['total'] or 0
+        if total != 0:
+            raise ValidationError(f"Ledger transaction {self.id} is unbalanced! Sum of entries is {total}, must be exactly 0.")
+        return True
+
     def __str__(self):
         return f"LedgerTxn {self.id} ({self.txn_type}): {self.description}"
+
+
+# Canonical specification alias for strict double-entry ledger compliance
+LedgerTransaction = LedgerTxn
+
 
 
 class LedgerEntry(models.Model):

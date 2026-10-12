@@ -30,6 +30,11 @@ from .profile_serializers import (
     UserPointSummarySerializer,
 )
 
+from .invite_serializers import (
+    InviteSerializer,
+    InviteRedeemInputSerializer,
+)
+
 __all__ = [
     'UserRegistrationSerializer',
     'UserLoginSerializer',
@@ -50,4 +55,6 @@ __all__ = [
     'UserPreferenceSerializer',
     'ClosetPointTransactionSerializer',
     'UserPointSummarySerializer',
+    'InviteSerializer',
+    'InviteRedeemInputSerializer',
 ]

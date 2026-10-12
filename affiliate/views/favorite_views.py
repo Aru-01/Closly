@@ -9,7 +9,7 @@ from drf_spectacular.utils import extend_schema, OpenApiResponse
 
 from affiliate.models import AffiliateProduct, ProductFavorite
 from affiliate.serializers import AffiliateProductListSerializer
-from .feed_views import NewsfeedPagination
+from .catalog_views import NewsfeedPagination
 
 
 @extend_schema(
@@ -128,6 +128,7 @@ class SavedProductsListView(generics.ListAPIView):
                 favorites__user=self.request.user,
                 is_active=True
             )
+            .select_related('brand_ref')
             .order_by('-favorites__created_at')
         )
 

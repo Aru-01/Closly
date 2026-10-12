@@ -1,4 +1,4 @@
-import urllib.parse
+from urllib.parse import parse_qs
 import logging
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
@@ -71,7 +71,7 @@ class JWTAuthMiddleware:
 
     async def __call__(self, scope, receive, send):
         query_string = scope.get("query_string", b"").decode("utf-8")
-        query_params = urllib.parse.parse_qs(query_string)
+        query_params = parse_qs(query_string)
 
         # 1. Single-use ticket from query parameters
         ticket = query_params.get("ticket", [None])[0]

@@ -8,7 +8,6 @@ from django.shortcuts import get_object_or_404
 from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
 from django.utils import timezone
-from django.conf import settings
 
 from social.models import TodayOutfit, OutfitLike, UserFollow
 from social.serializers import TodayOutfitSerializer
@@ -234,13 +233,15 @@ class OutfitLikeToggleView(APIView):
             if outfit.user != request.user:
                 try:
                     from notifications.services import create_notification
+                    from django.conf import settings
+                    scheme = getattr(settings, 'MYC_DEEP_LINK_SCHEME', 'closly')
                     create_notification(
                         recipient=outfit.user,
                         sender=request.user,
                         notification_type='outfit_like',
                         title='New Outfit Like',
                         message=f"{request.user.name or 'A user'} liked your outfit look.",
-                        data={'outfit_id': outfit.id, 'deep_link': f"closly://outfit/{outfit.id}"}
+                        data={'outfit_id': outfit.id, 'deep_link': f"{scheme}://outfit/{outfit.id}"}
                     )
                 except Exception:
                     pass

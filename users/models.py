@@ -295,8 +295,8 @@ class User(AbstractBaseUser, PermissionsMixin):
         import secrets
         import string
         chars = string.ascii_uppercase + string.digits
-        for _ in range(20):
-            code = 'CLO-' + ''.join(secrets.choice(chars) for _ in range(6))
+        for _attempt in range(20):
+            code = 'CLO-' + ''.join(secrets.choice(chars) for _i in range(6))
             if not self.__class__.objects.filter(referral_code=code).exists():
                 return code
         return f"CLO-{uuid.uuid4().hex[:6].upper()}"
@@ -370,34 +370,6 @@ class UserPreference(models.Model):
         choices=BODY_TYPE_CHOICES,
     )
 
-    height_cm = models.PositiveSmallIntegerField(
-        _('height (cm)'),
-        null=True, blank=True,
-    )
-
-    weight_kg = models.PositiveSmallIntegerField(
-        _('weight (kg)'),
-        null=True, blank=True,
-    )
-
-    chest = models.CharField(
-        _('chest size'),
-        max_length=20, blank=True, default='',
-        help_text=_("Chest size description/measurement")
-    )
-
-    waist = models.CharField(
-        _('waist size'),
-        max_length=20, blank=True, default='',
-        help_text=_("Waist size description/measurement")
-    )
-
-    hip = models.CharField(
-        _('hip size'),
-        max_length=20, blank=True, default='',
-        help_text=_("Hip size description/measurement")
-    )
-
     BODY_SIZE_CHOICES = [
         ('s', 'S'),
         ('m', 'M'),
@@ -416,23 +388,6 @@ class UserPreference(models.Model):
         _('shoe size'),
         max_length=20, blank=True, default='',
         help_text=_("Shoe size description/measurement")
-    )
-
-    # Wardrobe Details
-    # Skin tone — stored as hex color code, e.g. "#F1C27D"
-    SKIN_TONE_CHOICES = [
-        ('#FDDBB4', 'Fair / Porcelain'),
-        ('#F5CBA7', 'Light'),
-        ('#F0B27A', 'Light-Medium'),
-        ('#E59866', 'Medium / Olive'),
-        ('#CA6F1E', 'Medium-Dark'),
-        ('#A04000', 'Dark'),
-        ('#6E2C00', 'Deep / Ebony'),
-    ]
-    skin_tone = models.CharField(
-        _('skin tone'),
-        max_length=10, blank=True, default='',
-        help_text=_("Hex color code representing skin tone, e.g. #F5CBA7"),
     )
 
     PALETTE_CHOICES = [
@@ -809,6 +764,14 @@ class Device(models.Model):
         ordering = ['-last_seen']
         verbose_name = _('device')
         verbose_name_plural = _('devices')
+
+    @property
+    def token(self):
+        return self.apns_token
+
+    @token.setter
+    def token(self, value):
+        self.apns_token = value
 
     def __str__(self):
         return f"Device {self.platform} for {self.user.email} (last seen {self.last_seen})"

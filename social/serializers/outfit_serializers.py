@@ -11,7 +11,6 @@ from users.fields import AbsoluteImageField
 from users.utils import build_absolute_media_url
 from social.models import TodayOutfit, OutfitImage, OutfitLike
 from closet.models import ClosetItem
-from closet.serializers import ClosetItemSerializer
 
 logger = logging.getLogger(__name__)
 User = get_user_model()

@@ -1,6 +1,10 @@
-from rest_framework import serializers
+import logging
 from urllib.parse import urlparse, parse_qs, unquote
-from .models import AffiliateProduct, ProductClick, Brand, Event, Conversion
+from rest_framework import serializers
+
+from affiliate.models import AffiliateProduct, Brand
+
+logger = logging.getLogger(__name__)
 
 
 def fix_image_url(raw_url: str) -> str:
@@ -11,18 +15,10 @@ def fix_image_url(raw_url: str) -> str:
 
     The `url=ssl%3A` part decodes to `url=ssl:` which is not a valid URL.
     The real image is at `https://<everything after ssl%3A or ssl:>`.
-
-    This function:
-    1. Detects productserve proxy URLs
-    2. Extracts and fixes the inner image URL -> https://...
-    3. Returns it directly so the app can load it without hitting the proxy
-
-    For all other URLs it returns them unchanged.
     """
     if not raw_url:
         return raw_url
 
-    # Only process productserve proxy URLs
     if 'productserve.com' not in raw_url:
         return raw_url
 
@@ -34,22 +30,18 @@ def fix_image_url(raw_url: str) -> str:
         if not inner:
             return raw_url
 
-        # Decode percent-encoding: ssl%3Acdn.example.com -> ssl:cdn.example.com
         inner_decoded = unquote(inner)
 
-        # Replace the non-standard `ssl:` prefix with `https://`
         if inner_decoded.startswith('ssl://'):
             inner_decoded = 'https://' + inner_decoded[6:]
         elif inner_decoded.startswith('ssl:'):
             inner_decoded = 'https://' + inner_decoded[4:]
 
-        # Make sure it starts with https
         if inner_decoded.startswith('https://') or inner_decoded.startswith('http://'):
             return inner_decoded
 
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Failed to fix image url: {e}")
+        logger.warning(f"Failed to fix image url: {e}")
 
     return raw_url
 
@@ -135,8 +127,6 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
     """
     Full serializer for the product detail view.
     Includes description and the affiliate tracking link.
-    Notice: Outbound purchase clicks should go via POST /api/affiliate/products/<id>/click/
-    to mint a unique click reference UUID for conversion attribution.
     """
     discount_percent = serializers.ReadOnlyField()
     affiliate_url    = serializers.SerializerMethodField()
@@ -168,16 +158,16 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
             'image_url',
             'cdn_image_url',
             'image_hash',
-            'images',                # All available product images (gallery/carousel)
-            'affiliate_url',         # Deep link to product (attribution routed via /click/)
-            'merchant_deep_link',    # direct brand URL (no tracking, fallback)
+            'images',
+            'affiliate_url',
+            'merchant_deep_link',
             'advertiser_name',
             'source',
             'in_stock',
             'sizes',
             'is_loved',
             'favorites_count',
-            'clicks_count',          # Total users who clicked 'Buy' on this product
+            'clicks_count',
             'is_active',
             'created_at',
             'updated_at',
@@ -202,7 +192,7 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
         return res
 
     def get_affiliate_url(self, obj):
-        from .views.product_views import build_affiliate_url
+        from affiliate.services.catalog_services import build_affiliate_url
         return build_affiliate_url(obj)
 
     def get_is_loved(self, obj):
@@ -220,60 +210,3 @@ class AffiliateProductDetailSerializer(serializers.ModelSerializer):
         if hasattr(obj, '_clicks_count'):
             return obj._clicks_count
         return obj.clicks.count()
-
-
-class EventItemSerializer(serializers.Serializer):
-    """
-    Serializer for individual behavioral events in batch submission.
-    """
-    event_type = serializers.ChoiceField(choices=Event.TYPE_CHOICES)
-    product_id = serializers.IntegerField()
-    source = serializers.CharField(max_length=50, required=False, default='for_you')
-    feed_page = serializers.IntegerField(required=False, allow_null=True)
-    dwell_ms = serializers.IntegerField(required=False, allow_null=True)
-    client_ts = serializers.DateTimeField(required=False, allow_null=True)
-
-
-class EventBatchSerializer(serializers.Serializer):
-    """
-    Serializer for batch event ingestion (up to 200 events).
-    """
-    events = serializers.ListField(
-        child=EventItemSerializer(),
-        max_length=200,
-        allow_empty=False,
-    )
-
-
-class ConversionSerializer(serializers.ModelSerializer):
-    """
-    Serializer for Conversion & Transaction Attribution records (Audit CF-30).
-    """
-    product_name = serializers.CharField(source='product.name', read_only=True)
-    brand_name = serializers.CharField(source='brand.name', read_only=True)
-
-    class Meta:
-        model = Conversion
-        fields = [
-            'id',
-            'conversion_id',
-            'source',
-            'click_ref',
-            'user',
-            'product',
-            'product_name',
-            'brand',
-            'brand_name',
-            'advertiser_id',
-            'order_reference',
-            'status',
-            'sale_amount',
-            'commission_amount',
-            'currency',
-            'transaction_date',
-            'validation_date',
-            'reward_claimed',
-            'created_at',
-            'updated_at',
-        ]
-        read_only_fields = fields

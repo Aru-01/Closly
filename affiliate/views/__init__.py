@@ -1,20 +1,34 @@
 """
-Affiliate views package. Re-exports all views to maintain 100% backward compatibility.
+Affiliate views package.
+Re-exports all modular views across discovery, catalog, sprint, telemetry,
+favorites, and webhooks to maintain 100% backward compatibility.
 """
 
-from .feed_views import (
-    NewsfeedPagination,
+from .discovery_views import (
     ForYouPagination,
-    AffiliateProductNewsfeedView,
     AffiliateProductForYouView,
 )
 
-from .product_views import (
+from .catalog_views import (
+    NewsfeedPagination,
+    AffiliateProductNewsfeedView,
     AffiliateProductDetailView,
-    ProductClickView,
     AffiliateBrandsListView,
     AffiliateCategoriesListView,
+)
+
+from .product_views import (
+    ProductClickView,
     build_affiliate_url,
+)
+
+from .sprint_views import (
+    StyleSprintView,
+    StyleSprintSwipeView,
+)
+
+from .telemetry_views import (
+    EventBatchView,
 )
 
 from .favorite_views import (
@@ -22,17 +36,8 @@ from .favorite_views import (
     SavedProductsListView,
 )
 
-from .event_views import (
-    EventBatchView,
-)
-
 from .webhook_views import (
     AwinWebhookView,
-)
-
-from .sprint_views import (
-    StyleSprintView,
-    StyleSprintSwipeView,
 )
 
 __all__ = [

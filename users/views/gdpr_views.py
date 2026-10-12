@@ -47,7 +47,7 @@ class ProfileDataDeletionAPIView(APIView):
             deletion_request, created = ProfileDataDeletionRequest.objects.get_or_create(user=user, defaults={'email': email})
             
             backend_base = getattr(settings, 'BACKEND_URL', '').rstrip('/')
-            path = reverse('users:verify_profile_data_deletion', kwargs={'token': str(deletion_request.verification_token)})
+            path = reverse('users:verify-profile-data-deletion', kwargs={'token': str(deletion_request.verification_token)})
             verification_link = f"{backend_base}{path}" if backend_base else request.build_absolute_uri(path)
             
             try:
@@ -76,12 +76,20 @@ class VerifyProfileDataDeletionView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
-    def get(self, request, token):
+    def get(self, request, token=None):
         """Safe GET handler: Validates token and renders confirmation UI without mutating state (P-01)"""
+        token = token or request.query_params.get('token') or (request.data.get('token') if hasattr(request, 'data') and isinstance(request.data, dict) else None)
+        if not token:
+            return standard_response(
+                success=False,
+                message="Verification token is required.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="MISSING_TOKEN"
+            )
         try:
             deletion_request = ProfileDataDeletionRequest.objects.get(verification_token=token, status='pending')
             return render(request, 'users/confirm_profile_data_deletion.html', {'token': token, 'email': deletion_request.email})
-        except ProfileDataDeletionRequest.DoesNotExist:
+        except (ProfileDataDeletionRequest.DoesNotExist, Exception):
             return standard_response(
                 success=False,
                 message="Invalid or expired verification link.",
@@ -89,8 +97,16 @@ class VerifyProfileDataDeletionView(APIView):
                 code="INVALID_TOKEN"
             )
 
-    def post(self, request, token):
+    def post(self, request, token=None):
         """Mutating POST handler: Executes profile data erasure only on verified POST submission (P-01)"""
+        token = token or (request.data.get('token') if hasattr(request, 'data') and isinstance(request.data, dict) else None) or request.query_params.get('token')
+        if not token:
+            return standard_response(
+                success=False,
+                message="Verification token is required.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="MISSING_TOKEN"
+            )
         try:
             deletion_request = ProfileDataDeletionRequest.objects.get(verification_token=token, status='pending')
             if deletion_request.user:
@@ -111,8 +127,17 @@ class VerifyProfileDataDeletionView(APIView):
             
             deletion_request.status = 'completed'
             deletion_request.save()
+
+            accept_header = request.headers.get('Accept', '')
+            if 'application/json' in accept_header or request.query_params.get('format') == 'json' or getattr(request, 'content_type', '') == 'application/json':
+                return standard_response(
+                    success=True,
+                    message="Profile data wiped successfully.",
+                    status_code=status.HTTP_200_OK,
+                    data={"email": deletion_request.email, "status": "completed"}
+                )
             return render(request, 'users/delete_profile_data_confirmed.html')
-        except ProfileDataDeletionRequest.DoesNotExist:
+        except (ProfileDataDeletionRequest.DoesNotExist, Exception):
             return standard_response(
                 success=False,
                 message="Invalid or expired verification link.",
@@ -168,7 +193,7 @@ class AccountDeletionAPIView(APIView):
 
             # Create a verification link strictly from settings.BACKEND_URL (U-03)
             backend_base = getattr(settings, 'BACKEND_URL', '').rstrip('/')
-            path = reverse('users:verify_account_deletion', kwargs={'token': str(deletion_request.verification_token)})
+            path = reverse('users:verify-account-deletion', kwargs={'token': str(deletion_request.verification_token)})
             verification_link = f"{backend_base}{path}" if backend_base else request.build_absolute_uri(path)
 
             # Send email to the user asynchronously
@@ -199,8 +224,16 @@ class VerifyAccountDeletionView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
-    def get(self, request, token):
+    def get(self, request, token=None):
         """Safe GET handler: Renders confirmation UI without executing deletion (U-03)"""
+        token = token or request.query_params.get('token') or (request.data.get('token') if hasattr(request, 'data') and isinstance(request.data, dict) else None)
+        if not token:
+            return standard_response(
+                success=False,
+                message="Verification token is required.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="MISSING_TOKEN"
+            )
         try:
             deletion_request = AccountDeletionRequest.objects.get(verification_token=token)
             if deletion_request.status != 'pending' or not deletion_request.is_valid(24):
@@ -211,7 +244,7 @@ class VerifyAccountDeletionView(APIView):
                     code="TOKEN_EXPIRED"
                 )
             return render(request, 'users/confirm_deletion.html', {'token': token, 'email': deletion_request.email})
-        except AccountDeletionRequest.DoesNotExist:
+        except (AccountDeletionRequest.DoesNotExist, Exception):
             return standard_response(
                 success=False,
                 message="Invalid or expired verification link.",
@@ -219,8 +252,16 @@ class VerifyAccountDeletionView(APIView):
                 code="INVALID_TOKEN"
             )
 
-    def post(self, request, token):
+    def post(self, request, token=None):
         """Mutating POST handler: Enqueues resumable DeletionJob upon confirmation (U-03, U-04, U-27)"""
+        token = token or (request.data.get('token') if hasattr(request, 'data') and isinstance(request.data, dict) else None) or request.query_params.get('token')
+        if not token:
+            return standard_response(
+                success=False,
+                message="Verification token is required.",
+                status_code=status.HTTP_400_BAD_REQUEST,
+                code="MISSING_TOKEN"
+            )
         try:
             deletion_request = AccountDeletionRequest.objects.get(verification_token=token)
             if deletion_request.status != 'pending' or not deletion_request.is_valid(24):
@@ -260,8 +301,17 @@ class VerifyAccountDeletionView(APIView):
             
             deletion_request.status = 'completed'
             deletion_request.save()
+
+            accept_header = request.headers.get('Accept', '')
+            if 'application/json' in accept_header or request.query_params.get('format') == 'json' or getattr(request, 'content_type', '') == 'application/json':
+                return standard_response(
+                    success=True,
+                    message="Account deletion verified and scheduled for permanent erasure.",
+                    status_code=status.HTTP_200_OK,
+                    data={"email": deletion_request.email, "status": "completed"}
+                )
             return render(request, 'users/deletion_confirmed.html')
-        except AccountDeletionRequest.DoesNotExist:
+        except (AccountDeletionRequest.DoesNotExist, Exception):
             return standard_response(
                 success=False,
                 message="Invalid or expired verification link.",
@@ -285,6 +335,10 @@ class AccountDeleteView(APIView):
     authentication_classes = [JWTAuthentication]
     serializer_class = AccountDeleteSerializer
     
+    def post(self, request):
+        """Allow POST for clients that do not send bodies on DELETE requests"""
+        return self.delete(request)
+
     def delete(self, request):
         """Queue account deletion and trigger resumable erasure cascade (U-04, U-27)"""
         serializer = self.serializer_class(data=request.data)
@@ -367,108 +421,113 @@ class AccountDeleteView(APIView):
 )
 class GdprDataExportView(APIView):
     """
-    GDPR Art. 20 Right to Data Portability endpoint (U-05).
+    GDPR Art. 20 Right to Data Portability endpoint (U-05 / Article 20).
     GET /v1/me/export
+    Returns HTTP 202 Accepted immediately and triggers a Celery background task
+    to compile an archive of the user's data and email a secure download link.
     """
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
+    @extend_schema(
+        tags=["Account Privacy & GDPR"],
+        summary="Request Personal Data Export Archive (GDPR Art. 20)",
+        description=(
+            "Asynchronously gathers user profile, wardrobe, outfits, and rewards data, "
+            "compresses into a secure ZIP archive, and emails a download link."
+        ),
+        responses={
+            202: OpenApiResponse(description="Data export compilation queued successfully"),
+        }
+    )
     def get(self, request):
         user = request.user
         from django.utils import timezone
-        from users.models import GdprAction, Consent
-        from rewards.models import RewardPointTransaction, UserRewardProfile
-        from closet.models import ClosetItem
+        from users.models import GdprAction
+        from users.tasks import export_user_data_task
 
         # Log GDPR export audit event
         GdprAction.objects.create(
             user_id=user.id,
             action_type='data_export',
             performed_by='user',
-            details={'exported_at': timezone.now().isoformat()}
+            details={'requested_at': timezone.now().isoformat()}
         )
 
-        user_data = {
-            'id': str(user.id),
-            'name': user.name,
-            'email': user.email,
-            'username': user.username,
-            'date_of_birth': str(user.date_of_birth) if user.date_of_birth else None,
-            'gender': user.gender,
-            'country': user.country,
-            'city': user.city,
-            'bio': user.bio,
-            'preferred_language': user.preferred_language,
+        # Check if requested asynchronously (or via the /v1/me/export endpoint)
+        is_async = request.path.rstrip('/').endswith('me/export') or request.query_params.get('async') in ('true', '1')
+
+        if is_async:
+            # Enqueue background Celery task
+            export_user_data_task.delay(str(user.id))
+
+            return standard_response(
+                success=True,
+                message="Your personal data export request has been accepted. We are compiling your complete archive and will email you a secure download link shortly.",
+                data={
+                    "status": "processing",
+                    "email": user.email,
+                    "regulation": "EU GDPR Article 20 (Right to Data Portability)",
+                },
+                code="EXPORT_ACCEPTED",
+                status_code=status.HTTP_202_ACCEPTED
+            )
+        else:
+            from users.services.gdpr_services import compile_user_data_export
+            export_payload = compile_user_data_export(user)
+            return standard_response(
+                success=True,
+                message="GDPR personal data export generated successfully.",
+                data=export_payload,
+                code="EXPORT_SUCCESS",
+                status_code=status.HTTP_200_OK
+            )
+
+    @extend_schema(
+        tags=["Account Privacy & GDPR"],
+        summary="Initiate Personal Data Export Archive (GDPR Art. 20)",
+        description=(
+            "Asynchronously gathers user profile, wardrobe, outfits, and rewards data, "
+            "compresses into a secure ZIP archive, and emails a download link."
+        ),
+        responses={
+            202: OpenApiResponse(description="Data export compilation queued successfully"),
         }
+    )
+    def post(self, request):
+        """Action handler: Initiates asynchronous data export pipeline (U-05 / Article 20)."""
+        user = request.user
+        from django.utils import timezone
+        from users.models import GdprAction
+        from users.tasks import export_user_data_task
 
-        pref_data = {}
-        if hasattr(user, 'preferences'):
-            prefs = user.preferences
-            pref_data = {
-                'style_match': prefs.style_match,
-                'what_do_you_dress_for': prefs.what_do_you_dress_for,
-                'body_size': prefs.body_size,
-                'shoe_size': prefs.shoe_size,
-                'clothing_sizes': getattr(prefs, 'clothing_sizes', {}),
-                'price_band': getattr(prefs, 'price_band', None),
-                'gender_prefs': getattr(prefs, 'gender_prefs', []),
-                'preferred_brands': prefs.preferred_brands,
-                'blocked_brands': getattr(prefs, 'blocked_brands', []),
-                'onboarding_completed': prefs.onboarding_completed,
-            }
+        # Log GDPR export audit event
+        GdprAction.objects.create(
+            user_id=user.id,
+            action_type='data_export',
+            performed_by='user',
+            details={'requested_at': timezone.now().isoformat()}
+        )
 
-        items = []
-        for item in ClosetItem.objects.filter(user=user):
-            items.append({
-                'id': item.id,
-                'name': getattr(item, 'name', ''),
-                'category': str(item.category) if getattr(item, 'category', None) else '',
-                'brand': getattr(item, 'brand', ''),
-                'color': getattr(item, 'color', ''),
-                'created_at': item.created_at.isoformat() if hasattr(item, 'created_at') and item.created_at else None,
-            })
-
-        reward_profile = UserRewardProfile.objects.filter(user=user).first()
-        rewards_data = {
-            'available_points': reward_profile.available_points if reward_profile else 0,
-            'lifetime_points': reward_profile.lifetime_points if reward_profile else 0,
-            'current_tier': reward_profile.current_tier if reward_profile else 'Bronze',
-            'transactions': [
-                {
-                    'action_type': tx.action_type,
-                    'points': tx.points,
-                    'status': tx.status,
-                    'description': tx.description,
-                    'created_at': tx.created_at.isoformat(),
-                }
-                for tx in RewardPointTransaction.objects.filter(user=user).order_by('-created_at')[:100]
-            ]
-        }
-
-        consents = [
-            {
-                'kind': c.kind,
-                'granted': c.granted,
-                'occurred_at': c.occurred_at.isoformat(),
-            }
-            for c in Consent.objects.filter(user=user)
-        ]
-
-        export_payload = {
-            'user': user_data,
-            'preferences': pref_data,
-            'closet_items': items,
-            'rewards': rewards_data,
-            'consents': consents,
-        }
+        # Enqueue background Celery task
+        export_user_data_task.delay(str(user.id))
 
         return standard_response(
             success=True,
-            message="GDPR personal data export generated successfully.",
-            data=export_payload,
-            code="EXPORT_SUCCESS",
-            status_code=status.HTTP_200_OK
+            message="Your personal data export request has been accepted. We are compiling your complete archive and will email you a secure download link shortly.",
+            data={
+                "status": "processing",
+                "email": user.email,
+                "regulation": "EU GDPR Article 20 (Right to Data Portability)",
+            },
+            code="EXPORT_ACCEPTED",
+            status_code=status.HTTP_202_ACCEPTED
         )
+
+
+# Backward-compatibility alias
+UserDataExportView = GdprDataExportView
+
 
 
 

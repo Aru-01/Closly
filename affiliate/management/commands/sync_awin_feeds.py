@@ -1,9 +1,4 @@
-import csv
-import gzip
-import decimal
-import io
-import random
-import requests
+import csv, gzip, decimal, io, random, requests
 from django.core.management.base import BaseCommand, CommandError
 from django.conf import settings
 from django.utils import timezone
@@ -20,52 +15,97 @@ from affiliate.ingest import (
 
 
 class Command(BaseCommand):
-    help = 'Sync product feeds from Awin affiliate network with zero-delta safety, content hash, and EUR enforcement'
+    help = "Sync product feeds from Awin affiliate network with zero-delta safety, content hash, and EUR enforcement"
 
     def add_arguments(self, parser):
         parser.add_argument(
-            '--mock',
-            action='store_true',
-            help='Explicitly generate mock fashion products (only for local test/dev)',
+            "--mock",
+            action="store_true",
+            help="Explicitly generate mock fashion products (only for local test/dev)",
         )
         parser.add_argument(
-            '--local-csv',
+            "--local-csv",
             type=str,
-            help='Path to a local (optionally gzipped) CSV file instead of fetching from URL',
+            help="Path to a local (optionally gzipped) CSV file instead of fetching from URL",
         )
         parser.add_argument(
-            '--limit',
+            "--limit",
             type=int,
             default=None,
-            help='Limit number of products to import (useful for testing)',
+            help="Limit number of products to import (useful for testing)",
         )
         parser.add_argument(
-            '--purge-stale',
-            action='store_true',
-            help='Admin action: purge products that have been inactive for >30 days',
+            "--mid",
+            type=str,
+            default=None,
+            help="Sync a specific Awin merchant ID only",
+        )
+        parser.add_argument(
+            "--purge-stale",
+            action="store_true",
+            help="Admin action: purge products that have been inactive for >30 days",
         )
 
     def handle(self, *args, **options):
-        if options.get('purge_stale'):
+        if options.get("purge_stale"):
             self._purge_stale_inactive_products()
             return
 
-        self.stdout.write(self.style.WARNING('Starting Awin affiliate products sync...'))
+        self.stdout.write(
+            self.style.WARNING("Starting Awin affiliate products sync...")
+        )
 
-        if options['mock']:
+        if options["mock"]:
             self.generate_mock_data()
             return
 
-        csv_path = options.get('local_csv')
-        limit = options.get('limit')
-        feed_url = getattr(settings, 'AWIN_FEED_URL', None)
+        csv_path = options.get("local_csv")
+        limit = options.get("limit")
+        single_mid = options.get("mid")
 
-        if not csv_path and not feed_url:
-            msg = 'AWIN_FEED_URL is not set in environment settings. Ingestion halted.'
+        if csv_path:
+            self.stdout.write(f"Reading from local file: {csv_path}")
+            self._sync_from_local(csv_path, limit)
+            return
+
+        # ------------------------------------------------------------------ #
+        # Step 1: Dynamic Brand Registry Lookup (100% Dynamic, Zero Hardcoding)
+        # ------------------------------------------------------------------ #
+        brands_qs = Brand.objects.filter(
+            kind=Brand.KIND_AWIN,
+            status=Brand.STATUS_LIVE,
+        ).exclude(external_id="")
+
+        if single_mid:
+            brands_qs = brands_qs.filter(external_id=str(single_mid))
+
+        active_brands = list(brands_qs)
+        if not active_brands:
+            self.stdout.write(
+                self.style.WARNING(
+                    "No live Awin brands found in Brand registry to sync. "
+                    "Run `python manage.py sync_approved_brands --network=awin` first."
+                )
+            )
+            return
+
+        mids = [b.external_id for b in active_brands if b.external_id]
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Found {len(mids)} live Awin brand(s) in registry: {', '.join(b.name for b in active_brands[:5])}"
+                + (f" and {len(mids) - 5} more..." if len(mids) > 5 else "")
+            )
+        )
+
+        # ------------------------------------------------------------------ #
+        # Step 2: Validate API Credentials & Build Dynamic Feed URL
+        # ------------------------------------------------------------------ #
+        data_key = getattr(settings, "AWIN_DATA_KEY", None)
+        if not data_key:
+            msg = "AWIN_DATA_KEY is not configured in settings. Ingestion halted."
             self.stdout.write(self.style.ERROR(msg))
-            # Production safety: NEVER silently insert mock catalogue data without --mock
             CatalogSyncRun.objects.create(
-                feed_id='awin_feed',
+                feed_id="awin_feed",
                 source=AffiliateProduct.SOURCE_AWIN,
                 status=CatalogSyncRun.STATUS_FAILED,
                 notes=msg,
@@ -73,62 +113,75 @@ class Command(BaseCommand):
             )
             raise CommandError(msg)
 
-        if csv_path:
-            self.stdout.write(f'Reading from local file: {csv_path}')
-            self._sync_from_local(csv_path, limit)
-        else:
-            self.stdout.write('Streaming Awin feed (gzip CSV)...')
-            self._sync_from_url(feed_url, limit)
+        mids_str = ",".join(mids)
+        columns_str = (
+            "aw_deep_link,product_name,aw_product_id,merchant_product_id,"
+            "merchant_image_url,description,merchant_category,search_price,"
+            "merchant_name,merchant_id,category_name,aw_image_url,currency,"
+            "large_image,alternate_image,alternate_image_two,alternate_image_three,"
+            "alternate_image_four,in_stock,colour,brand_name,rrp_price,merchant_deep_link"
+        )
 
-    def _sync_from_url(self, feed_url, limit):
+        feed_url = (
+            f"https://productdata.awin.com/datafeed/download/apikey/{data_key}/"
+            f"language/any/mid/{mids_str}/columns/{columns_str}/"
+            f"format/csv/delimiter/%2C/compression/gzip/adultcontent/1/"
+        )
+
+        feed_id = f"awin_mid_{single_mid}" if single_mid else "awin_dynamic_all"
+        self.stdout.write(f"Streaming dynamic Awin feed for {len(mids)} merchant(s)...")
+        self._sync_from_url(feed_url, limit, feed_id=feed_id, brands_qs=active_brands)
+
+    def _sync_from_url(self, feed_url, limit, feed_id="awin_feed", brands_qs=None):
         sync_run = CatalogSyncRun.objects.create(
-            feed_id='awin_feed',
+            feed_id=feed_id,
             source=AffiliateProduct.SOURCE_AWIN,
             status=CatalogSyncRun.STATUS_RUNNING,
         )
         try:
-            self.stdout.write('Connecting to feed stream...')
-            # Memory safety: stream gzip stream directly into decompressor without loading full payload in memory
+            self.stdout.write("Connecting to dynamic feed stream...")
             response = requests.get(feed_url, stream=True, timeout=180)
             response.raise_for_status()
 
             response.raw.decode_content = True
             with gzip.GzipFile(fileobj=response.raw) as gz:
-                text_stream = io.TextIOWrapper(gz, encoding='utf-8', errors='replace')
-                self._parse_and_import(text_stream, limit, sync_run)
+                text_stream = io.TextIOWrapper(gz, encoding="utf-8", errors="replace")
+                self._parse_and_import(
+                    text_stream, limit, sync_run, brands_qs=brands_qs
+                )
 
         except Exception as e:
             sync_run.status = CatalogSyncRun.STATUS_FAILED
             sync_run.notes = f"Feed download/processing error: {e}"
             sync_run.finished_at = timezone.now()
-            sync_run.save(update_fields=['status', 'notes', 'finished_at'])
-            self.stdout.write(self.style.ERROR(f'Failed Awin sync: {e}'))
+            sync_run.save(update_fields=["status", "notes", "finished_at"])
+            self.stdout.write(self.style.ERROR(f"Failed Awin sync: {e}"))
             raise
 
     def _sync_from_local(self, csv_path, limit):
         sync_run = CatalogSyncRun.objects.create(
-            feed_id=f'awin_local_{csv_path}',
+            feed_id=f"awin_local_{csv_path}",
             source=AffiliateProduct.SOURCE_AWIN,
             status=CatalogSyncRun.STATUS_RUNNING,
         )
         try:
-            if csv_path.endswith('.gz'):
-                with gzip.open(csv_path, 'rt', encoding='utf-8', errors='replace') as f:
+            if csv_path.endswith(".gz"):
+                with gzip.open(csv_path, "rt", encoding="utf-8", errors="replace") as f:
                     self._parse_and_import(f, limit, sync_run)
             else:
-                with open(csv_path, 'r', encoding='utf-8', errors='replace') as f:
+                with open(csv_path, "r", encoding="utf-8", errors="replace") as f:
                     self._parse_and_import(f, limit, sync_run)
         except Exception as e:
             sync_run.status = CatalogSyncRun.STATUS_FAILED
             sync_run.notes = f"Local file read error: {e}"
             sync_run.finished_at = timezone.now()
-            sync_run.save(update_fields=['status', 'notes', 'finished_at'])
-            self.stdout.write(self.style.ERROR(f'Failed local Awin sync: {e}'))
+            sync_run.save(update_fields=["status", "notes", "finished_at"])
+            self.stdout.write(self.style.ERROR(f"Failed local Awin sync: {e}"))
             raise
 
-    def _parse_and_import(self, file_obj, limit, sync_run):
+    def _parse_and_import(self, file_obj, limit, sync_run, brands_qs=None):
         sync_time = timezone.now()
-        allowed_currencies = getattr(settings, 'MYC_INGEST_CURRENCIES', ['EUR'])
+        allowed_currencies = getattr(settings, "MYC_INGEST_CURRENCIES", ["EUR"])
 
         active_before = AffiliateProduct.objects.filter(
             source=AffiliateProduct.SOURCE_AWIN,
@@ -137,33 +190,38 @@ class Command(BaseCommand):
 
         reader = csv.DictReader(file_obj)
         if not reader.fieldnames:
-            msg = 'CSV has no headers — cannot parse.'
+            msg = "CSV has no headers — cannot parse."
             self.stdout.write(self.style.ERROR(msg))
             sync_run.status = CatalogSyncRun.STATUS_FAILED
             sync_run.notes = msg
             sync_run.finished_at = timezone.now()
-            sync_run.save(update_fields=['status', 'notes', 'finished_at'])
+            sync_run.save(update_fields=["status", "notes", "finished_at"])
             return
 
-        # Warm brand cache
-        brand_cache = {b.name.strip().lower(): b for b in Brand.objects.all()}
+        # Warm brand cache with both names and external MIDs
+        brand_cache = {}
+        for b in Brand.objects.all():
+            brand_cache[b.name.strip().lower()] = b
+            if b.external_id:
+                brand_cache[b.external_id.strip()] = b
 
         COL = {
-            'aw_product_id':      'aw_product_id',
-            'name':               'product_name',
-            'brand':              'brand_name',
-            'description':        'description',
-            'price':              'search_price',
-            'currency':           'currency',
-            'image_url':          'aw_image_url',
-            'aw_deep_link':       'aw_deep_link',
-            'category':           'category_name',
-            'advertiser':         'merchant_name',
-            'in_stock':           'in_stock',
-            'colour':             'colour',
-            'large_image':        'large_image',
-            'rrp_price':          'rrp_price',
-            'merchant_deep_link': 'merchant_deep_link',
+            "aw_product_id": "aw_product_id",
+            "name": "product_name",
+            "brand": "brand_name",
+            "description": "description",
+            "price": "search_price",
+            "currency": "currency",
+            "image_url": "aw_image_url",
+            "aw_deep_link": "aw_deep_link",
+            "category": "category_name",
+            "advertiser": "merchant_name",
+            "merchant_id": "merchant_id",
+            "in_stock": "in_stock",
+            "colour": "colour",
+            "large_image": "large_image",
+            "rrp_price": "rrp_price",
+            "merchant_deep_link": "merchant_deep_link",
         }
 
         success_count = 0
@@ -181,53 +239,79 @@ class Command(BaseCommand):
                 break
 
             try:
-                aw_product_id = row.get(COL['aw_product_id'], '').strip()
-                name          = row.get(COL['name'], '').strip()
-                aw_deep_link  = row.get(COL['aw_deep_link'], '').strip()
+                aw_product_id = (row.get(COL["aw_product_id"]) or "").strip()
+                name = (row.get(COL["name"]) or "").strip()
+                aw_deep_link = (row.get(COL["aw_deep_link"]) or "").strip()
 
                 if not aw_product_id or not name or not aw_deep_link:
                     skip_count += 1
                     continue
 
                 # EUR/DACH Market enforcement: reject non-EUR currency
-                currency = (row.get(COL['currency']) or '').strip().upper()
+                currency = (row.get(COL["currency"]) or "").strip().upper()
                 if not currency or currency not in allowed_currencies:
                     skip_count += 1
                     continue
 
-                brand = (row.get(COL['brand'], '') or row.get(COL['advertiser'], 'Unknown')).strip()
-                description = row.get(COL['description'], '').strip()
-                raw_category = row.get(COL['category'], '').strip()
-                advertiser = row.get(COL['advertiser'], '').strip()
-                colour = row.get(COL['colour'], '').strip()
-                merchant_deep_link = row.get(COL['merchant_deep_link'], '').strip()
+                merchant_id = (row.get(COL["merchant_id"]) or "").strip()
+                raw_brand = (
+                    row.get(COL["brand"]) or row.get(COL["advertiser"]) or "Unknown"
+                ).strip()
+                advertiser = (row.get(COL["advertiser"]) or "").strip()
+
+                # Dynamic brand resolution from registry by MID or name
+                brand_obj = (
+                    brand_cache.get(merchant_id)
+                    or brand_cache.get(raw_brand.lower())
+                    or brand_cache.get(advertiser.lower())
+                )
+                brand = brand_obj.name if brand_obj else raw_brand
+                description = (row.get(COL["description"]) or "").strip()
+                raw_category = (row.get(COL["category"]) or "").strip()
+                colour = (row.get(COL["colour"]) or "").strip()
+                merchant_deep_link = (row.get(COL["merchant_deep_link"]) or "").strip()
 
                 image_url = (
-                    row.get(COL['large_image'], '').strip()
-                    or row.get(COL['image_url'], '').strip()
-                    or row.get('merchant_image_url', '').strip()
+                    (row.get(COL["large_image"]) or "").strip()
+                    or (row.get(COL["image_url"]) or "").strip()
+                    or (row.get("merchant_image_url") or "").strip()
                 )
 
                 additional_images = []
-                for extra_col in ('alternate_image', 'alternate_image_two', 'alternate_image_three', 'alternate_image_four', 'more_images'):
-                    val = row.get(extra_col, '').strip()
-                    if val and val.startswith(('http://', 'https://')) and val not in additional_images and val != image_url:
+                for extra_col in (
+                    "alternate_image",
+                    "alternate_image_two",
+                    "alternate_image_three",
+                    "alternate_image_four",
+                    "more_images",
+                ):
+                    val = (row.get(extra_col) or "").strip()
+                    if (
+                        val
+                        and val.startswith(("http://", "https://"))
+                        and val not in additional_images
+                        and val != image_url
+                    ):
                         additional_images.append(val)
 
-                price_str = row.get(COL['price'], '0').strip()
+                price_str = (row.get(COL["price"]) or "0").strip()
                 try:
-                    price = decimal.Decimal(price_str) if price_str else decimal.Decimal('0.00')
+                    price = (
+                        decimal.Decimal(price_str)
+                        if price_str
+                        else decimal.Decimal("0.00")
+                    )
                 except decimal.InvalidOperation:
-                    price = decimal.Decimal('0.00')
+                    price = decimal.Decimal("0.00")
 
-                rrp_str = row.get(COL['rrp_price'], '').strip()
+                rrp_str = row.get(COL["rrp_price"], "").strip()
                 try:
                     rrp_price = decimal.Decimal(rrp_str) if rrp_str else None
                 except decimal.InvalidOperation:
                     rrp_price = None
 
-                in_stock_val = row.get(COL['in_stock'], '1').strip().lower()
-                in_stock = in_stock_val not in ('0', 'false', 'no', 'out of stock', '')
+                in_stock_val = row.get(COL["in_stock"], "1").strip().lower()
+                in_stock = in_stock_val not in ("0", "false", "no", "out of stock", "")
                 is_active = in_stock and price > 0
 
                 # Normalization
@@ -245,47 +329,53 @@ class Command(BaseCommand):
                     currency=currency,
                 )
 
-                batch.append({
-                    'aw_product_id': aw_product_id,
-                    'name': name,
-                    'brand': brand,
-                    'description': description,
-                    'price': price,
-                    'rrp_price': rrp_price,
-                    'currency': currency,
-                    'image_url': image_url,
-                    'additional_image_urls': additional_images,
-                    'aw_deep_link': aw_deep_link,
-                    'merchant_deep_link': merchant_deep_link,
-                    'category': raw_category,
-                    'category_norm': category_norm,
-                    'gender': gender,
-                    'colour': colour,
-                    'color_primary': color_primary,
-                    'advertiser_name': advertiser,
-                    'is_active': is_active,
-                    'in_stock': in_stock,
-                    'content_hash': chash,
-                })
+                batch.append(
+                    {
+                        "aw_product_id": aw_product_id,
+                        "name": name,
+                        "brand": brand,
+                        "description": description,
+                        "price": price,
+                        "rrp_price": rrp_price,
+                        "currency": currency,
+                        "image_url": image_url,
+                        "additional_image_urls": additional_images,
+                        "aw_deep_link": aw_deep_link,
+                        "merchant_deep_link": merchant_deep_link,
+                        "category": raw_category,
+                        "category_norm": category_norm,
+                        "gender": gender,
+                        "colour": colour,
+                        "color_primary": color_primary,
+                        "advertiser_name": advertiser,
+                        "is_active": is_active,
+                        "in_stock": in_stock,
+                        "content_hash": chash,
+                    }
+                )
                 success_count += 1
 
                 if len(batch) >= BATCH_SIZE:
-                    stats = flush_catalog_batch(batch, sync_time, AffiliateProduct.SOURCE_AWIN, brand_cache)
-                    total_new += stats['new']
-                    total_changed += stats['changed']
-                    total_unchanged += stats['unchanged']
+                    stats = flush_catalog_batch(
+                        batch, sync_time, AffiliateProduct.SOURCE_AWIN, brand_cache
+                    )
+                    total_new += stats["new"]
+                    total_changed += stats["changed"]
+                    total_unchanged += stats["unchanged"]
                     batch = []
 
             except Exception as e:
                 error_count += 1
                 if error_count <= 5:
-                    self.stdout.write(self.style.ERROR(f'Row error: {e}'))
+                    self.stdout.write(self.style.ERROR(f"Row error: {e}"))
 
         if batch:
-            stats = flush_catalog_batch(batch, sync_time, AffiliateProduct.SOURCE_AWIN, brand_cache)
-            total_new += stats['new']
-            total_changed += stats['changed']
-            total_unchanged += stats['unchanged']
+            stats = flush_catalog_batch(
+                batch, sync_time, AffiliateProduct.SOURCE_AWIN, brand_cache
+            )
+            total_new += stats["new"]
+            total_changed += stats["changed"]
+            total_unchanged += stats["unchanged"]
 
         sync_run.rows_seen = success_count
         sync_run.rows_new = total_new
@@ -295,11 +385,15 @@ class Command(BaseCommand):
 
         deactivated = 0
         if not limit:
+            extra_filter = None
+            if brands_qs:
+                extra_filter = {"brand_ref__in": brands_qs}
             deactivated = apply_stale_deactivation_guard(
                 sync_run=sync_run,
                 active_before=active_before,
                 source=AffiliateProduct.SOURCE_AWIN,
                 sync_time=sync_time,
+                extra_filter=extra_filter,
             )
 
         sync_run.rows_deactivated = deactivated
@@ -309,57 +403,99 @@ class Command(BaseCommand):
         sync_run.finished_at = timezone.now()
         sync_run.save()
 
-        self.stdout.write(self.style.SUCCESS(
-            f'\nAwin Sync complete!\n'
-            f'  Status             : {sync_run.status}\n'
-            f'  Rows seen          : {success_count}\n'
-            f'  New products       : {total_new}\n'
-            f'  Changed products   : {total_changed}\n'
-            f'  Unchanged products : {total_unchanged}\n'
-            f'  Deactivated        : {deactivated}\n'
-            f'  Skipped (bad/non-EUR): {skip_count}\n'
-            f'  Errors             : {error_count}'
-        ))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"\nAwin Sync complete!\n"
+                f"  Status             : {sync_run.status}\n"
+                f"  Rows seen          : {success_count}\n"
+                f"  New products       : {total_new}\n"
+                f"  Changed products   : {total_changed}\n"
+                f"  Unchanged products : {total_unchanged}\n"
+                f"  Deactivated        : {deactivated}\n"
+                f"  Skipped (bad/non-EUR): {skip_count}\n"
+                f"  Errors             : {error_count}"
+            )
+        )
 
     def _purge_stale_inactive_products(self):
         from datetime import timedelta
+
         cutoff = timezone.now() - timedelta(days=30)
         qs = AffiliateProduct.objects.filter(
-            source=AffiliateProduct.SOURCE_AWIN,
-            is_active=False,
-            updated_at__lt=cutoff
+            source=AffiliateProduct.SOURCE_AWIN, is_active=False, updated_at__lt=cutoff
         )
         count, _ = qs.delete()
-        self.stdout.write(self.style.NOTICE(f'Purged {count} inactive Awin products older than 30 days.'))
+        self.stdout.write(
+            self.style.NOTICE(
+                f"Purged {count} inactive Awin products older than 30 days."
+            )
+        )
         return count
 
     def generate_mock_data(self):
-        self.stdout.write('Generating mock fashion affiliate products (explicit --mock)...')
+        self.stdout.write(
+            "Generating mock fashion affiliate products (explicit --mock)..."
+        )
 
-        brands = ['Zara', 'H&M', 'Nike', 'Adidas', 'Mango', 'ASOS', "Levi's", 'Puma', 'New Look', 'River Island']
+        brands = [
+            "Zara",
+            "H&M",
+            "Nike",
+            "Adidas",
+            "Mango",
+            "ASOS",
+            "Levi's",
+            "Puma",
+            "New Look",
+            "River Island",
+        ]
         categories = [
-            'Clothing & Accessories > Dresses',
-            'Clothing & Accessories > Tops',
-            'Clothing & Accessories > Jackets & Coats',
-            'Clothing & Accessories > Trousers & Jeans',
-            'Clothing & Accessories > Shoes & Boots',
-            'Clothing & Accessories > Bags & Accessories',
+            "Clothing & Accessories > Dresses",
+            "Clothing & Accessories > Tops",
+            "Clothing & Accessories > Jackets & Coats",
+            "Clothing & Accessories > Trousers & Jeans",
+            "Clothing & Accessories > Shoes & Boots",
+            "Clothing & Accessories > Bags & Accessories",
         ]
         items = {
-            'Clothing & Accessories > Dresses': ['Floral Midi Dress', 'Evening Wrap Dress', 'Linen Sundress'],
-            'Clothing & Accessories > Tops': ['Ribbed Knit Top', 'Satin Camisole', 'Oversized Graphic Tee'],
-            'Clothing & Accessories > Jackets & Coats': ['Denim Jacket', 'Wool Trench Coat', 'Bomber Jacket'],
-            'Clothing & Accessories > Trousers & Jeans': ['Slim-Fit Jeans', 'Wide Leg Trousers', 'Cargo Pants'],
-            'Clothing & Accessories > Shoes & Boots': ['Leather Chelsea Boots', 'Canvas Sneakers', 'Strappy Heels'],
-            'Clothing & Accessories > Bags & Accessories': ['Leather Crossbody', 'Canvas Tote', 'Mini Backpack'],
+            "Clothing & Accessories > Dresses": [
+                "Floral Midi Dress",
+                "Evening Wrap Dress",
+                "Linen Sundress",
+            ],
+            "Clothing & Accessories > Tops": [
+                "Ribbed Knit Top",
+                "Satin Camisole",
+                "Oversized Graphic Tee",
+            ],
+            "Clothing & Accessories > Jackets & Coats": [
+                "Denim Jacket",
+                "Wool Trench Coat",
+                "Bomber Jacket",
+            ],
+            "Clothing & Accessories > Trousers & Jeans": [
+                "Slim-Fit Jeans",
+                "Wide Leg Trousers",
+                "Cargo Pants",
+            ],
+            "Clothing & Accessories > Shoes & Boots": [
+                "Leather Chelsea Boots",
+                "Canvas Sneakers",
+                "Strappy Heels",
+            ],
+            "Clothing & Accessories > Bags & Accessories": [
+                "Leather Crossbody",
+                "Canvas Tote",
+                "Mini Backpack",
+            ],
         }
         images = {
-            'Clothing & Accessories > Dresses': 'https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=800&fit=crop',
-            'Clothing & Accessories > Tops': 'https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?w=800&fit=crop',
-            'Clothing & Accessories > Jackets & Coats': 'https://images.unsplash.com/photo-1551028719-00167b16eac5?w=800&fit=crop',
-            'Clothing & Accessories > Trousers & Jeans': 'https://images.unsplash.com/photo-1542272604-787c3835535d?w=800&fit=crop',
-            'Clothing & Accessories > Shoes & Boots': 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800&fit=crop',
-            'Clothing & Accessories > Bags & Accessories': 'https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=800&fit=crop',
+            "Clothing & Accessories > Dresses": "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=800&fit=crop",
+            "Clothing & Accessories > Tops": "https://images.unsplash.com/photo-1503342217505-b0a15ec3261c?w=800&fit=crop",
+            "Clothing & Accessories > Jackets & Coats": "https://images.unsplash.com/photo-1551028719-00167b16eac5?w=800&fit=crop",
+            "Clothing & Accessories > Trousers & Jeans": "https://images.unsplash.com/photo-1542272604-787c3835535d?w=800&fit=crop",
+            "Clothing & Accessories > Shoes & Boots": "https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=800&fit=crop",
+            "Clothing & Accessories > Bags & Accessories": "https://images.unsplash.com/photo-1584917865442-de89df76afd3?w=800&fit=crop",
         }
 
         mock_instances = []
@@ -369,45 +505,66 @@ class Command(BaseCommand):
             category = random.choice(categories)
             brand = random.choice(brands)
             item = random.choice(items[category])
-            name = f'{brand} {item}'
-            price = decimal.Decimal(f'{random.uniform(19.99, 249.99):.2f}')
-            rrp   = price + decimal.Decimal(f'{random.uniform(5, 50):.2f}')
-            brand_slug = brand.lower().replace("'", '').replace(' ', '')
+            name = f"{brand} {item}"
+            price = decimal.Decimal(f"{random.uniform(19.99, 249.99):.2f}")
+            rrp = price + decimal.Decimal(f"{random.uniform(5, 50):.2f}")
+            brand_slug = brand.lower().replace("'", "").replace(" ", "")
 
-            mock_instances.append(AffiliateProduct(
-                aw_product_id=f'mock_{i:06d}',
-                source=AffiliateProduct.SOURCE_AWIN,
-                name=name,
-                brand=brand,
-                description=f'Discover the {name}. A perfect blend of style and comfort, ideal for any occasion.',
-                price=price,
-                rrp_price=rrp,
-                currency='EUR',
-                gender=normalize_gender(category, name, brand),
-                category=category,
-                category_norm=normalize_category(category, name),
-                image_url=images[category],
-                aw_deep_link=f'https://www.awin1.com/cread.php?awinmid=99999&awinaffid=2612792&ued=https://www.{brand_slug}.com/product/{i}',
-                merchant_deep_link=f'https://www.{brand_slug}.com/product/{i}',
-                advertiser_name=f'{brand} Official',
-                colour=random.choice(['Black', 'White', 'Navy', 'Beige', 'Red', 'Green']),
-                color_primary=normalize_color('', name),
-                is_active=True,
-                in_stock=True,
-                first_seen_at=sync_time,
-                last_seen_at=sync_time,
-            ))
+            mock_instances.append(
+                AffiliateProduct(
+                    aw_product_id=f"mock_{i:06d}",
+                    source=AffiliateProduct.SOURCE_AWIN,
+                    name=name,
+                    brand=brand,
+                    description=f"Discover the {name}. A perfect blend of style and comfort, ideal for any occasion.",
+                    price=price,
+                    rrp_price=rrp,
+                    currency="EUR",
+                    gender=normalize_gender(category, name, brand),
+                    category=category,
+                    category_norm=normalize_category(category, name),
+                    image_url=images[category],
+                    aw_deep_link=f"https://www.awin1.com/cread.php?awinmid=99999&awinaffid=2612792&ued=https://www.{brand_slug}.com/product/{i}",
+                    merchant_deep_link=f"https://www.{brand_slug}.com/product/{i}",
+                    advertiser_name=f"{brand} Official",
+                    colour=random.choice(
+                        ["Black", "White", "Navy", "Beige", "Red", "Green"]
+                    ),
+                    color_primary=normalize_color("", name),
+                    is_active=True,
+                    in_stock=True,
+                    first_seen_at=sync_time,
+                    last_seen_at=sync_time,
+                )
+            )
 
         AffiliateProduct.objects.bulk_create(
             mock_instances,
             update_conflicts=True,
-            unique_fields=['aw_product_id'],
+            unique_fields=["aw_product_id"],
             update_fields=[
-                'source', 'name', 'brand', 'description', 'price', 'rrp_price',
-                'currency', 'image_url', 'aw_deep_link', 'merchant_deep_link',
-                'category', 'category_norm', 'gender', 'advertiser_name', 'colour',
-                'color_primary', 'is_active', 'in_stock', 'updated_at',
+                "source",
+                "name",
+                "brand",
+                "description",
+                "price",
+                "rrp_price",
+                "currency",
+                "image_url",
+                "aw_deep_link",
+                "merchant_deep_link",
+                "category",
+                "category_norm",
+                "gender",
+                "advertiser_name",
+                "colour",
+                "color_primary",
+                "is_active",
+                "in_stock",
+                "updated_at",
             ],
         )
         count = len(mock_instances)
-        self.stdout.write(self.style.SUCCESS(f'Generated {count} mock products successfully.'))
+        self.stdout.write(
+            self.style.SUCCESS(f"Generated {count} mock products successfully.")
+        )

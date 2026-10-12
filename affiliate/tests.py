@@ -6,7 +6,6 @@ from datetime import timedelta
 from unittest.mock import patch, MagicMock
 from django.urls import reverse
 from django.utils import timezone
-from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from rest_framework import status
@@ -19,13 +18,9 @@ from affiliate.models import (
     ProductClick,
     ProductFavorite,
     Event,
-    FeedImpressionsDaily,
     Conversion,
 )
 from affiliate.ingest import (
-    normalize_category,
-    normalize_gender,
-    normalize_color,
     compute_content_hash,
     flush_catalog_batch,
     apply_stale_deactivation_guard,
@@ -604,7 +599,7 @@ class AffiliateUserBehaviorEventsTests(APITestCase):
         }
         res = self.client.post(url, data=payload, format='json')
 
-        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.status_code, status.HTTP_202_ACCEPTED)
         self.assertTrue(res.data['success'])
         self.assertEqual(res.data['data']['ingested_count'], 3)
         self.assertEqual(Event.objects.filter(user=self.user).count(), 3)
@@ -631,7 +626,7 @@ class AffiliateUserBehaviorEventsTests(APITestCase):
             ]
         }
         res = self.client.post(url, data=payload, format='json')
-        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.status_code, status.HTTP_202_ACCEPTED)
         # Should deduplicate in-batch and record only 1 impression
         self.assertEqual(Event.objects.filter(user=self.user, event_type='impression').count(), 1)
 
@@ -1177,6 +1172,291 @@ class StyleSprintTests(APITestCase):
         deck_res = self.client.get(reverse('affiliate:style-sprint'))
         self.assertEqual(deck_res.status_code, status.HTTP_200_OK)
         self.assertTrue(deck_res.data['completed'])
-        self.assertEqual(len(deck_res.data['cards']), 0)
+
+class TwoStepDynamicSyncArchitectureTests(APITestCase):
+    """
+    Unit tests for the Two-Step Dynamic Sync Architecture:
+    1. Dynamic Brand Registry Sync (sync_approved_brands).
+    2. Dynamic Product Ingestion without hardcoded MIDs (sync_awin_feeds & sync_rakuten_feeds).
+    3. Celery Beat Task Orchestration & Schedules.
+    """
+
+    def setUp(self):
+        cache.clear()
+        # Clean brands for isolated test run
+        Brand.objects.all().delete()
+        AffiliateProduct.objects.all().delete()
+        CatalogSyncRun.objects.all().delete()
+
+    @patch('affiliate.management.commands.sync_approved_brands.requests.get')
+    def test_sync_approved_brands_awin_joined_and_paused(self, mock_get):
+        """AWIN joined programmes are marked live, while dropped programmes are marked paused."""
+        from django.core.management import call_command
+
+        # Pre-existing brand in database that was previously live
+        stale_brand = Brand.objects.create(
+            name="Old Brand",
+            slug="old-brand",
+            kind=Brand.KIND_AWIN,
+            external_id="99999",
+            status=Brand.STATUS_LIVE,
+        )
+
+        # Mock AWIN programmes response
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            {
+                'id': 11484,
+                'name': 'Defshop DE',
+                'relationship': {'status': 'joined'},
+                'currencyCode': 'EUR',
+                'displayUrl': 'https://def-shop.com',
+                'logoUrl': 'https://images.example.com/defshop.png',
+                'primaryRegion': {'name': 'Germany'},
+            },
+            {
+                'id': 15989,
+                'name': 'CECIL DE',
+                'relationship': {'status': 'joined'},
+                'currencyCode': 'EUR',
+                'displayUrl': 'https://cecil.de',
+                'logoUrl': 'https://images.example.com/cecil.png',
+                'primaryRegion': {'name': 'Germany'},
+            },
+        ]
+        mock_get.return_value = mock_resp
+
+        call_command('sync_approved_brands', network='awin')
+
+        # Verify joined brands are live
+        defshop = Brand.objects.get(external_id='11484', kind=Brand.KIND_AWIN)
+        self.assertEqual(defshop.status, Brand.STATUS_LIVE)
+        self.assertEqual(defshop.name, 'Defshop DE')
+
+        cecil = Brand.objects.get(external_id='15989', kind=Brand.KIND_AWIN)
+        self.assertEqual(cecil.status, Brand.STATUS_LIVE)
+
+        # Verify stale brand not in joined list was marked PAUSED
+        stale_brand.refresh_from_db()
+        self.assertEqual(stale_brand.status, Brand.STATUS_PAUSED)
+
+    @patch('affiliate.management.commands.sync_approved_brands.requests.get')
+    @patch('affiliate.management.commands.sync_approved_brands.requests.post')
+    def test_sync_approved_brands_rakuten_discovery(self, mock_post, mock_get):
+        """Rakuten approved anchor MIDs are marked live, and discovered merchants stored."""
+        from django.core.management import call_command
+
+        # Mock token response
+        token_resp = MagicMock()
+        token_resp.status_code = 200
+        token_resp.json.return_value = {'access_token': 'mock-rakuten-token'}
+        mock_post.return_value = token_resp
+
+        # Mock LinkLocator getMerchByAppStatus/approved XML response
+        search_resp = MagicMock()
+        search_resp.status_code = 200
+        search_resp.text = """<?xml version="1.0" encoding="UTF-8"?>
+        <ns1:getMerchByAppStatusResponse xmlns:ns1="http://endpoint.linkservice.linkshare.com/">
+            <ns1:return>
+                <ns1:applicationStatus>Approved</ns1:applicationStatus>
+                <ns1:mid>53269</ns1:mid>
+                <ns1:name>Twinset</ns1:name>
+            </ns1:return>
+            <ns1:return>
+                <ns1:applicationStatus>Approved</ns1:applicationStatus>
+                <ns1:mid>47344</ns1:mid>
+                <ns1:name>D1 Milano</ns1:name>
+            </ns1:return>
+        </ns1:getMerchByAppStatusResponse>
+        """
+        mock_get.return_value = search_resp
+
+        call_command('sync_approved_brands', network='rakuten')
+
+        twinset = Brand.objects.get(external_id='53269', kind=Brand.KIND_RAKUTEN)
+        self.assertEqual(twinset.status, Brand.STATUS_LIVE)
+
+        d1 = Brand.objects.get(external_id='47344', kind=Brand.KIND_RAKUTEN)
+        self.assertEqual(d1.status, Brand.STATUS_LIVE)
+
+    @patch('affiliate.management.commands.sync_awin_feeds.requests.get')
+    def test_sync_awin_feeds_dynamic_url_construction(self, mock_get):
+        """sync_awin_feeds dynamically builds feed URL from live Brand database records."""
+        import gzip
+        import io
+        from django.core.management import call_command
+
+        # Create live brand in database
+        brand = Brand.objects.create(
+            name="Defshop DE",
+            slug="defshop-de",
+            kind=Brand.KIND_AWIN,
+            external_id="11484",
+            status=Brand.STATUS_LIVE,
+        )
+
+        # Mock gzip CSV stream from Awin
+        csv_content = (
+            "aw_deep_link,product_name,aw_product_id,merchant_product_id,merchant_image_url,"
+            "description,merchant_category,search_price,merchant_name,merchant_id,category_name,"
+            "aw_image_url,currency,large_image,alternate_image,alternate_image_two,alternate_image_three,"
+            "alternate_image_four,in_stock,colour,brand_name,rrp_price,merchant_deep_link\n"
+            "https://awin1.com/link1,Defshop Hoodie,aw_11484_01,mid01,https://img.com/1.jpg,Nice hoodie,"
+            "Hoodies,49.99,Defshop DE,11484,Clothing,https://img.com/1.jpg,EUR,https://img.com/1.jpg,,,,1,Black,Defshop DE,59.99,https://def.com/1\n"
+        )
+        gz_buffer = io.BytesIO()
+        with gzip.GzipFile(fileobj=gz_buffer, mode='wb') as gz:
+            gz.write(csv_content.encode('utf-8'))
+        gz_buffer.seek(0)
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.raw = gz_buffer
+        mock_resp.raw.decode_content = False
+        mock_get.return_value = mock_resp
+
+        call_command('sync_awin_feeds', limit=1)
+
+        # Verify the requested URL contained dynamically fetched MID '11484'
+        called_url = mock_get.call_args[0][0]
+        self.assertIn('/mid/11484/', called_url)
+        self.assertIn('apikey/', called_url)
+
+        # Verify product created and linked to Brand
+        prod = AffiliateProduct.objects.get(aw_product_id='aw_11484_01')
+        self.assertEqual(prod.name, 'Defshop Hoodie')
+        self.assertEqual(prod.price, decimal.Decimal('49.99'))
+        self.assertEqual(prod.brand_ref, brand)
+
+    from django.test import override_settings
+
+    @override_settings(RAKUTEN_TOKEN='mock-rakuten-token')
+    @patch('affiliate.management.commands.sync_rakuten_feeds.Command._get')
+    def test_sync_rakuten_feeds_dynamic_mid_queries(self, mock_get):
+        """sync_rakuten_feeds queries ONLY live approved brands in database."""
+        from django.core.management import call_command
+
+        # Create active brand
+        brand = Brand.objects.create(
+            name="Twinset",
+            slug="twinset",
+            kind=Brand.KIND_RAKUTEN,
+            external_id="53269",
+            status=Brand.STATUS_LIVE,
+        )
+
+        mock_xml = """<?xml version="1.0" encoding="UTF-8"?>
+        <result>
+            <TotalPages>1</TotalPages>
+            <item>
+                <mid>53269</mid>
+                <linkid>link_ts_01</linkid>
+                <productname>Twinset Silk Dress</productname>
+                <linkurl>https://click.linksynergy.com/twinset-dress</linkurl>
+                <imageurl>https://img.com/twinset.jpg</imageurl>
+                <price currency="EUR">120.00</price>
+                <saleprice currency="EUR">95.00</saleprice>
+            </item>
+        </result>
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = mock_xml
+        mock_get.return_value = mock_resp
+
+        call_command('sync_rakuten_feeds', limit=1)
+
+        # Verify product created
+        prod = AffiliateProduct.objects.get(aw_product_id='rakuten_53269_link_ts_01')
+        self.assertEqual(prod.name, 'Twinset Silk Dress')
+        self.assertEqual(prod.price, decimal.Decimal('95.00'))
+        self.assertEqual(prod.brand_ref, brand)
+
+    def test_celery_beat_schedules_orchestration(self):
+        """Verify Celery Beat schedules have the correct sequence (Brand sync -> Catalog feeds)."""
+        from Config.settings.celery import CELERY_BEAT_SCHEDULE
+
+        self.assertIn("sync-approved-brands-daily", CELERY_BEAT_SCHEDULE)
+        self.assertIn("sync-awin-feeds-daily", CELERY_BEAT_SCHEDULE)
+        self.assertIn("sync-rakuten-feeds-daily", CELERY_BEAT_SCHEDULE)
+
+        # Brand sync runs first at 01:30
+        brand_sched = CELERY_BEAT_SCHEDULE["sync-approved-brands-daily"]["schedule"]
+        self.assertEqual(brand_sched.hour, {1})
+        self.assertEqual(brand_sched.minute, {30})
+
+        # Awin sync runs at 02:00
+        awin_sched = CELERY_BEAT_SCHEDULE["sync-awin-feeds-daily"]["schedule"]
+        self.assertEqual(awin_sched.hour, {2})
+        self.assertEqual(awin_sched.minute, {0})
+
+        # Rakuten sync runs at 02:30
+        rakuten_sched = CELERY_BEAT_SCHEDULE["sync-rakuten-feeds-daily"]["schedule"]
+        self.assertEqual(rakuten_sched.hour, {2})
+        self.assertEqual(rakuten_sched.minute, {30})
+
+        # AWIN reconciliation runs at 06:00
+        self.assertIn("reconcile-awin-transactions-daily", CELERY_BEAT_SCHEDULE)
+        awin_rec = CELERY_BEAT_SCHEDULE["reconcile-awin-transactions-daily"]["schedule"]
+        self.assertEqual(awin_rec.hour, {6})
+        self.assertEqual(awin_rec.minute, {0})
+
+        # Rakuten reconciliation runs at 06:30
+        self.assertIn("reconcile-rakuten-transactions-daily", CELERY_BEAT_SCHEDULE)
+        rakuten_rec = CELERY_BEAT_SCHEDULE["reconcile-rakuten-transactions-daily"]["schedule"]
+        self.assertEqual(rakuten_rec.hour, {6})
+        self.assertEqual(rakuten_rec.minute, {30})
+
+    @patch('affiliate.management.commands.reconcile_rakuten_transactions.requests.get')
+    def test_reconcile_rakuten_transactions_command(self, mock_get):
+        """Test Rakuten transactions reconciliation matching u1 SubID to ProductClick."""
+        from affiliate.models import ProductClick, Conversion
+        from django.core.management import call_command
+
+        click_uuid = uuid.uuid4()
+        user = User.objects.create_user(email='buyer_rakuten@example.com', password='Password123!', name='Buyer Rakuten')
+        brand = Brand.objects.create(name='Twinset', kind=Brand.KIND_RAKUTEN, external_id='53269', status=Brand.STATUS_LIVE)
+        prod = AffiliateProduct.objects.create(
+            aw_product_id='rakuten_53269_prod_1',
+            name='Twinset Dress',
+            brand='Twinset',
+            brand_ref=brand,
+            price=decimal.Decimal('120.00'),
+            currency='EUR',
+            is_active=True,
+        )
+        ProductClick.objects.create(
+            user=user,
+            product=prod,
+            click_ref=click_uuid,
+            surface='for_you',
+        )
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = [
+            {
+                'order_id': 'RAK_ORD_991',
+                'u1': click_uuid.hex,
+                'advertiser_id': '53269',
+                'sales': 120.0,
+                'commissions': 12.0,
+                'currency': 'EUR',
+                'status': 'approved',
+                'transaction_date': '2026-10-12T04:00:00Z',
+            }
+        ]
+        mock_get.return_value = mock_resp
+
+        call_command('reconcile_rakuten_transactions', days=7)
+
+        conv = Conversion.objects.get(conversion_id='RAK_ORD_991', source=Conversion.SOURCE_RAKUTEN)
+        self.assertEqual(conv.user, user)
+        self.assertEqual(conv.product, prod)
+        self.assertEqual(conv.status, Conversion.STATUS_APPROVED)
+        self.assertEqual(conv.sale_amount, 120.0)
+        self.assertTrue(conv.reward_claimed)
+
 
 

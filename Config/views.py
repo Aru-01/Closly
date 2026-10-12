@@ -240,3 +240,31 @@ class PingHeartbeatView(APIView):
             },
             status=200,
         )
+
+
+@extend_schema(
+    tags=["System Gateway & Heartbeat"],
+    summary="Download Postman Collection JSON",
+    description="Serves the full OpenAPI-compliant Postman collection JSON file for client integration and testing.",
+    responses={200: OpenApiResponse(description="Postman collection JSON schema")},
+)
+class PostmanCollectionDownloadView(APIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def get(self, request):
+        import os
+        import json
+        collection_path = os.path.join(settings.BASE_DIR, "postman_collection.json")
+        if not os.path.exists(collection_path):
+            collection_path = os.path.join(settings.BASE_DIR, "MyClosly_API_Postman_Collection.json")
+
+        if os.path.exists(collection_path):
+            with open(collection_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return JsonResponse(data, safe=False)
+
+        return JsonResponse(
+            {"error": "Postman collection file not found."},
+            status=404,
+        )

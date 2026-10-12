@@ -769,7 +769,7 @@ class CustomTokenVerifyView(TokenVerifyView):
     def post(self, request, *args, **kwargs):
         """Verify access token"""
         try:
-            response = super().post(request, *args, **kwargs)
+            super().post(request, *args, **kwargs)
             
             return standard_response(
                 success=True,

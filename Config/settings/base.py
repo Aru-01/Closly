@@ -274,8 +274,8 @@ MYC_BRAND_NAME = config("MYC_BRAND_NAME", default="myclosly")
 MYC_COMPANY_NAME = config("MYC_COMPANY_NAME", default="myclosly Technologies GmbH")
 MYC_SUPPORT_EMAIL = config("MYC_SUPPORT_EMAIL", default="support@myclosly.com")
 MYC_PRIVACY_EMAIL = config("MYC_PRIVACY_EMAIL", default="privacy@myclosly.com")
-MYC_DEEP_LINK_SCHEME = config("MYC_DEEP_LINK_SCHEME", default="myclosly")
-MYC_PUBLIC_BASE_URL = config("MYC_PUBLIC_BASE_URL", default="https://myclosly.com")
+MYC_DEEP_LINK_SCHEME = config("MYC_DEEP_LINK_SCHEME", default="closly")
+MYC_PUBLIC_BASE_URL = config("MYC_PUBLIC_BASE_URL", default=config("BACKEND_URL", default="http://localhost:8000"))
 MYC_DEFAULT_LANGUAGE = config("MYC_DEFAULT_LANGUAGE", default="de")
 MYC_REGISTRATION_MODE = config("MYC_REGISTRATION_MODE", default="open")  # 'open' or 'invite'
 MYC_INVITE_BYPASS_CODES = [
@@ -336,6 +336,8 @@ FIREBASE_CREDENTIALS_PATH = config(
 # Affiliate Configurations (P-29 - vendor IDs strictly from env)
 AWIN_FEED_URL = config("AWIN_FEED_URL", default=None)
 AWIN_PUBLISHER_ID = config("AWIN_PUBLISHER_ID", default=None)
+AWIN_API_TOKEN = config("AWIN_API_TOKEN", default=None)
+AWIN_DATA_KEY = config("AWIN_DATA_KEY", default="654b687d8b11566b0ea4a454877cc6b0")
 
 RAKUTEN_TOKEN = config("RAKUTEN_TOKEN", default=None)
 RAKUTEN_REFRESH_TOKEN = config("RAKUTEN_REFRESH_TOKEN", default=None)

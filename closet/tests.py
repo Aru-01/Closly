@@ -3,7 +3,7 @@ from unittest.mock import patch
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from rest_framework import status
-from .models import ClosetItem
+from .models import ClosetItem, FitCheck
 
 User = get_user_model()
 
@@ -36,7 +36,7 @@ class ClosetApiTests(TestCase):
 
         # Test Wear Today
         item_id = response.data['data']['id']
-        wear_url = f'/api/closet/items/{item_id}/wear-today/'
+        wear_url = f'/api/closet/items/{item_id}/wear/'
         wear_response = self.client.post(wear_url)
         self.assertEqual(wear_response.status_code, status.HTTP_200_OK)
         self.assertEqual(wear_response.data['data']['times_worn'], 1)
@@ -318,7 +318,6 @@ class ClosetApiTests(TestCase):
         from django.test import override_settings
         from django.core.cache import cache
         from django.core.files.uploadedfile import SimpleUploadedFile
-        from unittest.mock import patch
 
         file_obj = io.BytesIO()
         img = Image.new('RGB', (10, 10), color='green')
@@ -361,7 +360,6 @@ class ClosetApiTests(TestCase):
         img.save(file_obj, format='JPEG')
         image_content = file_obj.getvalue()
 
-        import hashlib
         from closet.utils import validate_and_sanitize_image
         sanitized_bytes, photo_sha, _ = validate_and_sanitize_image(SimpleUploadedFile("shirt.jpg", image_content))
         first_item = ClosetItem.objects.create(
@@ -507,7 +505,6 @@ class FitCheckAsyncPipelineTests(TestCase):
 
     @patch('closet.openai_analyzer.analyze_dress_with_openai')
     def test_fit_check_polling_detail_endpoint(self, mock_ai):
-        from closet.models import FitCheck
         from closet.tasks import process_fit_check_task
 
         mock_ai.return_value = {
@@ -624,8 +621,6 @@ class NSFWContentSafetyGateTests(TestCase):
         from PIL import Image
         from django.core.files.uploadedfile import SimpleUploadedFile
         from django.core.files.storage import default_storage
-        from closet.models import FitCheck
-        from closet.tasks import process_fit_check_task
 
         # Create dummy image containing NSFW test marker
         file_obj = io.BytesIO()

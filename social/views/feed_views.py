@@ -166,7 +166,6 @@ class YourDayOutfitView(APIView):
         lon = request.query_params.get('lon')
         city = request.query_params.get('city')
 
-        from social.your_day import get_live_weather, suggest_daily_outfit
         weather = get_live_weather(lat=lat, lon=lon, city=city, user=request.user)
         outfit_suggestion = suggest_daily_outfit(user=request.user, weather=weather, request=request)
 

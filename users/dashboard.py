@@ -3,7 +3,7 @@ Closly Luxury Admin Dashboard Metrics & Callbacks
 Provides executive analytics, pending deletion counts, and KPI metrics.
 """
 
-from django.db.models import Sum
+from django.db.models import Count, Q, Sum
 from users.models import User, AccountDeletionRequest
 from closet.models import ClosetItem
 from social.models import TodayOutfit, Story
@@ -28,7 +28,6 @@ def dashboard_callback(request, context):
     wardrobe valuation, and urgent deletion request alerts.
     """
     try:
-        from django.db.models import Count, Q, Sum
         user_stats = User.objects.aggregate(
             total=Count('id'),
             active=Count('id', filter=Q(is_active=True))

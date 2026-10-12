@@ -1,12 +1,7 @@
-import io
-import os
-import uuid
-import hashlib
-import logging
+import io, uuid, hashlib, logging
 from PIL import Image, ImageOps
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
-from django.core.exceptions import ValidationError
 from closet.exceptions import AIImageValidationError
 
 logger = logging.getLogger(__name__)

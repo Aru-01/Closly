@@ -51,7 +51,7 @@ class DirectMessageSendView(APIView):
     permission_classes = [IsAuthenticated]
     authentication_classes = [JWTAuthentication]
 
-    def post(self, request):
+    def post(self, request, recipient_id=None):
         from django.conf import settings
         if not getattr(settings, 'MYC_DM_ENABLED', False):
             return Response({
@@ -63,7 +63,7 @@ class DirectMessageSendView(APIView):
         from users.utils import set_user_online
         set_user_online(str(request.user.id))
 
-        recipient_id = request.data.get('recipient_id')
+        recipient_id = recipient_id or request.data.get('recipient_id')
         message_type = request.data.get('message_type', 'text')
         content = request.data.get('content', '')
         image_file = request.FILES.get('image')
@@ -183,13 +183,15 @@ class DirectMessageSendView(APIView):
                     preview_text = content[:60] if content else f"Sent you a {message_type}"
                     notif_msg = f"{request.user.name or 'A user'}: {preview_text}"
 
+                from django.conf import settings
+                scheme = getattr(settings, 'MYC_DEEP_LINK_SCHEME', 'closly')
                 create_notification(
                     recipient=recipient,
                     sender=request.user,
                     notification_type=notif_type,
                     title=notif_title,
                     message=notif_msg,
-                    data={'sender_id': str(request.user.id), 'deep_link': f"closly://chat/{request.user.id}"}
+                    data={'sender_id': str(request.user.id), 'deep_link': f"{scheme}://chat/{request.user.id}"}
                 )
             except Exception:
                 pass
@@ -265,6 +267,11 @@ class DirectMessageConversationView(generics.ListAPIView):
             )
             .select_related('sender', 'recipient', 'shared_product', 'shared_outfit', 'shared_outfit__user', 'story_reference', 'story_reference__user')
         )
+
+    def post(self, request, *args, **kwargs):
+        """Allow sending message directly in thread (POST /api/social/messages/<user_id>/)"""
+        other_user_id = self.kwargs.get('user_id')
+        return DirectMessageSendView().post(request, recipient_id=other_user_id)
 
 
 @extend_schema(

@@ -16,10 +16,20 @@ from .models import (
 
 @admin.register(Brand)
 class BrandAdmin(ModelAdmin):
-    list_display = ('name', 'slug', 'kind', 'tier', 'status', 'currency', 'commission_pct', 'products_count', 'last_sync_at')
-    list_filter = ('kind', 'tier', 'status', 'currency')
+    list_display = (
+        'name',
+        'kind',
+        'external_id',
+        'status',
+        'tier',
+        'currency',
+        'products_count',
+        'last_sync_at',
+    )
+    list_filter = ('kind', 'status', 'tier', 'currency')
     search_fields = ('name', 'slug', 'external_id')
-    readonly_fields = ('created_at', 'updated_at')
+    readonly_fields = ('created_at', 'updated_at', 'last_sync_at', 'last_success_at')
+    ordering = ('name',)
 
     def get_queryset(self, request):
         return super().get_queryset(request).annotate(

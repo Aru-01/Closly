@@ -5,8 +5,8 @@ from rest_framework import status
 from django.utils import timezone
 from datetime import timedelta
 
-from .models import UserRewardProfile, RewardPointTransaction
-from .services import award_points, process_expired_points, get_tier_info
+from .models import UserRewardProfile
+from .services import award_points, process_expired_points
 
 User = get_user_model()
 
@@ -92,7 +92,7 @@ class RewardPointsTests(TestCase):
 
     def test_double_entry_ledger_invariants(self):
         """SR-08: Every ledger transaction must strictly balance to zero sum."""
-        from .models import LedgerAccount, LedgerTxn, LedgerEntry
+        from .models import LedgerEntry
         from .services import get_or_create_ledger_account, create_balanced_ledger_txn
 
         user_acc = get_or_create_ledger_account('user_available', user=self.user)
@@ -129,7 +129,6 @@ class RewardPointsTests(TestCase):
         """SR-07: Public outfit rewards 120, private 0, daily cap 120, idempotent, reversal on delete."""
         from unittest.mock import MagicMock
         from .services import record_activity_reward, reverse_activity_reward
-        from .models import PointAward
 
         # 1. Disabled flag -> returns None
         outfit_public = MagicMock(id=101, visibility='public')
@@ -181,7 +180,6 @@ class RewardPointsTests(TestCase):
     def test_referral_reward_integrity_and_velocity_cap(self):
         """SR-04: Referral reward gates on activation, prevents self-referral, enforces weekly cap."""
         from .services import activate_referral_reward
-        from .models import PointAward
 
         referrer = self.user
         ref_user1 = User.objects.create_user(email='ref1@example.com', password='Password123!', name='Ref 1', is_active=False)
@@ -224,7 +222,7 @@ class RewardPointsTests(TestCase):
 
     def test_database_reconciliation_idempotency(self):
         """SR-08: reconcile_existing_reward_data guarantees balanced entries and is idempotent."""
-        from .models import LedgerTxn, LedgerEntry
+        from .models import LedgerEntry
         from .services import reconcile_existing_reward_data
 
         # Ensure balanced entries
@@ -350,7 +348,7 @@ class RewardPointsTests(TestCase):
     def test_gdpr_financial_history_retention_and_pseudonymization(self):
         """SR-28: User GDPR deletion zeroes available balance and pseudonymizes PII without destroying ledger audit rows."""
         from users.utils.common_utils import purge_and_anonymize_user
-        from .models import RewardPointTransaction, PointAward, LedgerTxn, LedgerEntry
+        from .models import RewardPointTransaction, LedgerEntry
 
         target_user = User.objects.create_user(email='gdpr_fin@example.com', password='Password123!', name='GDPR Target')
         award_points(target_user, 'share_look')

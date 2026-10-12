@@ -70,13 +70,15 @@ class UserFollowToggleView(APIView):
             message = f"Now following {target_user.name}."
             try:
                 from notifications.services import create_notification
+                from django.conf import settings
+                scheme = getattr(settings, 'MYC_DEEP_LINK_SCHEME', 'closly')
                 create_notification(
                     recipient=target_user,
                     sender=request.user,
                     notification_type='new_follower',
                     title='New Follower',
                     message=f"{request.user.name or 'A user'} started following you.",
-                    data={'user_id': str(request.user.id), 'deep_link': f"closly://user/{request.user.id}"}
+                    data={'user_id': str(request.user.id), 'deep_link': f"{scheme}://user/{request.user.id}"}
                 )
             except Exception:
                 pass
@@ -357,7 +359,6 @@ class OtherUserProfileView(APIView):
         is_following = UserFollow.objects.filter(follower=request.user, following=target_user).exists()
         is_self = (request.user.id == target_user.id)
 
-        from social.dna import calculate_dna_match
         dna = calculate_dna_match(request.user, target_user)
 
         reward_profile = getattr(target_user, 'reward_profile', None)

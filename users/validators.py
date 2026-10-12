@@ -76,7 +76,6 @@ def validate_email_format(email):
         )
     
     # Check for common typos in popular email domains
-    common_domains = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com']
     domain = email.split('@')[1].lower()
     
     # List of common typos

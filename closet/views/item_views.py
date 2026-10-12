@@ -4,7 +4,6 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from django.utils import timezone
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiResponse
 
 from closet.models import ClosetItem
@@ -55,36 +54,8 @@ class ClosetItemListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         item = serializer.save(user=self.request.user)
-        try:
-            from rewards.services import award_points
-            from rewards.models import RewardPointTransaction
-            from django.conf import settings
-            daily_awards = RewardPointTransaction.objects.filter(
-                user=self.request.user,
-                action_type='add_closet_item',
-                created_at__date=timezone.now().date()
-            ).count()
-            if daily_awards < getattr(settings, 'MYC_CLOSET_ITEM_POINTS_DAILY_LIMIT', 10):
-                award_points(
-                    user=self.request.user,
-                    action_type='add_closet_item',
-                    description=f"Added '{item.name}' to closet",
-                    reference_id=str(item.id)
-                )
-        except Exception as e:
-            logger.warning(f"Error awarding points for adding closet item: {e}")
-
-        try:
-            from notifications.services import create_notification
-            create_notification(
-                recipient=self.request.user,
-                notification_type='closet_item_added',
-                title='Closet Item Added',
-                message=f"'{item.name}' has been added to your digital wardrobe!",
-                data={'item_id': item.id, 'category': item.category}
-            )
-        except Exception as e:
-            logger.debug(f"Error creating closet item notification: {e}")
+        from closet.services.item_services import handle_item_creation_rewards_and_notifications
+        handle_item_creation_rewards_and_notifications(self.request.user, item)
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
@@ -167,24 +138,18 @@ class WearTodayView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def post(self, request, pk):
-        from django.db import models
-        try:
-            item = ClosetItem.objects.get(pk=pk, user=request.user)
-            ClosetItem.objects.filter(pk=pk, user=request.user).update(
-                times_worn=models.F('times_worn') + 1,
-                last_worn_at=timezone.now()
-            )
-            item.refresh_from_db()
-
-            serializer = ClosetItemSerializer(item, context={'request': request})
-            return Response({
-                'success': True,
-                'message': f"Calculated today's wear for '{item.name}'. Times worn is now {item.times_worn}.",
-                'data': serializer.data
-            }, status=status.HTTP_200_OK)
-        except ClosetItem.DoesNotExist:
+        from closet.services.item_services import record_wear_today
+        success, item = record_wear_today(request.user, pk)
+        if not success or not item:
             return Response({
                 'success': False,
                 'message': 'Cloth item not found in your closet.'
             }, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = ClosetItemSerializer(item, context={'request': request})
+        return Response({
+            'success': True,
+            'message': f"Calculated today's wear for '{item.name}'. Times worn is now {item.times_worn}.",
+            'data': serializer.data
+        }, status=status.HTTP_200_OK)
 

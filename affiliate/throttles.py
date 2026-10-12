@@ -1,6 +1,4 @@
-import hashlib
 from rest_framework.throttling import SimpleRateThrottle
-from django.conf import settings
 
 
 class ProductClickRateThrottle(SimpleRateThrottle):

@@ -45,8 +45,11 @@ class RewardPointsSummaryView(APIView):
     authentication_classes = [JWTAuthentication]
 
     def get(self, request):
-        # 1. Fetch profile once
+        from .services import get_user_ledger_balance
+        # 1. Fetch profile and verify balance directly against double-entry ledger (SR-08)
         profile, _ = UserRewardProfile.objects.get_or_create(user=request.user)
+        get_user_ledger_balance(request.user)
+        profile.refresh_from_db(fields=['available_points'])
 
         # 2. Process any expired points only if unexpired expired records exist (SR-24)
         has_expired = RewardPointTransaction.objects.filter(

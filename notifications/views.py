@@ -126,6 +126,12 @@ class NotificationMarkReadView(APIView):
             'data': {'id': notification.id, 'is_read': True}
         }, status=status.HTTP_200_OK)
 
+    def patch(self, request, pk):
+        return self.post(request, pk)
+
+    def put(self, request, pk):
+        return self.post(request, pk)
+
 
 @extend_schema(
     tags=["User Notifications"],
@@ -152,4 +158,10 @@ class NotificationMarkAllReadView(APIView):
             'message': f'Marked {updated_count} notifications as read.',
             'data': {'updated_count': updated_count}
         }, status=status.HTTP_200_OK)
+
+    def patch(self, request):
+        return self.post(request)
+
+    def put(self, request):
+        return self.post(request)
 
