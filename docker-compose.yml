@@ -72,7 +72,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/0
       - SECURE_SSL_REDIRECT=${DOCKER_SECURE_SSL_REDIRECT:-False}
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/api/health/ping/"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health/ping/"]
       interval: 10s
       timeout: 5s
       retries: 5
